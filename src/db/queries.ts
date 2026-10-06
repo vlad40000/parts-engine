@@ -4,6 +4,7 @@ import { classifyFamily, libraryAppliance, PREFILTER_SKIP_FAMILIES, ALWAYS_SCRAP
 import { resolveRemoval, SEED_BASELINES, type Baseline } from "@/src/lib/removal";
 import { greenlight, minGreenlightPrice, rankScore, type Greenlight, type GreenlightSettings } from "@/src/lib/greenlight";
 import type { FleetRow } from "@/src/lib/fleet-import";
+import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candidates";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
 import type { ChainResult } from "@/src/sources/chain";
@@ -447,12 +448,9 @@ export async function mpnDetail(db: Db, mpnRaw: string) {
   if (!row) return null;
   const evaluated = evaluateMpn(row, s, baselines);
   const aliases = await db.select().from(t.mpnAlias).where(eq(t.mpnAlias.mpnCanonical, canonical));
-  const machines = await q<{
-    machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; diagram_id: string;
-    age_candidate_years: number[]; suspect_families: string[]; identity_status: string; state: string | null;
-  }>(db, sql`
-    select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, e.diagram_id, f.age_candidate_years,
-      f.suspect_families, f.identity_status, s.state
+  const machines = await q<MachineMatchRow>(db, sql`
+    select f.machine_no, f.availability, f.appliance_type, f.brand, f.brand_key, f.model_raw, f.model_key, e.diagram_id,
+      f.age_candidate_years, f.suspect_families, f.identity_status, s.state
     from model_part_edges e
     join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
     left join machine_part_state s on s.machine_no = f.machine_no and s.mpn_canonical = e.mpn_canonical
@@ -461,7 +459,9 @@ export async function mpnDetail(db: Db, mpnRaw: string) {
   const models = await q<{ brand_key: string; model_key: string; description: string; new_price: string | null; source: string }>(db, sql`
     select brand_key, model_key, description, new_price, source from model_part_edges where mpn_canonical = ${canonical} order by 1, 2`);
   const roadrunner = (await roadrunnerPerformance(db, [canonical])).get(canonical) ?? null;
-  return { mpn: evaluated, aliases, machines, models, roadrunner, settings: s };
+  // Physical facts only; the verdict above never decides who is a candidate.
+  const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities);
+  return { mpn: evaluated, aliases, machines, harvest, models, roadrunner, settings: s };
 }
 
 // ---------------------------------------------------------------------------
