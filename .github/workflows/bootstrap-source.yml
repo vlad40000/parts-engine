@@ -1,0 +1,48 @@
+name: Bootstrap source
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Expand delivered Parts Engine source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f bootstrap/parts-engine.zip ]]; then
+            echo "Bootstrap archive not present yet; nothing to expand."
+            exit 0
+          fi
+
+          tmp="$(mktemp -d)"
+          unzip -q bootstrap/parts-engine.zip -d "$tmp"
+
+          test -f "$tmp/parts-engine/package.json"
+          test -f "$tmp/parts-engine/README.md"
+
+          shopt -s dotglob
+          cp -a "$tmp/parts-engine/." .
+
+          rm -rf bootstrap
+          rm -f .github/workflows/bootstrap-source.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: establish Parts Engine baseline"
+          git push origin HEAD:main
