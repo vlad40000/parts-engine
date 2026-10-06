@@ -2,10 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnDetail } from "@/src/db/queries";
+import { HARVEST_LABEL, type HarvestStatus } from "@/src/lib/harvest-candidates";
 import { NoDatabase, PageTitle, saleDay, VerdictPill, Years } from "@/src/components/ui";
 import { addAliasAction, saveMarketAction, saveMpnManualAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
+
+const CANDIDATE_PILL: Record<HarvestStatus, string> = { harvest_candidate: "pill-go", test_first: "pill-wait", unavailable: "pill-mute" };
 
 export default async function MpnPage({ params }: { params: Promise<{ mpn: string }> }) {
   if (!hasDatabase()) return <NoDatabase />;
@@ -14,6 +17,7 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
   if (!d) notFound();
   const m = d.mpn;
   const r = d.roadrunner;
+  const h = d.harvest;
   const v = (x: string | number | null | undefined) => (x == null ? "" : String(x));
 
   return (
@@ -109,12 +113,27 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
       </section>
 
       <section className="card mt-5 overflow-x-auto p-4">
-        <h2 className="mb-2 font-semibold">Machines on the lot that contain this part</h2>
+        <h2 className="mb-1 font-semibold">Where to harvest this part</h2>
+        <p className="mb-3 text-xs text-muted">
+          Physical availability only: donor status, recorded part state and failure symptom. It does not say whether the part is worth pulling.
+        </p>
+        <dl className="mb-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+          {[
+            ["Harvest candidates now", h.counts.harvestCandidates],
+            ["Test first", h.counts.testFirst],
+            ["Processed / not available", h.counts.unavailable],
+            ["Models represented", h.counts.models],
+            ["Donor supply", m.donors]
+          ].map(([label, value]) => (
+            <div key={label as string}><dt className="text-xs text-muted">{label}</dt><dd className="text-lg font-semibold tabular-nums">{value}</dd></div>
+          ))}
+        </dl>
         <table className="w-full text-sm">
-          <thead><tr><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Diagram</th><th>Possible years</th><th>Part state</th></tr></thead>
+          <thead><tr><th>Candidate</th><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Diagram</th><th>Possible years</th><th>Part state</th><th>Reason</th></tr></thead>
           <tbody>
-            {d.machines.map((x) => (
-              <tr key={x.machine_no} className={x.state || !d.settings.donorAvailabilities.includes(x.availability) ? "opacity-50" : ""}>
+            {[...h.harvestCandidates, ...h.testFirst, ...h.unavailable].map((x) => (
+              <tr key={x.machine_no} className={x.candidate === "unavailable" ? "opacity-50" : ""}>
+                <td><span className={`pill ${CANDIDATE_PILL[x.candidate]}`}>{HARVEST_LABEL[x.candidate]}</span></td>
                 <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(x.machine_no)}`}>{x.machine_no}</Link></td>
                 <td className="text-xs">{x.availability}</td>
                 <td className="text-xs">{x.appliance_type}</td>
@@ -122,11 +141,13 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
                 <td className="mono">{x.model_raw}</td>
                 <td className="text-xs">{x.diagram_id}</td>
                 <td className="text-xs"><Years years={x.age_candidate_years} /></td>
-                <td>{x.state ? <span className="pill pill-mute">{x.state}</span> : x.suspect_families.includes(m.part_family) ? <span className="pill pill-wait">test first</span> : null}</td>
+                <td>{x.state ? <span className="pill pill-mute">{x.state}</span> : null}</td>
+                <td className="text-xs text-muted">{x.reasons.join(" ")}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        {h.counts.testFirst ? <p className="mt-2 text-xs text-muted">Donor supply counts every donor-status machine with no recorded state, including the test-first ones.</p> : null}
         <p className="mt-2 text-xs text-muted">Found in {d.models.length} model parts lists: {d.models.slice(0, 40).map((x) => x.model_key).join(", ")}{d.models.length > 40 ? " …" : ""}</p>
       </section>
     </>
