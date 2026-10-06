@@ -38,11 +38,32 @@ Sell-through must never be derived from `sold90` and `activeQty` (Store Economic
 
 Parts Engine records sell-through provenance as `research` (imported) or `manual` (typed on the MPN page). The CSV/XLSX fallback import stores the source as `market_import`; the uploaded filename is never stored.
 
-Planned primary flow:
-1. ensure/register exact MPNs,
-2. request research for stale/missing MPNs,
-3. fetch batch market facts,
-4. cache facts in Parts Engine.
+### Live pull (A2, current)
+
+Provider: EbayDecisions `POST /api/integrations/market-facts`, response `schemaVersion: 1` (merged at EbayDecisions `08bc1e0`). The provider is zero-write; Parts Engine never opens the EbayDecisions database.
+
+- Config (server-only): `EBAYDECISIONS_URL`, `EBAYDECISIONS_API_KEY` (the same secret as the provider's `INTEGRATION_API_KEY`). If either is absent, the refresh button is replaced by a "not configured" note; CSV/XLSX import is unchanged.
+- Trigger: MPNs → Research queue → **Refresh market facts from EbayDecisions**. Sends the D1 keys of the rendered page (max 100) in one request with `Authorization: Bearer …` and a 15 s timeout. No polling, cron, registration, or research is triggered.
+- The whole response is validated (v1 shape, D1 keys, only requested keys, each at most once) before anything is written. 401/503/other errors, timeouts, and malformed bodies save nothing.
+- Writes go through `patchProviderMarketFacts`, never the broad file-import upsert, and touch provider-owned fields only:
+
+| Provider | market_facts |
+| --- | --- |
+| `sold90.soldQty` | `sold_90` |
+| `sold90.avgSoldPrice` | `avg_price` |
+| `sold90.avgBuyerShipping` | `avg_ship` |
+| `sold90.sellThroughPct` | `sell_through_pct`; `sell_through_source = research` when non-null, else null |
+| UTC date of `sold90.capturedAt` | `researched_at` |
+| (with sold90) | `source = ebaydecisions_api` |
+| `active.activeQty` | `active_qty` |
+
+- `free_shipping`, `ship_cost`, `qty_on_hand`, packaging cost, removal time, strategic exception, Roadrunner sale events, and settings are never written by a refresh.
+- `sold90: null`: sold facts and `researched_at` stay as they were, so a newer active snapshot never makes sold research look fresh. `active: null`: `active_qty` stays as it was.
+- `unregistered`, or a requested key missing from the response (counted as failed): nothing is written; existing facts stay.
+- Provider nulls are stored as null. Sell-through is never derived.
+- Not persisted in A2: `active.askingPrice`, `active.askingShipping`, `active.sampleSize`/`truncated`, `sold90.source`/`priceBasis`. `market_facts` has no non-conflicting columns for asking-price evidence; caching it is the next additive market-evidence extension and must not change qualification semantics.
+
+Not built yet: ensuring/registering exact MPNs and requesting research for stale/missing MPNs in EbayDecisions.
 
 CSV import/export remains a fallback.
 
@@ -95,10 +116,9 @@ A future Ledger/eBay-sync API feed should write the same events under its own `s
 ## Ledger -> Parts Engine stock (future)
 A future stock-by-MPN contract should provide physical on-hand/listed/reserved facts without converting donor potential into stock.
 
-## Authentication/environment (planned)
-Expected service integration settings include:
-- `PARTS_ENGINE_API_KEY`
-- `EBAYDECISIONS_URL`
-- `IMAGEFINDER_URL`
+## Authentication/environment
+In use: `EBAYDECISIONS_URL`, `EBAYDECISIONS_API_KEY` (server-only; see the A2 live pull above).
+
+Planned: `PARTS_ENGINE_API_KEY`, `IMAGEFINDER_URL`.
 
 Exact route names and auth behavior must be read from the target repositories before implementation.

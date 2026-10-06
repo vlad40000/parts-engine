@@ -4,12 +4,15 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
-  addAlias, getMarketFacts, getSettings, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { parseCsvRecords } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
 import { mapMarketRows, MARKET_IMPORT_SOURCE } from "@/src/lib/market-import";
 import { ensureMachineBom } from "@/src/lib/model-bom";
+import {
+  batchKeys, EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_SOURCE, EbayDecisionsError, ebayDecisionsConfig, fetchMarketFacts, planMarketFacts
+} from "@/src/lib/ebaydecisions";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
 import { readTable } from "@/src/lib/table-read";
@@ -95,6 +98,39 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Import failed." };
   }
+}
+
+/**
+ * Explicit, user-triggered refresh of the MPNs on the rendered page from EbayDecisions:
+ * one batch request, no polling, no research triggered. The response is fully validated
+ * before anything is written; on any failure nothing is saved.
+ */
+export async function refreshMarketFactsAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const config = ebayDecisionsConfig();
+  if (!config) return { ok: false, message: "The live EbayDecisions integration is not configured. CSV/XLSX market import is still available." };
+  const keys = batchKeys(form.getAll("mpn").map(String));
+  if (!keys.length) return { ok: false, message: "No MPNs on this page to refresh." };
+  if (keys.length > EBAYDECISIONS_MAX_MPNS) return { ok: false, message: `At most ${EBAYDECISIONS_MAX_MPNS} MPNs per refresh.` };
+  let facts;
+  try {
+    facts = await fetchMarketFacts(config, keys);
+  } catch (error) {
+    // Only our own fixed messages are shown; nothing here can carry the API key.
+    return { ok: false, message: error instanceof EbayDecisionsError ? error.message : "EbayDecisions refresh failed. Nothing was saved." };
+  }
+  const plan = planMarketFacts(keys, facts);
+  await patchProviderMarketFacts(await getDb(), plan.sold, plan.active, EBAYDECISIONS_SOURCE);
+  revalidatePath("/", "layout");
+  return {
+    ok: true,
+    message: `Refreshed market facts for ${plan.refreshed.length} of ${keys.length} MPNs from EbayDecisions.`,
+    details: [
+      `Refreshed: ${plan.refreshed.length}.`,
+      `Registered but no 90-day research: ${plan.noSold90.length}${plan.noSold90.length ? " (sold facts and research date left as they were)" : ""}.`,
+      `Not registered in EbayDecisions: ${plan.unregistered.length}${plan.unregistered.length ? " (existing facts kept)" : ""}.`,
+      `Failed: ${plan.failed.length}.`
+    ]
+  };
 }
 
 export async function importSalesAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
