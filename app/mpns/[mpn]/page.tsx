@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnDetail } from "@/src/db/queries";
 import { HARVEST_LABEL, type HarvestStatus } from "@/src/lib/harvest-candidates";
-import { NoDatabase, PageTitle, saleDay, VerdictPill, Years } from "@/src/components/ui";
+import { NoDatabase, PageTitle, pct, perSlotDay, QualificationPill, saleDay, usd, Years } from "@/src/components/ui";
 import { addAliasAction, saveMarketAction, saveMpnManualAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -19,18 +19,46 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
   const r = d.roadrunner;
   const h = d.harvest;
   const v = (x: string | number | null | undefined) => (x == null ? "" : String(x));
+  const q = m.qualification;
+  const e = q?.economics ?? null;
+  const BASIS: Record<string, string> = {
+    market: "market", free_shipping: "free shipping listing", label_estimate: "label estimate (buyer shipping unknown)", default: "default label"
+  };
 
   return (
     <>
       <PageTitle title={m.mpn_display} sub={m.description} />
       <div className="mb-5 flex flex-wrap items-center gap-3 text-sm">
-        <VerdictPill v={m.verdict} market={m.market} />
+        <QualificationPill v={q} market={m.market} />
         {m.prefilter ? <span className="pill pill-mute">{m.prefilter}</span> : null}
         <span className="text-muted">family {m.part_family}</span>
         <span className="text-muted">· {m.donors} donor machines across {m.models} models</span>
         <span className="text-muted">· removal {m.removal.minutes ?? "?"} min ({m.removal.source ?? "none"}{m.removal.component ? `: ${m.removal.component}` : ""})</span>
-        {m.verdict?.verdict === "REJECT" || m.verdict?.verdict === "GREENLIGHT" ? <span className="text-muted">· {m.verdict.reasons.join(" ")}</span> : null}
+        {q?.result === "NOT_QUALIFIED" || q?.result === "QUALIFIED" ? <span className="text-muted">· {q.reasons.join(" ")}</span> : null}
+        {q?.result === "SET_RULE" ? <Link className="text-accent underline" href="/settings">Set qualification rules</Link> : null}
       </div>
+
+      {e ? (
+        <section className="card mb-5 p-4">
+          <h2 className="mb-1 font-semibold">Harvested-part planning economics (Store Economics v7)</h2>
+          <p className="mb-3 text-xs text-muted">
+            Per-part planning figures from the settings. Buyer shipping {usd(e.B)} ({BASIS[e.buyerShippingBasis]}), shipping label {usd(e.S)} ({BASIS[e.shipLabelBasis]}),
+            fees {usd(e.fees)}, pack &amp; ship {usd(e.packShipLabor)}, packaging {usd(e.packaging)}, removal labor {usd(e.removalLabor)},
+            machine overhead {usd(e.machineOverhead)} ({e.overheadBasis.toLowerCase()}).
+          </p>
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+            {[
+              ["Break-even item price", usd(e.breakEven)],
+              ["Projected contribution", usd(e.contribution)],
+              ["Projected margin", pct(e.marginPct)],
+              ["Over break-even", usd(e.overBreakEven)],
+              ["Modeled value / slot-day", q?.modeledValueSlotDay == null ? "needs exact sell-through" : perSlotDay(q.modeledValueSlotDay)]
+            ].map(([label, value]) => (
+              <div key={label}><dt className="text-xs text-muted">{label}</dt><dd className="font-medium tabular-nums">{value}</dd></div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="card p-4">
@@ -39,12 +67,12 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
             <input type="hidden" name="mpn" value={m.mpn_display} />
             {[
               ["sold90", "Sold 90 days", m.sold_90],
-              ["sellThroughPct", "Sell-through %", m.sell_through_pct],
+              ["sellThroughPct", "Exact-MPN 90-day sell-through %", m.sell_through_pct],
               ["activeQty", "Active listings", m.active_qty],
               ["avgPrice", "Avg sold price $", m.avg_price],
               ["avgShip", "Avg buyer shipping $", m.avg_ship],
               ["qtyOnHand", "Qty on hand / listed", m.qty_on_hand],
-              ["shipCost", "Your ship cost $ (free ship)", m.ship_cost]
+              ["shipCost", `Shipping label you pay $ (blank = $${d.settings.defaultShipLabel.toFixed(2)})`, m.ship_cost]
             ].map(([name, label, value]) => (
               <label key={name as string} className="flex flex-col gap-1">
                 <span className="text-xs text-muted">{label}</span>
@@ -59,7 +87,8 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
               <input type="checkbox" name="freeShipping" defaultChecked={Boolean(m.free_shipping)} /> <span>Free shipping listing</span>
             </label>
             <div className="col-span-full"><button className="btn btn-primary">Save market facts</button>
-              {m.market_source ? <span className="ml-3 text-xs text-muted">source: {m.market_source}</span> : null}</div>
+              {m.market_source ? <span className="ml-3 text-xs text-muted">source: {m.market_source}</span> : null}
+              <span className="ml-3 text-xs text-muted">sell-through: {m.sell_through_source ?? "none (research needed)"}</span></div>
           </form>
         </section>
 
@@ -71,7 +100,14 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
               <span className="text-xs text-muted">Removal minutes (blank = library)</span>
               <input name="removalMin" defaultValue={m.removal_source === "manual" ? v(m.removal_min) : ""} placeholder={v(m.removal.minutes)} className="input num w-28" />
             </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted">Packaging cost $ (blank = $0)</span>
+              <input name="packagingCost" defaultValue={v(m.packaging_cost)} className="input num w-28" />
+            </label>
             <label className="flex items-center gap-2"><input type="checkbox" name="forceResearch" defaultChecked={m.force_research} /> Research even if prefilter skips it</label>
+            <label className="flex items-center gap-2" title="Waives only the ordinary 90-day sold-count minimum.">
+              <input type="checkbox" name="strategicExceptionApproved" defaultChecked={m.strategic_exception_approved} /> Strategic exception approved (sold-count minimum only)
+            </label>
             <button className="btn">Save</button>
           </form>
           <h3 className="mb-2 mt-5 text-sm font-semibold">Aliases</h3>

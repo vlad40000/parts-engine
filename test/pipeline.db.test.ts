@@ -7,7 +7,7 @@ import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import {
   addAlias, fleetSummary, getSettings, machineDetail, modelsNeedingBom, mpnDetail, mpnIndex,
-  saveModelBom, setPartState, teardownQueue, upsertFleet, upsertMarketFacts
+  saveModelBom, saveSettings, setPartState, teardownQueue, upsertFleet, upsertMarketFacts
 } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { mapMarketRows } from "@/src/lib/market-import";
@@ -68,28 +68,37 @@ describe("pipeline on a real Postgres (PGlite)", () => {
     expect(counts.queue).toBe(3);
   });
 
-  it("imports market facts (workbook fraction sell-through) and greenlights", async () => {
+  it("imports market facts (workbook fraction sell-through) and qualifies under v7 once rules are set", async () => {
     const { rows } = mapMarketRows([
       { MPN: "W11165528", "Mkt Sold 90d": 42, "Mkt 90d Sell-Through": 0.35, "Mkt Active Listings (derived)": 60, "Mkt Price": 95, "Mkt Ship": 12, "Qty On Hand": 0 },
       { MPN: "WPW10006355", "Mkt Sold 90d": 30, "Mkt 90d Sell-Through": 0.1, "Mkt Active Listings (derived)": 200, "Mkt Price": 40, "Mkt Ship": 10 }
     ]);
-    expect(rows[0].sellThroughPct).toBe(35);
+    expect(rows[0]).toMatchObject({ sellThroughPct: 35, sellThroughSource: "research" });
     await upsertMarketFacts(db, rows.map((r) => ({ ...r, researchedAt: "2026-10-01" })), "decision_workbook");
-    const { rows: green } = await mpnIndex(db, { view: "greenlight" });
-    expect(green.map((r) => r.mpn_canonical)).toEqual(["W11165528"]);
-    // 95 − 0.25 × 107 − 10 min × 15/60 − 20 = 45.75
-    expect(green[0].verdict).toMatchObject({ verdict: "GREENLIGHT", profit: 45.75 });
-    const { rows: rejects } = await mpnIndex(db, { view: "reject" });
-    expect(rejects[0].mpn_canonical).toBe("W10006355");
+    // Rules unset: no verdict is invented.
+    expect((await mpnIndex(db, { view: "qualified" })).rows).toEqual([]);
+    expect((await mpnIndex(db, { view: "set_rule" })).rows.map((r) => r.mpn_canonical).sort()).toEqual(["W10006355", "W11165528"]);
+
+    await saveSettings(db, { ...(await getSettings(db)), minimumSellThroughPct: 30, minimumProfitMarginPct: 25 });
+    const { rows: qualified } = await mpnIndex(db, { view: "qualified" });
+    expect(qualified.map((r) => r.mpn_canonical)).toEqual(["W11165528"]);
+    // Washer board: P 95 + B 12, label $9 default, 10 min removal ($2.50), washer overhead $4.65.
+    expect(qualified[0].qualification).toMatchObject({
+      result: "QUALIFIED", economics: { fees: 19.35, contribution: 70, marginPct: 65.42, breakEven: 9.51, removalLabor: 2.5, machineOverhead: 4.65 }
+    });
+    const { rows: rejects } = await mpnIndex(db, { view: "not_qualified" });
+    expect(rejects.map((r) => [r.mpn_canonical, r.qualification?.result === "NOT_QUALIFIED" && r.qualification.failed])).toEqual([["W10006355", ["sell_through"]]]);
   });
 
-  it("builds a capped teardown queue and keeps failure-suspect parts out of the score", async () => {
-    const { rows } = await teardownQueue(db);
-    // cap = ceil(42 × min(1, 42/60) × 30 / 90) − 0 = ceil(9.8) = 10 → all 3 donors fit
+  it("builds the teardown queue from qualified parts and keeps failure-suspect parts out of the ordering", async () => {
+    const { status, rows } = await teardownQueue(db);
+    expect(status).toBe("ok");
     const byMachine = Object.fromEntries(rows.map((r) => [r.machine_no, r]));
-    expect(byMachine["1"].score).toBe(45.75);
-    expect(byMachine["3"].score).toBe(45.75);
-    // machine 2 diagnosis "no power, dead" → control board is suspect → not scored
+    expect(byMachine["1"].lines.map((l) => l.mpn_canonical)).toEqual(["W11165528"]);
+    expect(byMachine["3"].lines.map((l) => l.mpn_canonical)).toEqual(["W11165528"]);
+    // (95 − 9.51) × 35% ÷ 90
+    expect(byMachine["1"].order_value).toBeCloseTo((85.49 * 0.35) / 90, 4);
+    // machine 2 diagnosis "no power, dead" → control board is suspect → not counted
     expect(byMachine["2"]).toBeUndefined();
   });
 

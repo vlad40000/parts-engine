@@ -19,18 +19,40 @@ import { sql } from "drizzle-orm";
  */
 
 // ---------------------------------------------------------------------------
-// Settings — every threshold lives here, never as a literal (handoff D3–D11)
+// Settings — every threshold lives here, never as a literal.
+// Current qualification model: Roadrunner Store Economics v7 (src/lib/economics.ts).
 // ---------------------------------------------------------------------------
 export const settings = pgTable("settings", {
   id: integer("id").primaryKey().default(1),
+  // Legacy prototype GREENLIGHT columns. Kept for compatibility; they no longer drive any decision.
   feePct: numeric("fee_pct", { precision: 5, scale: 2 }).notNull().default("25.00"),
   defaultShipCost: numeric("default_ship_cost", { precision: 10, scale: 2 }).notNull().default("0.00"),
   minSellThroughPct: numeric("min_sell_through_pct", { precision: 5, scale: 2 }).notNull().default("20.00"),
   harvestCushion: numeric("harvest_cushion", { precision: 10, scale: 2 }).notNull().default("20.00"),
   minProfit: numeric("min_profit", { precision: 10, scale: 2 }).notNull().default("1.00"),
-  laborRateHr: numeric("labor_rate_hr", { precision: 10, scale: 2 }).notNull().default("15.00"),
-  machineOverhead: numeric("machine_overhead", { precision: 10, scale: 2 }).notNull().default("30.00"),
   stockWindowDays: integer("stock_window_days").notNull().default(30),
+  // Non-management operations labor rate (v7: $15/hour), used for removal labor.
+  laborRateHr: numeric("labor_rate_hr", { precision: 10, scale: 2 }).notNull().default("15.00"),
+  // Whole-machine acquisition overhead; not part of harvested-part qualification.
+  machineOverhead: numeric("machine_overhead", { precision: 10, scale: 2 }).notNull().default("30.00"),
+  // Store Economics v7 planning assumptions.
+  finalValueFeePct: numeric("final_value_fee_pct", { precision: 5, scale: 2 }).notNull().default("13.60"),
+  promotedListingPct: numeric("promoted_listing_pct", { precision: 5, scale: 2 }).notNull().default("3.62"),
+  marketplaceTaxPct: numeric("marketplace_tax_pct", { precision: 5, scale: 2 }).notNull().default("6.56"),
+  perOrderFee: numeric("per_order_fee", { precision: 10, scale: 2 }).notNull().default("0.40"),
+  defaultShipLabel: numeric("default_ship_label", { precision: 10, scale: 2 }).notNull().default("9.00"),
+  packShipLabor: numeric("pack_ship_labor", { precision: 10, scale: 2 }).notNull().default("1.50"),
+  ordinarySold90Minimum: integer("ordinary_sold_90_minimum").notNull().default(3),
+  // Owner-set qualification thresholds. Deliberately null (unset) until entered.
+  minimumSellThroughPct: numeric("minimum_sell_through_pct", { precision: 5, scale: 2 }),
+  minimumProfitMarginPct: numeric("minimum_profit_margin_pct", { precision: 5, scale: 2 }),
+  // Machine-type overhead per quick-sale harvested part.
+  overheadRefrigerator: numeric("overhead_refrigerator", { precision: 10, scale: 2 }).notNull().default("3.48"),
+  overheadWasher: numeric("overhead_washer", { precision: 10, scale: 2 }).notNull().default("4.65"),
+  overheadRange: numeric("overhead_range", { precision: 10, scale: 2 }).notNull().default("5.07"),
+  overheadDryer: numeric("overhead_dryer", { precision: 10, scale: 2 }).notNull().default("5.43"),
+  overheadDishwasher: numeric("overhead_dishwasher", { precision: 10, scale: 2 }).notNull().default("5.91"),
+  overheadFallback: numeric("overhead_fallback", { precision: 10, scale: 2 }).notNull().default("5.07"),
   batchSize: integer("batch_size").notNull().default(10),
   marketStaleDays: integer("market_stale_days").notNull().default(30),
   donorAvailabilities: text("donor_availabilities").array().notNull()
@@ -124,6 +146,10 @@ export const mpnMaster = pgTable("mpn_master", {
   removalMin: numeric("removal_min", { precision: 6, scale: 1 }),
   removalSource: text("removal_source"),
   forceResearch: boolean("force_research").notNull().default(false),
+  /** Packaging cost per part; null is planned as $0 (v7 workbook behavior). */
+  packagingCost: numeric("packaging_cost", { precision: 10, scale: 2 }),
+  /** Owner-approved exception to the ordinary 90-day sold-count minimum only. */
+  strategicExceptionApproved: boolean("strategic_exception_approved").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
@@ -136,13 +162,19 @@ export const mpnAlias = pgTable("mpn_alias", {
   source: text("source").notNull().default("manual")
 }, (t) => [check("alias_kind_check", sql`${t.kind} in ('supersedes','wp_prefix','variant')`)]);
 
-/** Market evidence per MPN. Entered by hand or imported from EbayDecisions / the decision workbook. */
+/**
+ * Market evidence per MPN. Entered by hand or imported from EbayDecisions / the decision workbook.
+ * sold_90 and active_qty are separate facts; exact-MPN sell-through is never derived from them.
+ * source is a stable non-PII label (never the uploaded filename).
+ */
 export const marketFacts = pgTable("market_facts", {
   mpnCanonical: text("mpn_canonical").primaryKey(),
   sold90: integer("sold_90"),
   avgPrice: numeric("avg_price", { precision: 10, scale: 2 }),
   avgShip: numeric("avg_ship", { precision: 10, scale: 2 }),
   sellThroughPct: numeric("sell_through_pct", { precision: 6, scale: 2 }),
+  /** Provenance of the exact-MPN sell-through value: 'manual' | 'research', null when there is none. */
+  sellThroughSource: text("sell_through_source"),
   activeQty: integer("active_qty"),
   freeShipping: boolean("free_shipping").notNull().default(false),
   shipCost: numeric("ship_cost", { precision: 10, scale: 2 }),
@@ -150,7 +182,10 @@ export const marketFacts = pgTable("market_facts", {
   researchedAt: date("researched_at"),
   source: text("source").notNull().default("manual"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
-});
+}, (t) => [
+  check("market_facts_sell_through_source_check", sql`(${t.sellThroughPct} is null and ${t.sellThroughSource} is null)
+    or (${t.sellThroughPct} is not null and ${t.sellThroughSource} is not null and ${t.sellThroughSource} in ('manual','research'))`)
+]);
 
 /**
  * Roadrunner's own realized sales, one row per sale event (order line) per MPN.

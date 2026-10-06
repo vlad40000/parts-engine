@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnIndex, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
-import { NoDatabase, PageTitle, Pager, VerdictPill, qs } from "@/src/components/ui";
+import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { UploadForm } from "@/src/components/forms";
 import { SALES_HEADERS } from "@/src/lib/sales-import";
 import { importMarketAction, importSalesAction } from "../actions";
@@ -12,9 +12,10 @@ type SP = Promise<Record<string, string | undefined>>;
 
 const VIEWS: Array<{ key: NonNullable<MpnFilter["view"]>; label: string }> = [
   { key: "queue", label: "Research queue" },
-  { key: "greenlight", label: "List these" },
+  { key: "qualified", label: "Qualified" },
   { key: "needs_data", label: "Needs data" },
-  { key: "reject", label: "Rejected" },
+  { key: "not_qualified", label: "Not qualified" },
+  { key: "set_rule", label: "Set rule" },
   { key: "prefiltered", label: "Skipped before research" },
   { key: "all", label: "All" }
 ];
@@ -24,15 +25,23 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const view = (sp.view as MpnFilter["view"]) ?? "queue";
   const offset = Number(sp.offset ?? 0) || 0;
-  const { rows, total, settings } = await mpnIndex(await getDb(), { view, family: sp.family, q: sp.q }, 100, offset);
+  const { rows, total, settings, rulesSet } = await mpnIndex(await getDb(), { view, family: sp.family, q: sp.q }, 100, offset);
   const base = { view, family: sp.family, q: sp.q };
 
   return (
     <>
       <PageTitle
         title="MPNs"
-        sub={<>Every part number found in your parts lists. <b>Donors</b> counts machines on the lot that still hold the part, across every model that uses it — that is the compatibility cross-reference, built from your own parts lists. Greenlight: sell-through ≥ {settings.minSellThroughPct}% and profit ≥ ${settings.minProfit.toFixed(2)} after {settings.feePct}% fees, labor at ${settings.laborRateHr}/hr and the ${settings.harvestCushion.toFixed(0)} cushion.</>}
+        sub={<>Every part number found in your parts lists. <b>Donors</b> counts machines on the lot that still hold the part, across every model that uses it — that is the compatibility cross-reference, built from your own parts lists. Qualification follows Store Economics v7:
+          sold ≥ {settings.ordinarySold90Minimum} in 90 days (or a strategic exception), exact-MPN sell-through and projected margin at or above
+          the owner-set minimums, and price at or above the per-part break-even. There is no general minimum part price.</>}
       />
+      {!rulesSet ? (
+        <div className="card mb-4 p-3 text-sm text-wait">
+          Set qualification rules: the minimum 90-day sell-through % and minimum projected profit margin % are blank, so every
+          researched MPN shows SET RULE. Enter both in <Link className="underline" href="/settings">Settings</Link>.
+        </div>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-1 text-sm">
         {VIEWS.map((v) => (
           <Link key={v.key} href={qs({}, { view: v.key, family: sp.family, q: sp.q })}
@@ -64,7 +73,8 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
             <tr>
               <th>MPN</th><th>Description</th><th>Family</th><th className="num">Donors</th><th className="num">Models</th>
               <th className="num">New $</th><th className="num">Min</th><th className="num">Sold 90d</th><th className="num">STR %</th>
-              <th className="num">Active</th><th className="num">Avg $</th><th>Verdict</th><th className="num">Rank</th>
+              <th className="num">Active</th><th className="num">Avg $</th><th className="num">Break-even</th><th>Qualification</th>
+              <th className="num" title="(price − break-even) × exact sell-through ÷ 90. A ranking metric, not a probability.">Value/slot-day</th>
             </tr>
           </thead>
           <tbody>
@@ -81,14 +91,15 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
                 <td className="num">{r.sell_through_pct ? Number(r.sell_through_pct).toFixed(1) : ""}</td>
                 <td className="num">{r.active_qty ?? ""}</td>
                 <td className="num">{r.avg_price ? Number(r.avg_price).toFixed(2) : ""}</td>
+                <td className="num">{r.qualification?.economics ? usd(r.qualification.economics.breakEven) : ""}</td>
                 <td>
-                  {r.prefilter && r.market === "missing" ? <span className="pill pill-mute" title={r.prefilter}>skipped</span> : <VerdictPill v={r.verdict} market={r.market} />}
+                  {r.prefilter && r.market === "missing" ? <span className="pill pill-mute" title={r.prefilter}>skipped</span> : <QualificationPill v={r.qualification} market={r.market} />}
                   {r.market === "stale" ? <span className="pill pill-wait ml-1">stale</span> : null}
                 </td>
-                <td className="num">{r.rank ? r.rank.score.toFixed(2) : ""}</td>
+                <td className="num">{r.qualification?.modeledValueSlotDay != null ? perSlotDay(r.qualification.modeledValueSlotDay) : ""}</td>
               </tr>
             ))}
-            {!rows.length ? <tr><td colSpan={13} className="py-8 text-center text-muted">Nothing here yet.</td></tr> : null}
+            {!rows.length ? <tr><td colSpan={14} className="py-8 text-center text-muted">Nothing here yet.</td></tr> : null}
           </tbody>
         </table>
       </div>
@@ -99,6 +110,7 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
         <p className="mb-3 text-xs text-muted">
           Accepts the EbayDecisions export CSV, the decision workbook (MPN Master sheet), or a CSV with
           mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at. A sell-through like 0.24 is read as 24%.
+          Sell-through is stored only when the file supplies exact-MPN sell-through; it is never calculated from sold and active counts.
         </p>
         <UploadForm action={importMarketAction} label="Import market facts" accept=".csv,.xlsx" />
       </section>

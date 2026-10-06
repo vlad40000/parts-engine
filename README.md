@@ -11,13 +11,27 @@ Ledger, EbayDecisions or Image Finder databases. Files move between them as CSV.
 | 1 Intake | **Intake** | Import the inventory workbook or numbered intake sheets (.xlsx/.csv), or add one machine. Machine IDs and model text are kept exactly. Purchaser columns are never read (allow-list import). |
 | 2 Age band | **Fleet** | Every serial is decoded to *all* its possible build years (App 1 rules, without the newest-year collapse). A machine belongs to every band any candidate year falls in. Bands set research order only, never exclusion. |
 | 3 Parts lists | **Parts lists** | Choose a band/type, select up to 10 models (most machines first) and run. Each model is read once and reused by every machine of that model. HTML only: Encompass → AppliancePartsPros. No AI. |
-| 4 Research queue | **MPNs → Research queue** | Unique MPNs ordered by donor machines. Skipped before research: fasteners/hardware/literature, compressors (always scrap), and parts whose new OEM price is below the lowest price that could greenlight. **Export queue CSV** imports straight into EbayDecisions. |
+| 4 Research queue | **MPNs → Research queue** | Unique MPNs ordered by donor machines. Skipped before research: fasteners/hardware/literature and compressors (always scrap). There is no price prefilter: v7 has no general minimum part price. **Export queue CSV** imports straight into EbayDecisions. |
 | 5 eBay evidence | **MPNs → Import market facts** | Import the EbayDecisions export, the decision workbook (MPN Master), or a plain CSV. Or type facts on an MPN page. |
-| 6 Verdict | **MPNs → List these** | Greenlight = sell-through ≥ 20% **and** `P − F − S − L − $20 ≥ $1` (harvested). F = 25% of P (+B unless free shipping). L = removal minutes × $15/60. Ranked by profit × daily demand × share. All numbers live in **Settings**. |
+| 6 Qualification | **MPNs → Qualified** | Roadrunner Store Economics v7 (below). Results: `QUALIFIED`, `NOT QUALIFIED`, `NEEDS DATA`, `SET RULE`. All numbers live in **Settings**. |
 | 7 Compatibility | **MPN page** | Every machine on the lot that contains the part, across every model whose parts list includes it. Your parts lists are the fitment list — complete for what you own, not a sample. |
-| 8 Teardown | **Teardown queue** | Machines ranked by profit of greenlit parts still inside, capped at ~30 days of demand minus stock on hand. Export the yard pick list. |
+| 8 Teardown | **Teardown queue** | Machines holding QUALIFIED parts, ordered by the parts' modeled value / slot-day. Off (shows **Set qualification rules**) until both owner thresholds are set. No pull cap or stock target. Export the yard pick list. |
 | 9 Harvest | **Machine page** | Mark each part pulled / failed / missing. Pulled parts stop counting on that machine. Parts in a family matching the machine's failure symptom show **test first** and never count toward its score. |
 | 10 Sales memory | **MPNs → Import Roadrunner sales history** | Roadrunner's own realized sales by MPN (CSV contract in `docs/INTEGRATION_CONTRACTS.md`), kept apart from eBay market facts. Shown on the MPN page and on every machine whose model parts list contains the MPN. |
+
+## Qualification: Store Economics v7
+
+The current qualification model is `Roadrunner_Store_Economics_Oct_2026_7.xlsx`, implemented in `src/lib/economics.ts`.
+
+- **There is no general minimum part price.** The floor is each part's break-even item price.
+- **Sell-through is an exact-MPN research input.** It comes from a research import or manual entry (provenance `research` / `manual`) and is never derived from sold and active counts. Sold 90d and active listings are stored as separate facts.
+- **Qualification is deliberately `SET RULE`** until the owner enters both thresholds in Settings: minimum 90-day sell-through % and minimum projected profit margin %. They ship blank, and no default is assumed.
+- Once set, a part is `QUALIFIED` when all pass: sold ≥ 3 in 90 days (or a strategic exception approved on the MPN page, which waives only this gate); exact sell-through ≥ the minimum; price ≥ break-even; projected margin ≥ the minimum. Missing price, removal minutes, exact sell-through or sold count (without an exception) gives `NEEDS DATA`.
+- Planning economics, per part: fees = (P + B)(1 + tax)·FVF + P·promo + order fee; contribution = P + B − fees − shipping label − pack & ship labor − packaging − removal labor − machine-type overhead; margin = contribution / (P + B). Buyer-paid shipping B is revenue (planned at the label estimate when unknown); the label is still a seller cost. Removal labor uses the $15/h operations rate; management labor is not charged per part.
+- Modeled value / slot-day = (P − break-even) × exact sell-through / 90. An ordering metric, not a probability.
+- **Physical harvestability and economic qualification are separate.** The MPN page's harvest candidates come from donor status, part state and failure symptom only.
+
+The old prototype settings (25% all-in fee, $20 cushion, $1 minimum profit, 20% sell-through, stock window) remain as database columns for compatibility but no longer drive any decision.
 
 ## Setup
 

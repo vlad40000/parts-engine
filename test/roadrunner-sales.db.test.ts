@@ -8,7 +8,7 @@ import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import {
   getSettings, machineDetail, modelsNeedingBom, mpnDetail, mpnIndex, roadrunnerPerformance,
-  saveModelBom, setPartState, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  saveModelBom, saveSettings, setPartState, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { parseCsvRecords } from "@/src/lib/csv";
 import { mapFleetRows } from "@/src/lib/fleet-import";
@@ -54,7 +54,7 @@ const EXPECTED_BOARD = {
 };
 
 const allIndex = () => mpnIndex(db, { view: "all" }, 100000);
-const greenIndex = () => mpnIndex(db, { view: "greenlight" }, 100000);
+const greenIndex = () => mpnIndex(db, { view: "qualified" }, 100000);
 const marketRows = () => db.select().from(schema.marketFacts).orderBy(schema.marketFacts.mpnCanonical);
 const masterRows = () => db.select().from(schema.mpnMaster).orderBy(schema.mpnMaster.mpnCanonical);
 let before: { all: unknown; green: unknown; market: unknown; master: unknown };
@@ -78,6 +78,8 @@ beforeAll(async () => {
     { MPN: "WPW10006355", "Mkt Sold 90d": 30, "Mkt 90d Sell-Through": 0.1, "Mkt Active Listings (derived)": 200, "Mkt Price": 40, "Mkt Ship": 10 }
   ]);
   await upsertMarketFacts(db, rows.map((r) => ({ ...r, researchedAt: "2026-10-01" })), "decision_workbook");
+  // Test-only qualification thresholds (the app ships them blank).
+  await saveSettings(db, { ...(await getSettings(db)), minimumSellThroughPct: 30, minimumProfitMarginPct: 25 });
 
   before = { all: await allIndex(), green: await greenIndex(), market: await marketRows(), master: await masterRows() };
 });
@@ -189,7 +191,7 @@ describe("Roadrunner sales history by MPN, reused on machine BOMs", () => {
     await setPartState(db, "347", "W11165528", null);
   });
 
-  it("7. market facts and greenlight results are unchanged by sales history", async () => {
+  it("7. market facts and qualification results are unchanged by sales history", async () => {
     expect(await marketRows()).toEqual(before.market);
     expect(await masterRows()).toEqual(before.master);
     // Test 5 added machine 901, so donor counts legitimately moved; every market/verdict field must not.
@@ -197,8 +199,8 @@ describe("Roadrunner sales history by MPN, reused on machine BOMs", () => {
     const strip = (x: Index) => ({ total: x.total, counts: x.counts, settings: x.settings, rows: x.rows.map(({ donors: _d, ...r }) => r) });
     expect(strip(await greenIndex())).toEqual(strip(before.green as Index));
     expect(strip(await allIndex())).toEqual(strip(before.all as Index));
-    expect((await greenIndex()).rows.map((r) => [r.mpn_canonical, r.verdict])).toEqual([
-      ["W11165528", expect.objectContaining({ verdict: "GREENLIGHT", profit: 45.75 })]
+    expect((await greenIndex()).rows.map((r) => [r.mpn_canonical, r.qualification])).toEqual([
+      ["W11165528", expect.objectContaining({ result: "QUALIFIED", economics: expect.objectContaining({ contribution: 70 }) })]
     ]);
   });
 });
