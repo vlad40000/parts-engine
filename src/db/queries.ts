@@ -524,7 +524,7 @@ export const ROADRUNNER_CSV_SOURCE = "roadrunner_csv";
 export async function upsertSaleEvents(
   db: Db,
   rows: SaleRow[],
-  opts: { source?: string; importedFrom?: string | null } = {}
+  opts: { source?: string } = {}
 ): Promise<{ inserted: number; updated: number; notInAnyPartsList: number }> {
   const source = opts.source ?? ROADRUNNER_CSV_SOURCE;
   let inserted = 0;
@@ -540,14 +540,13 @@ export async function upsertSaleEvents(
       listedAt: r.listedAt,
       daysToSell: r.daysToSell,
       daysToSellSource: r.daysToSellSource,
-      importedFrom: opts.importedFrom ?? null,
       updatedAt: new Date()
     }))).onConflictDoUpdate({
       target: [t.roadrunnerSaleEvents.source, t.roadrunnerSaleEvents.sourceEventId, t.roadrunnerSaleEvents.mpnCanonical],
       set: {
         mpnDisplay: sql`excluded.mpn_display`, soldAt: sql`excluded.sold_at`, quantity: sql`excluded.quantity`,
         itemPrice: sql`excluded.item_price`, listedAt: sql`excluded.listed_at`, daysToSell: sql`excluded.days_to_sell`,
-        daysToSellSource: sql`excluded.days_to_sell_source`, importedFrom: sql`excluded.imported_from`, updatedAt: sql`now()`
+        daysToSellSource: sql`excluded.days_to_sell_source`, updatedAt: sql`now()`
       }
     }).returning({ inserted: sql<boolean>`(xmax = 0)` });
     inserted += res.filter((x) => x.inserted).length;

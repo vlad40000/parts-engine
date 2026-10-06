@@ -1,5 +1,5 @@
 {
-  "id": "0bc51ef7-8b3f-4def-8fd1-81dc6d5b76ed",
+  "id": "b5e9c9dc-d2ef-44a3-b94f-27f066ced9e8",
   "prevId": "8d0f9d77-c08c-4b8b-948c-70e25221e736",
   "version": "7",
   "dialect": "postgresql",
@@ -814,12 +814,6 @@
         },
         "days_to_sell_source": {
           "name": "days_to_sell_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "imported_from": {
-          "name": "imported_from",
           "type": "text",
           "primaryKey": false,
           "notNull": false

@@ -9,7 +9,6 @@ CREATE TABLE "roadrunner_sale_events" (
 	"listed_at" date,
 	"days_to_sell" integer,
 	"days_to_sell_source" text,
-	"imported_from" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "roadrunner_sale_events_source_source_event_id_mpn_canonical_pk" PRIMARY KEY("source","source_event_id","mpn_canonical"),

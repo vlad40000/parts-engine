@@ -108,7 +108,8 @@ export async function importSalesAction(_prev: ActionResult | null, form: FormDa
       ? `${res.skipped.length} rows skipped: ${res.skipped.slice(0, 5).map((s) => `line ${s.line} ${s.reason}`).join("; ")}`
       : "";
     if (!res.rows.length) return { ok: false, message: "No sale rows saved.", details: [`Saved 0, skipped ${res.skipped.length}.`, skippedLine].filter(Boolean) };
-    const saved = await upsertSaleEvents(await getDb(), res.rows, { importedFrom: file.name });
+    // The filename is user-controlled and may carry PII, so it is never passed on or stored.
+    const saved = await upsertSaleEvents(await getDb(), res.rows);
     revalidatePath("/", "layout");
     return {
       ok: true,

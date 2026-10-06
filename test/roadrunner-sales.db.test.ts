@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -16,6 +16,12 @@ import { mapMarketRows } from "@/src/lib/market-import";
 import { mapSaleRows } from "@/src/lib/sales-import";
 import type { ChainResult } from "@/src/sources/chain";
 import type { SupplierRow } from "@/src/sources/types";
+import { importSalesAction } from "@/app/actions";
+
+// The server action runs against this file's PGlite database.
+const holder = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock("@/src/db", () => ({ getDb: async () => holder.db, hasDatabase: () => true }));
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 
 let db: Db;
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -56,6 +62,7 @@ let before: { all: unknown; green: unknown; market: unknown; master: unknown };
 beforeAll(async () => {
   const client = new PGlite();
   db = drizzle(client, { schema }) as unknown as Db;
+  holder.db = db;
   await migrate(drizzle(client), { migrationsFolder: path.join(__dirname, "..", "drizzle") });
 
   await upsertFleet(db, mapFleetRows([
@@ -79,7 +86,7 @@ describe("Roadrunner sales history by MPN, reused on machine BOMs", () => {
   it("1. attaches D1-normalized sales history to the same MPN", async () => {
     const mapped = mapSaleRows(parseCsvRecords(SALES_CSV));
     expect(mapped.skipped.map((s) => s.line)).toEqual([6, 7]);
-    const res = await upsertSaleEvents(db, mapped.rows, { importedFrom: "sales-oct.csv" });
+    const res = await upsertSaleEvents(db, mapped.rows);
     expect(res).toEqual({ inserted: 4, updated: 0, notInAnyPartsList: 1 });
 
     const machine = await machineDetail(db, "347");
@@ -93,20 +100,34 @@ describe("Roadrunner sales history by MPN, reused on machine BOMs", () => {
     expect((await mpnDetail(db, "W10820048"))?.roadrunner).toBeNull();
   });
 
-  it("stores no purchaser data", async () => {
+  it("stores no purchaser data, including a PII-bearing upload filename", async () => {
+    // Placeholder PII in the filename itself, uploaded through the real server action.
+    const piiFilename = "Jane Placeholder jane.placeholder@example.com 555-0100 12 Example Ave.csv";
+    const form = new FormData();
+    form.set("file", new File([SALES_CSV], piiFilename, { type: "text/csv" }));
+    const result = await importSalesAction(null, form);
+    expect(result).toMatchObject({ ok: true });
+    expect(result.message).toMatch(/0 new, 4 already recorded/);
+
     const cols = (await db.execute(sql`
       select column_name from information_schema.columns where table_name = 'roadrunner_sale_events' order by ordinal_position`)) as unknown as { rows: Array<{ column_name: string }> };
     expect(cols.rows.map((c) => c.column_name)).toEqual([
       "source", "source_event_id", "mpn_canonical", "mpn_display", "sold_at", "quantity", "item_price",
-      "listed_at", "days_to_sell", "days_to_sell_source", "imported_from", "created_at", "updated_at"
+      "listed_at", "days_to_sell", "days_to_sell_source", "created_at", "updated_at"
     ]);
-    const stored = JSON.stringify(await db.select().from(schema.roadrunnerSaleEvents));
-    for (const pii of ["Example Buyer", "buyer@example.com", "00000"]) expect(stored).not.toContain(pii);
+    const rows = await db.select().from(schema.roadrunnerSaleEvents);
+    expect(new Set(rows.map((r) => r.source))).toEqual(new Set(["roadrunner_csv"]));
+    expect(rows.map((r) => r.sourceEventId).sort()).toEqual(["ORD-A", "ORD-B", "ORD-C", "ORD-D"]);
+    const stored = JSON.stringify(rows);
+    for (const pii of [
+      "Example Buyer", "buyer@example.com", "00000",
+      piiFilename, "Jane Placeholder", "jane.placeholder@example.com", "555-0100", "Example Ave"
+    ]) expect(stored).not.toContain(pii);
   });
 
   it("2. re-importing the same sale events does not double-count them", async () => {
     const mapped = mapSaleRows(parseCsvRecords(SALES_CSV));
-    const res = await upsertSaleEvents(db, mapped.rows, { importedFrom: "sales-oct-again.csv" });
+    const res = await upsertSaleEvents(db, mapped.rows);
     expect(res).toMatchObject({ inserted: 0, updated: 4 });
     expect(await db.$count(schema.roadrunnerSaleEvents)).toBe(4);
     expect((await roadrunnerPerformance(db, ["W11165528"])).get("W11165528")).toEqual(EXPECTED_BOARD);

@@ -158,6 +158,7 @@ export const marketFacts = pgTable("market_facts", {
  * mpn_canonical is the D1 key of the MPN as sold (aliases are not applied).
  * Re-imports are idempotent on (source, source_event_id, mpn_canonical).
  * No purchaser fields: no buyer name/username/address/email/phone/payment/ZIP.
+ * The uploaded filename is not stored either; it is user-controlled and may carry PII.
  */
 export const roadrunnerSaleEvents = pgTable("roadrunner_sale_events", {
   source: text("source").notNull(),
@@ -170,7 +171,6 @@ export const roadrunnerSaleEvents = pgTable("roadrunner_sale_events", {
   listedAt: date("listed_at"),
   daysToSell: integer("days_to_sell"),
   daysToSellSource: text("days_to_sell_source"),
-  importedFrom: text("imported_from"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
