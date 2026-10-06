@@ -1,7 +1,7 @@
 /**
  * Physical harvest candidates for one MPN: which matched machines can this part be pulled
  * from right now. Uses physical facts only (identity, availability, part state, failure
- * symptom). It never looks at market facts, greenlight verdicts or sales history; whether the
+ * symptom). It never looks at market facts, economic qualification or sales history; whether the
  * part is worth pulling is a separate decision.
  */
 export type MachineMatchRow = {

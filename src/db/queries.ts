@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { canonicalizeMpn, wpPrefixTarget } from "@/src/lib/mpn";
 import { classifyFamily, libraryAppliance, PREFILTER_SKIP_FAMILIES, ALWAYS_SCRAP_FAMILIES, type PartFamily } from "@/src/lib/part-family";
 import { resolveRemoval, SEED_BASELINES, type Baseline } from "@/src/lib/removal";
-import { greenlight, minGreenlightPrice, rankScore, type Greenlight, type GreenlightSettings } from "@/src/lib/greenlight";
+import { qualify, type EconomicsSettings, type Qualification } from "@/src/lib/economics";
 import type { FleetRow } from "@/src/lib/fleet-import";
 import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candidates";
 import type { MarketRow } from "@/src/lib/market-import";
@@ -15,14 +15,19 @@ import type { Db } from "./types";
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-export type AppSettings = GreenlightSettings & {
-  defaultShipCost: number;
+export type AppSettings = EconomicsSettings & {
+  /** Whole-machine acquisition overhead; not used in harvested-part qualification. */
   machineOverhead: number;
-  stockWindowDays: number;
   batchSize: number;
   marketStaleDays: number;
   donorAvailabilities: string[];
 };
+
+const optionalNumber = (v: string | null) => (v == null ? null : Number(v));
+const optionalNumeric = (v: number | null) => (v == null ? null : v.toFixed(2));
+
+/** Both owner-set thresholds are entered; until then qualification is SET_RULE. */
+export const rulesSet = (s: EconomicsSettings) => s.minimumSellThroughPct != null && s.minimumProfitMarginPct != null;
 
 export async function getSettings(db: Db): Promise<AppSettings> {
   let [row] = await db.select().from(t.settings).where(eq(t.settings.id, 1));
@@ -30,15 +35,27 @@ export async function getSettings(db: Db): Promise<AppSettings> {
     await db.insert(t.settings).values({ id: 1 }).onConflictDoNothing();
     [row] = await db.select().from(t.settings).where(eq(t.settings.id, 1));
   }
+  // Legacy prototype columns (fee_pct, min_profit, harvest_cushion, ...) are deliberately not read.
   return {
-    feePct: Number(row.feePct),
-    minSellThroughPct: Number(row.minSellThroughPct),
-    harvestCushion: Number(row.harvestCushion),
-    minProfit: Number(row.minProfit),
+    finalValueFeePct: Number(row.finalValueFeePct),
+    promotedListingPct: Number(row.promotedListingPct),
+    marketplaceTaxPct: Number(row.marketplaceTaxPct),
+    perOrderFee: Number(row.perOrderFee),
+    defaultShipLabel: Number(row.defaultShipLabel),
+    packShipLabor: Number(row.packShipLabor),
     laborRateHr: Number(row.laborRateHr),
-    defaultShipCost: Number(row.defaultShipCost),
+    ordinarySold90Minimum: row.ordinarySold90Minimum,
+    minimumSellThroughPct: optionalNumber(row.minimumSellThroughPct),
+    minimumProfitMarginPct: optionalNumber(row.minimumProfitMarginPct),
+    harvestOverhead: {
+      Refrigerator: Number(row.overheadRefrigerator),
+      Washer: Number(row.overheadWasher),
+      Range: Number(row.overheadRange),
+      Dryer: Number(row.overheadDryer),
+      Dishwasher: Number(row.overheadDishwasher),
+      fallback: Number(row.overheadFallback)
+    },
     machineOverhead: Number(row.machineOverhead),
-    stockWindowDays: row.stockWindowDays,
     batchSize: row.batchSize,
     marketStaleDays: row.marketStaleDays,
     donorAvailabilities: row.donorAvailabilities
@@ -48,14 +65,23 @@ export async function getSettings(db: Db): Promise<AppSettings> {
 export async function saveSettings(db: Db, s: AppSettings): Promise<void> {
   const values = {
     id: 1,
-    feePct: s.feePct.toFixed(2),
-    minSellThroughPct: s.minSellThroughPct.toFixed(2),
-    harvestCushion: s.harvestCushion.toFixed(2),
-    minProfit: s.minProfit.toFixed(2),
+    finalValueFeePct: s.finalValueFeePct.toFixed(2),
+    promotedListingPct: s.promotedListingPct.toFixed(2),
+    marketplaceTaxPct: s.marketplaceTaxPct.toFixed(2),
+    perOrderFee: s.perOrderFee.toFixed(2),
+    defaultShipLabel: s.defaultShipLabel.toFixed(2),
+    packShipLabor: s.packShipLabor.toFixed(2),
     laborRateHr: s.laborRateHr.toFixed(2),
-    defaultShipCost: s.defaultShipCost.toFixed(2),
+    ordinarySold90Minimum: s.ordinarySold90Minimum,
+    minimumSellThroughPct: optionalNumeric(s.minimumSellThroughPct),
+    minimumProfitMarginPct: optionalNumeric(s.minimumProfitMarginPct),
+    overheadRefrigerator: s.harvestOverhead.Refrigerator.toFixed(2),
+    overheadWasher: s.harvestOverhead.Washer.toFixed(2),
+    overheadRange: s.harvestOverhead.Range.toFixed(2),
+    overheadDryer: s.harvestOverhead.Dryer.toFixed(2),
+    overheadDishwasher: s.harvestOverhead.Dishwasher.toFixed(2),
+    overheadFallback: s.harvestOverhead.fallback.toFixed(2),
     machineOverhead: s.machineOverhead.toFixed(2),
-    stockWindowDays: s.stockWindowDays,
     batchSize: s.batchSize,
     marketStaleDays: s.marketStaleDays,
     donorAvailabilities: s.donorAvailabilities,
@@ -318,22 +344,22 @@ export async function saveModelBom(
 }
 
 // ---------------------------------------------------------------------------
-// MPN index: supply depth + market + greenlight
+// MPN index: supply depth + market + v7 qualification
 // ---------------------------------------------------------------------------
 export type MpnRow = {
   mpn_canonical: string; mpn_display: string; description: string; part_family: PartFamily; new_price_min: string | null;
   removal_min: string | null; removal_source: string | null; force_research: boolean;
+  packaging_cost: string | null; strategic_exception_approved: boolean;
   models: number; donors: number; appliance_mode: string | null;
-  sold_90: number | null; avg_price: string | null; avg_ship: string | null; sell_through_pct: string | null; active_qty: number | null;
+  sold_90: number | null; avg_price: string | null; avg_ship: string | null; sell_through_pct: string | null; sell_through_source: "manual" | "research" | null; active_qty: number | null;
   free_shipping: boolean | null; ship_cost: string | null; qty_on_hand: number | null; researched_at: string | null; market_source: string | null;
 };
 
 export type MpnEvaluated = MpnRow & {
   removal: { minutes: number | null; source: string | null; component: string | null };
   market: "missing" | "current" | "stale";
-  verdict: Greenlight | null;
+  qualification: Qualification | null;
   prefilter: string | null;
-  rank: { score: number; share: number; flags: string[] } | null;
 };
 
 const MPN_SELECT = (donorSet: string[]) => sql`
@@ -350,17 +376,19 @@ const MPN_SELECT = (donorSet: string[]) => sql`
     group by e.mpn_canonical
   )
   select m.mpn_canonical, m.mpn_display, m.description, m.part_family, m.new_price_min, m.removal_min, m.removal_source, m.force_research,
+    m.packaging_cost, m.strategic_exception_approved,
     coalesce(s.models, 0) models, coalesce(s.donors, 0) donors, s.appliance_mode,
-    k.sold_90, k.avg_price, k.avg_ship, k.sell_through_pct, k.active_qty, k.free_shipping, k.ship_cost, k.qty_on_hand,
+    k.sold_90, k.avg_price, k.avg_ship, k.sell_through_pct, k.sell_through_source, k.active_qty, k.free_shipping, k.ship_cost, k.qty_on_hand,
     k.researched_at::text researched_at, k.source market_source
   from mpn_master m
   left join supply s on s.mpn_canonical = m.mpn_canonical
   left join market_facts k on k.mpn_canonical = m.mpn_canonical`;
 
 export function evaluateMpn(row: MpnRow, s: AppSettings, baselines: Baseline[], now = new Date()): MpnEvaluated {
+  const appliance = libraryAppliance(row.appliance_mode);
   const removal = resolveRemoval({
     mpnCanonical: row.mpn_canonical,
-    appliance: libraryAppliance(row.appliance_mode),
+    appliance,
     description: row.description,
     storedMinutes: row.removal_min == null ? null : Number(row.removal_min),
     storedSource: row.removal_source,
@@ -370,38 +398,32 @@ export function evaluateMpn(row: MpnRow, s: AppSettings, baselines: Baseline[], 
   const ageDays = row.researched_at ? (now.getTime() - new Date(row.researched_at).getTime()) / 86_400_000 : Infinity;
   const market: MpnEvaluated["market"] = !hasMarket ? "missing" : ageDays > s.marketStaleDays ? "stale" : "current";
 
+  // Family prefilters only. There is no general minimum part price (v7); the floor is per part.
   let prefilter: string | null = null;
   if (ALWAYS_SCRAP_FAMILIES.includes(row.part_family)) prefilter = "Compressor: always scrap.";
   else if (!row.force_research && PREFILTER_SKIP_FAMILIES.includes(row.part_family)) prefilter = `Family "${row.part_family}" is not researched by default.`;
-  else if (!row.force_research && row.new_price_min != null) {
-    // Unknown removal time → test against zero labor, the most lenient floor.
-    const minutes = removal.minutes ?? 0;
-    const floor = minGreenlightPrice(minutes, s);
-    if (Number(row.new_price_min) < floor) {
-      prefilter = `New price $${Number(row.new_price_min).toFixed(2)} is below the $${floor.toFixed(2)} needed` +
-        (removal.minutes == null ? " even with zero labor." : ` at ${minutes} min.`);
-    }
-  }
 
-  let verdict: Greenlight | null = null;
-  let rank: MpnEvaluated["rank"] = null;
+  let qualification: Qualification | null = null;
   if (hasMarket && !ALWAYS_SCRAP_FAMILIES.includes(row.part_family)) {
-    verdict = greenlight({
+    qualification = qualify({
       P: row.avg_price == null ? null : Number(row.avg_price),
       B: row.avg_ship == null ? null : Number(row.avg_ship),
       freeShipping: Boolean(row.free_shipping),
-      S: row.ship_cost == null ? s.defaultShipCost : Number(row.ship_cost),
+      S: row.ship_cost == null ? null : Number(row.ship_cost),
       removalMin: removal.minutes,
-      sellThrough90: row.sell_through_pct == null ? null : Number(row.sell_through_pct),
-      settings: s
-    });
-    if (verdict.verdict === "GREENLIGHT") rank = rankScore(verdict.profit, row.sold_90, row.active_qty);
+      packagingCost: row.packaging_cost == null ? null : Number(row.packaging_cost),
+      appliance,
+      sold90: row.sold_90,
+      // Exact-MPN sell-through only; never sold_90 / active_qty.
+      sellThroughPct: row.sell_through_pct == null ? null : Number(row.sell_through_pct),
+      strategicExceptionApproved: row.strategic_exception_approved
+    }, s);
   }
-  return { ...row, removal, market, verdict, prefilter, rank };
+  return { ...row, removal, market, qualification, prefilter };
 }
 
 export type MpnFilter = {
-  view?: "all" | "greenlight" | "queue" | "reject" | "needs_data" | "prefiltered";
+  view?: "all" | "qualified" | "queue" | "not_qualified" | "needs_data" | "set_rule" | "prefiltered";
   family?: string;
   q?: string;
 };
@@ -412,31 +434,37 @@ export async function mpnIndex(db: Db, f: MpnFilter, limit = 200, offset = 0) {
   const where = [sql`true`];
   if (f.family) where.push(sql`part_family = ${f.family}`);
   if (f.q) where.push(sql`(mpn_canonical ilike ${"%" + f.q.toUpperCase().replace(/[^A-Z0-9]/g, "") + "%"} or description ilike ${"%" + f.q + "%"})`);
-  if (f.view === "greenlight" || f.view === "reject" || f.view === "needs_data") where.push(sql`(sold_90 is not null or avg_price is not null)`);
+  if (f.view === "qualified" || f.view === "not_qualified" || f.view === "needs_data" || f.view === "set_rule") {
+    where.push(sql`(sold_90 is not null or avg_price is not null)`);
+  }
   const all = await q<MpnRow>(db, sql`select * from (${MPN_SELECT(s.donorAvailabilities)}) x where ${sql.join(where, sql` and `)} order by donors desc, mpn_canonical`);
   let rows = all.map((r) => evaluateMpn(r, s, baselines));
-  if (f.view === "greenlight") rows = rows.filter((r) => r.verdict?.verdict === "GREENLIGHT").sort((a, b) => (b.rank?.score ?? 0) - (a.rank?.score ?? 0) || profitOf(b) - profitOf(a));
-  if (f.view === "reject") rows = rows.filter((r) => r.verdict?.verdict === "REJECT");
-  if (f.view === "needs_data") rows = rows.filter((r) => r.verdict?.verdict === "NEEDS_DATA");
+  const result = (r: MpnEvaluated) => r.qualification?.result;
+  // Ordering only: the workbook's modeled value / slot-day.
+  if (f.view === "qualified") rows = rows.filter((r) => result(r) === "QUALIFIED").sort((a, b) => valueOf(b) - valueOf(a));
+  if (f.view === "not_qualified") rows = rows.filter((r) => result(r) === "NOT_QUALIFIED");
+  if (f.view === "needs_data") rows = rows.filter((r) => result(r) === "NEEDS_DATA");
+  if (f.view === "set_rule") rows = rows.filter((r) => result(r) === "SET_RULE");
   if (f.view === "queue") rows = rows.filter((r) => r.market !== "current" && !r.prefilter && r.donors > 0);
   if (f.view === "prefiltered") rows = rows.filter((r) => r.prefilter && r.market === "missing");
   const counts = {
     all: all.length,
-    greenlight: 0, reject: 0, needs_data: 0, queue: 0, prefiltered: 0
+    qualified: 0, not_qualified: 0, needs_data: 0, set_rule: 0, queue: 0, prefiltered: 0
   };
   if (!f.view || f.view === "all") {
     for (const r of rows) {
-      if (r.verdict?.verdict === "GREENLIGHT") counts.greenlight += 1;
-      else if (r.verdict?.verdict === "REJECT") counts.reject += 1;
-      else if (r.verdict?.verdict === "NEEDS_DATA") counts.needs_data += 1;
+      if (result(r) === "QUALIFIED") counts.qualified += 1;
+      else if (result(r) === "NOT_QUALIFIED") counts.not_qualified += 1;
+      else if (result(r) === "NEEDS_DATA") counts.needs_data += 1;
+      else if (result(r) === "SET_RULE") counts.set_rule += 1;
       if (r.market !== "current" && !r.prefilter && r.donors > 0) counts.queue += 1;
       if (r.prefilter && r.market === "missing") counts.prefiltered += 1;
     }
   }
-  return { rows: rows.slice(offset, offset + limit), total: rows.length, counts, settings: s };
+  return { rows: rows.slice(offset, offset + limit), total: rows.length, counts, settings: s, rulesSet: rulesSet(s) };
 }
 
-const profitOf = (r: MpnEvaluated) => (r.verdict && "profit" in r.verdict && r.verdict.profit != null ? r.verdict.profit : 0);
+const valueOf = (r: MpnEvaluated) => r.qualification?.modeledValueSlotDay ?? -Infinity;
 
 export async function mpnDetail(db: Db, mpnRaw: string) {
   const s = await getSettings(db);
@@ -459,7 +487,7 @@ export async function mpnDetail(db: Db, mpnRaw: string) {
   const models = await q<{ brand_key: string; model_key: string; description: string; new_price: string | null; source: string }>(db, sql`
     select brand_key, model_key, description, new_price, source from model_part_edges where mpn_canonical = ${canonical} order by 1, 2`);
   const roadrunner = (await roadrunnerPerformance(db, [canonical])).get(canonical) ?? null;
-  // Physical facts only; the verdict above never decides who is a candidate.
+  // Physical facts only; economic qualification never decides who is a candidate.
   const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities);
   return { mpn: evaluated, aliases, machines, harvest, models, roadrunner, settings: s };
 }
@@ -558,6 +586,11 @@ export async function upsertSaleEvents(
   return { inserted, updated: rows.length - inserted, notInAnyPartsList: mpns.length - onLists.length };
 }
 
+export async function getMarketFacts(db: Db, canonical: string) {
+  const [row] = await db.select().from(t.marketFacts).where(eq(t.marketFacts.mpnCanonical, canonical));
+  return row ?? null;
+}
+
 export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: string): Promise<{ saved: number; unknown: number }> {
   let unknown = 0;
   const aliases = rows.length
@@ -577,12 +610,13 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
         avgPrice: r.avgPrice == null ? null : r.avgPrice.toFixed(2),
         avgShip: r.avgShip == null ? null : r.avgShip.toFixed(2),
         sellThroughPct: r.sellThroughPct == null ? null : r.sellThroughPct.toFixed(2),
+        sellThroughSource: r.sellThroughPct == null ? null : r.sellThroughSource ?? "research",
         activeQty: r.activeQty,
         freeShipping: r.freeShipping,
         shipCost: r.shipCost == null ? null : r.shipCost.toFixed(2),
         qtyOnHand: r.qtyOnHand == null ? null : Math.round(r.qtyOnHand),
         researchedAt: r.researchedAt ?? new Date().toISOString().slice(0, 10),
-        source: r.sellThroughDerived ? `${source} (sell-through derived)` : source,
+        source,
         updatedAt: new Date()
       };
     });
@@ -590,7 +624,7 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
       target: t.marketFacts.mpnCanonical,
       set: {
         sold90: sql`excluded.sold_90`, avgPrice: sql`excluded.avg_price`, avgShip: sql`excluded.avg_ship`,
-        sellThroughPct: sql`excluded.sell_through_pct`, activeQty: sql`excluded.active_qty`,
+        sellThroughPct: sql`excluded.sell_through_pct`, sellThroughSource: sql`excluded.sell_through_source`, activeQty: sql`excluded.active_qty`,
         freeShipping: sql`excluded.free_shipping`, shipCost: sql`excluded.ship_cost`,
         qtyOnHand: sql`coalesce(excluded.qty_on_hand, market_facts.qty_on_hand)`,
         researchedAt: sql`excluded.researched_at`, source: sql`excluded.source`, updatedAt: sql`now()`
@@ -610,7 +644,10 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
   return { saved: rows.length, unknown };
 }
 
-export async function updateMpnManual(db: Db, canonical: string, patch: { removalMin?: number | null; forceResearch?: boolean; description?: string }) {
+export async function updateMpnManual(db: Db, canonical: string, patch: {
+  removalMin?: number | null; forceResearch?: boolean; description?: string;
+  packagingCost?: number | null; strategicExceptionApproved?: boolean;
+}) {
   const set: Partial<typeof t.mpnMaster.$inferInsert> = { updatedAt: new Date() };
   if (patch.removalMin !== undefined) {
     set.removalMin = patch.removalMin == null ? null : String(patch.removalMin);
@@ -618,6 +655,8 @@ export async function updateMpnManual(db: Db, canonical: string, patch: { remova
   }
   if (patch.forceResearch !== undefined) set.forceResearch = patch.forceResearch;
   if (patch.description !== undefined) set.description = patch.description;
+  if (patch.packagingCost !== undefined) set.packagingCost = optionalNumeric(patch.packagingCost);
+  if (patch.strategicExceptionApproved !== undefined) set.strategicExceptionApproved = patch.strategicExceptionApproved;
   await db.update(t.mpnMaster).set(set).where(eq(t.mpnMaster.mpnCanonical, canonical));
 }
 
@@ -630,35 +669,34 @@ export async function addAlias(db: Db, aliasRaw: string, targetRaw: string, kind
 }
 
 // ---------------------------------------------------------------------------
-// Teardown queue (Station 3.5 PLAN, first cut)
+// Teardown queue (Station 3.5 PLAN)
 // ---------------------------------------------------------------------------
 export type PullLine = {
   mpn_canonical: string; mpn_display: string; description: string; diagram_id: string; family: string;
-  profit: number; removal_min: number | null; suspect: boolean;
+  removal_min: number | null; break_even: number | null; contribution: number; margin_pct: number | null;
+  modeled_value_slot_day: number | null; suspect: boolean;
 };
 export type TeardownRow = {
   machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
-  age_candidate_years: number[]; score: number; lines: PullLine[]; suspect_lines: PullLine[];
+  age_candidate_years: number[];
+  /** Ordering key only: sum of modeled value / slot-day of qualified parts. Not a profit score. */
+  order_value: number;
+  lines: PullLine[]; suspect_lines: PullLine[];
 };
+export type TeardownResult = { status: "set_rule" | "ok"; rows: TeardownRow[]; qualified: number; settings: AppSettings };
 
 /**
- * Machine score = Σ profit of greenlit parts still inside it, limited by each MPN's
- * pull cap: ceil(sold90 × share × stockWindowDays / 90) − qty on hand.
- * Parts beyond the cap stay in the machine (the yard is the warehouse).
- * Parts in a family that matches the machine's failure symptom are listed as
- * "test first" and never counted toward the score.
- * $30 machine overhead is NOT subtracted for machines already on hand (D11).
+ * Only QUALIFIED MPNs enter the teardown layer, and only once both owner thresholds are set.
+ * Every donor holding a qualified part is listed: no pull cap or stock target, and no
+ * sold_90 / active_qty share. Machines are ordered by the workbook's modeled value / slot-day.
+ * Parts matching the machine's failure symptom are listed as test first and not counted.
  */
-export async function teardownQueue(db: Db, limit = 100): Promise<{ rows: TeardownRow[]; greenlit: number; settings: AppSettings }> {
-  const { rows: greenRows, settings: s } = await mpnIndex(db, { view: "greenlight" }, 100000);
-  if (!greenRows.length) return { rows: [], greenlit: 0, settings: s };
-  const byMpn = new Map(greenRows.map((r) => [r.mpn_canonical, r]));
-  const cap = new Map<string, number>();
-  for (const r of greenRows) {
-    const share = r.rank?.share ?? 1;
-    const target = Math.ceil(((r.sold_90 ?? 0) * share * s.stockWindowDays) / 90);
-    cap.set(r.mpn_canonical, Math.max(0, target - (r.qty_on_hand ?? 0)));
-  }
+export async function teardownQueue(db: Db, limit = 100): Promise<TeardownResult> {
+  const s = await getSettings(db);
+  if (!rulesSet(s)) return { status: "set_rule", rows: [], qualified: 0, settings: s };
+  const { rows: qualifiedRows } = await mpnIndex(db, { view: "qualified" }, 100000);
+  if (!qualifiedRows.length) return { status: "ok", rows: [], qualified: 0, settings: s };
+  const byMpn = new Map(qualifiedRows.map((r) => [r.mpn_canonical, r]));
   const candidates = await q<{
     machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
     age_candidate_years: number[]; suspect_families: string[]; mpn_canonical: string; diagram_id: string; description: string;
@@ -671,42 +709,33 @@ export async function teardownQueue(db: Db, limit = 100): Promise<{ rows: Teardo
       and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(s.donorAvailabilities))})
       and not exists (select 1 from machine_part_state ps where ps.machine_no = f.machine_no and ps.mpn_canonical = e.mpn_canonical)`);
 
-  const machines = new Map<string, TeardownRow & { potential: number }>();
+  const machines = new Map<string, TeardownRow>();
   for (const c of candidates) {
     const m = byMpn.get(c.mpn_canonical);
-    if (!m || m.verdict?.verdict !== "GREENLIGHT") continue;
+    if (!m || m.qualification?.result !== "QUALIFIED") continue;
+    const econ = m.qualification.economics;
     const row = machines.get(c.machine_no) ?? {
       machine_no: c.machine_no, brand: c.brand, model_raw: c.model_raw, appliance_type: c.appliance_type,
-      availability: c.availability, age_candidate_years: c.age_candidate_years, score: 0, potential: 0, lines: [], suspect_lines: []
+      availability: c.availability, age_candidate_years: c.age_candidate_years, order_value: 0, lines: [], suspect_lines: []
     };
     const line: PullLine = {
       mpn_canonical: c.mpn_canonical, mpn_display: m.mpn_display, description: m.description || c.description, diagram_id: c.diagram_id,
-      family: m.part_family, profit: m.verdict.profit, removal_min: m.removal.minutes,
+      family: m.part_family, removal_min: m.removal.minutes, break_even: econ.breakEven, contribution: econ.contribution,
+      margin_pct: econ.marginPct, modeled_value_slot_day: m.qualification.modeledValueSlotDay,
       suspect: (c.suspect_families ?? []).includes(m.part_family)
     };
     if (line.suspect) row.suspect_lines.push(line);
-    else { row.lines.push(line); row.potential += line.profit; }
+    else row.lines.push(line);
     machines.set(c.machine_no, row);
   }
-
-  // Greedy allocation of pull caps, best machines first.
-  const ordered = [...machines.values()].sort((a, b) => b.potential - a.potential);
-  const remaining = new Map(cap);
-  for (const m of ordered) {
-    const kept: PullLine[] = [];
-    for (const line of m.lines.sort((a, b) => b.profit - a.profit)) {
-      const left = remaining.get(line.mpn_canonical) ?? 0;
-      if (left > 0) {
-        kept.push(line);
-        remaining.set(line.mpn_canonical, left - 1);
-      }
-    }
-    m.lines = kept;
-    m.score = Math.round(kept.reduce((n, l) => n + l.profit, 0) * 100) / 100;
-  }
-  const rows = ordered.filter((m) => m.lines.length > 0).sort((a, b) => b.score - a.score).slice(0, limit)
-    .map(({ potential: _p, ...rest }) => rest);
-  return { rows, greenlit: greenRows.length, settings: s };
+  const lineValue = (l: PullLine) => l.modeled_value_slot_day ?? 0;
+  const rows = [...machines.values()].filter((m) => m.lines.length > 0).map((m) => {
+    m.lines.sort((a, b) => lineValue(b) - lineValue(a));
+    m.order_value = Math.round(m.lines.reduce((n, l) => n + lineValue(l), 0) * 10000) / 10000;
+    return m;
+  });
+  rows.sort((a, b) => b.order_value - a.order_value || a.machine_no.localeCompare(b.machine_no));
+  return { status: "ok", rows: rows.slice(0, limit), qualified: qualifiedRows.length, settings: s };
 }
 
 // ---------------------------------------------------------------------------
@@ -729,8 +758,11 @@ export async function machineDetail(db: Db, machineNo: string) {
   const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id, state: p.state,
     suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
   evaluated.sort((a, b) => {
-    const order = (r: typeof a) => (r.verdict?.verdict === "GREENLIGHT" ? 0 : r.verdict?.verdict === "NEEDS_DATA" ? 1 : r.market === "missing" && !r.prefilter ? 2 : 3);
-    return order(a) - order(b) || profitOf(b) - profitOf(a) || a.diagram_id.localeCompare(b.diagram_id);
+    const order = (r: typeof a) => {
+      const res = r.qualification?.result;
+      return res === "QUALIFIED" ? 0 : res === "NEEDS_DATA" ? 1 : res === "SET_RULE" ? 2 : r.market === "missing" && !r.prefilter ? 3 : 4;
+    };
+    return order(a) - order(b) || valueOf(b) - valueOf(a) || a.diagram_id.localeCompare(b.diagram_id);
   });
   return { machine, bom, parts: evaluated, settings: s };
 }

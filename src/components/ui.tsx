@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Greenlight } from "@/src/lib/greenlight";
+import type { Qualification } from "@/src/lib/economics";
 import type { RoadrunnerPerformance } from "@/src/db/queries";
 
 export function PageTitle({ title, sub }: { title: string; sub?: React.ReactNode }) {
@@ -21,12 +21,19 @@ export function Stat({ label, value, hint }: { label: string; value: React.React
   );
 }
 
-export function VerdictPill({ v, market }: { v: Greenlight | null; market?: string }) {
+/** v7 qualification result. Never a settled verdict while the owner thresholds are unset. */
+export function QualificationPill({ v, market }: { v: Qualification | null; market?: string }) {
   if (!v) return <span className="pill pill-mute">{market === "missing" ? "not researched" : "—"}</span>;
-  if (v.verdict === "GREENLIGHT") return <span className="pill pill-go">LIST · ${v.profit.toFixed(2)}</span>;
-  if (v.verdict === "REJECT") return <span className="pill pill-stop" title={v.reasons.join(" ")}>REJECT · {v.failed.join(", ").replace("_", " ")}</span>;
-  return <span className="pill pill-wait" title={v.missing.join(", ")}>NEEDS {v.missing.join(", ").replace(/_/g, " ")}</span>;
+  if (v.result === "SET_RULE") return <span className="pill pill-mute" title="Set both qualification thresholds in Settings.">SET RULE</span>;
+  if (v.result === "QUALIFIED") return <span className="pill pill-go" title={v.reasons.join(" ")}>QUALIFIED</span>;
+  if (v.result === "NOT_QUALIFIED") return <span className="pill pill-stop" title={v.reasons.join(" ")}>NOT QUALIFIED · {v.failed.join(", ").replace(/_/g, " ")}</span>;
+  return <span className="pill pill-wait" title={v.missing.join(", ")}>NEEDS DATA · {v.missing.join(", ").replace(/_/g, " ")}</span>;
 }
+
+export const usd = (n: number | null | undefined) => (n == null ? "—" : `$${n.toFixed(2)}`);
+export const pct = (n: number | null | undefined) => (n == null ? "—" : `${n.toFixed(1)}%`);
+/** Modeled value / slot-day: a ranking metric, not a probability. */
+export const perSlotDay = (n: number | null | undefined) => (n == null ? "—" : `$${n.toFixed(3)}/day`);
 
 /** "Oct 5", or "Oct 5, 2025" outside the current year. Dates are calendar dates (UTC). */
 export function saleDay(isoDate: string, now = new Date()): string {

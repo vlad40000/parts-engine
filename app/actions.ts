@@ -4,11 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
-  addAlias, getSettings, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  addAlias, getMarketFacts, getSettings, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { parseCsvRecords } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
-import { mapMarketRows } from "@/src/lib/market-import";
+import { mapMarketRows, MARKET_IMPORT_SOURCE } from "@/src/lib/market-import";
 import { ensureMachineBom } from "@/src/lib/model-bom";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
@@ -79,15 +79,16 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
     const records = await readTable(file.name, await file.arrayBuffer(), isMarketHeader, "MPN Master");
     const { rows, skipped } = mapMarketRows(records);
     if (!rows.length) return { ok: false, message: skipped[0] ?? "No market rows found." };
-    const res = await upsertMarketFacts(await getDb(), rows, `import:${file.name}`);
+    // The filename is user-controlled and may carry PII, so it is never passed on or stored.
+    const res = await upsertMarketFacts(await getDb(), rows, MARKET_IMPORT_SOURCE);
     revalidatePath("/", "layout");
-    const derived = rows.filter((r) => r.sellThroughDerived).length;
+    const noSellThrough = rows.filter((r) => r.sellThroughPct == null).length;
     return {
       ok: true,
       message: `Saved market facts for ${res.saved} MPNs.`,
       details: [
         res.unknown ? `${res.unknown} are not in any parts list yet (added to the MPN index with no donors).` : "",
-        derived ? `${derived} had no sell-through column; derived as sold ÷ (sold + active).` : "",
+        noSellThrough ? `${noSellThrough} have no exact-MPN sell-through in the file; left blank (needs research).` : "",
         skipped.length ? `${skipped.length} skipped: ${skipped.slice(0, 5).join(" ")}` : ""
       ].filter(Boolean)
     };
@@ -137,7 +138,11 @@ const num = (v: FormDataEntryValue | null) => {
 export async function saveMarketAction(form: FormData): Promise<void> {
   const mpn = String(form.get("mpn") ?? "");
   const sellThrough = num(form.get("sellThroughPct"));
-  await upsertMarketFacts(await getDb(), [{
+  const db = await getDb();
+  // An unchanged researched value keeps its provenance; a typed value is manual.
+  const existing = await getMarketFacts(db, canonicalizeMpn(mpn));
+  const keepSource = existing?.sellThroughPct != null && sellThrough != null && Number(existing.sellThroughPct) === sellThrough;
+  await upsertMarketFacts(db, [{
     mpnCanonical: canonicalizeMpn(mpn),
     mpnDisplay: mpn,
     description: null,
@@ -145,7 +150,7 @@ export async function saveMarketAction(form: FormData): Promise<void> {
     avgPrice: num(form.get("avgPrice")),
     avgShip: num(form.get("avgShip")),
     sellThroughPct: sellThrough,
-    sellThroughDerived: false,
+    sellThroughSource: sellThrough == null ? null : keepSource ? existing?.sellThroughSource as "manual" | "research" : "manual",
     activeQty: num(form.get("activeQty")),
     qtyOnHand: num(form.get("qtyOnHand")),
     researchedAt: String(form.get("researchedAt") ?? "") || null,
@@ -160,7 +165,9 @@ export async function saveMpnManualAction(form: FormData): Promise<void> {
   const removal = String(form.get("removalMin") ?? "").trim();
   await updateMpnManual(await getDb(), mpn, {
     removalMin: removal === "" ? null : Number(removal),
-    forceResearch: form.get("forceResearch") === "on"
+    forceResearch: form.get("forceResearch") === "on",
+    packagingCost: num(form.get("packagingCost")),
+    strategicExceptionApproved: form.get("strategicExceptionApproved") === "on"
   });
   revalidatePath("/", "layout");
 }
@@ -186,16 +193,29 @@ export async function saveSettingsAction(form: FormData): Promise<void> {
   const db = await getDb();
   const s = await getSettings(db);
   const n = (k: string, fallback: number) => num(form.get(k)) ?? fallback;
+  const o = s.harvestOverhead;
   await saveSettings(db, {
     ...s,
-    feePct: n("feePct", s.feePct),
-    minSellThroughPct: n("minSellThroughPct", s.minSellThroughPct),
-    harvestCushion: n("harvestCushion", s.harvestCushion),
-    minProfit: n("minProfit", s.minProfit),
+    finalValueFeePct: n("finalValueFeePct", s.finalValueFeePct),
+    promotedListingPct: n("promotedListingPct", s.promotedListingPct),
+    marketplaceTaxPct: n("marketplaceTaxPct", s.marketplaceTaxPct),
+    perOrderFee: n("perOrderFee", s.perOrderFee),
+    defaultShipLabel: n("defaultShipLabel", s.defaultShipLabel),
+    packShipLabor: n("packShipLabor", s.packShipLabor),
     laborRateHr: n("laborRateHr", s.laborRateHr),
-    defaultShipCost: n("defaultShipCost", s.defaultShipCost),
+    ordinarySold90Minimum: Math.round(n("ordinarySold90Minimum", s.ordinarySold90Minimum)),
+    // Owner-set thresholds: blank means unset (SET_RULE), never a fallback value.
+    minimumSellThroughPct: num(form.get("minimumSellThroughPct")),
+    minimumProfitMarginPct: num(form.get("minimumProfitMarginPct")),
+    harvestOverhead: {
+      Refrigerator: n("overheadRefrigerator", o.Refrigerator),
+      Washer: n("overheadWasher", o.Washer),
+      Range: n("overheadRange", o.Range),
+      Dryer: n("overheadDryer", o.Dryer),
+      Dishwasher: n("overheadDishwasher", o.Dishwasher),
+      fallback: n("overheadFallback", o.fallback)
+    },
     machineOverhead: n("machineOverhead", s.machineOverhead),
-    stockWindowDays: Math.round(n("stockWindowDays", s.stockWindowDays)),
     batchSize: Math.min(50, Math.max(1, Math.round(n("batchSize", s.batchSize)))),
     marketStaleDays: Math.round(n("marketStaleDays", s.marketStaleDays)),
     donorAvailabilities: String(form.get("donorAvailabilities") ?? "").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean)

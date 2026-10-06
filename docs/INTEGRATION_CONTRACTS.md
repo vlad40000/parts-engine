@@ -31,17 +31,12 @@ Target batch contract should provide, per MPN:
 - sold price evidence
 - active asking-price evidence
 - shipping evidence where available
-- `sellThrough90`
-- `sellThrough90Source: "stored" | "derived" | null`
+- `sellThrough90`: exact-MPN 90-day sell-through, or null
 - captured timestamp / provenance
 
-If no stored 90-day sell-through exists, a permitted fallback is:
+Sell-through must never be derived from `sold90` and `activeQty` (Store Economics v7). When no exact value exists, send null; Parts Engine stores null and the part answers NEEDS DATA. Do not turn missing inputs into zero.
 
-```text
-sold90 / (sold90 + activeQty) * 100
-```
-
-only when both inputs are known. Mark it derived. Do not turn missing inputs into zero.
+Parts Engine records sell-through provenance as `research` (imported) or `manual` (typed on the MPN page). The CSV/XLSX fallback import stores the source as `market_import`; the uploaded filename is never stored.
 
 Planned primary flow:
 1. ensure/register exact MPNs,
@@ -74,11 +69,11 @@ Minimum fitment evidence:
 
 Only `complete` evidence may be treated as exhaustive. A sampled model list must never close the compatibility set.
 
-Full-fitment research should be requested for market-greenlit/discovery-worthy MPNs rather than every discovered MPN.
+Full-fitment research should be requested for market-qualified/discovery-worthy MPNs rather than every discovered MPN.
 
 ## Roadrunner sales history -> Parts Engine (CSV, current)
 
-Roadrunner's own realized sales ("what has actually sold for us") are stored in `roadrunner_sale_events`, separate from `market_facts` ("what the wider eBay market looks like"). Neither feeds the other, and sales history does not change greenlight inputs.
+Roadrunner's own realized sales ("what has actually sold for us") are stored in `roadrunner_sale_events`, separate from `market_facts` ("what the wider eBay market looks like"). Neither feeds the other, and sales history does not change qualification inputs.
 
 App-owned CSV contract (MPNs page → Import Roadrunner sales history):
 

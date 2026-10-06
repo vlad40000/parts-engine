@@ -156,19 +156,24 @@ describe("MPN harvest candidates on the lot", () => {
     expect(index.rows.map((r) => [r.mpn_canonical, r.donors])).toEqual(before.index.rows.map((r) => [r.mpn_canonical, r.donors]));
   });
 
-  it("10. no GREENLIGHT/REJECT threshold decides who is a harvest candidate", async () => {
+  it("10. no qualification threshold decides who is a harvest candidate", async () => {
+    const s = await getSettings(db);
+    const unset = (await mpnDetail(db, BOARD))!;
+    expect(unset.mpn.qualification?.result).toBe("SET_RULE");
+
+    await saveSettings(db, { ...s, minimumSellThroughPct: 30, minimumProfitMarginPct: 25 });
     const board = (await mpnDetail(db, BOARD))!;
     const pump = (await mpnDetail(db, PUMP))!;
     const lid = (await mpnDetail(db, LID_LOCK))!;
-    expect([board.mpn.verdict?.verdict, pump.mpn.verdict?.verdict, lid.mpn.verdict]).toEqual(["GREENLIGHT", "REJECT", null]);
-    // Same physical rules for a greenlit, a rejected and an unresearched part.
+    expect([board.mpn.qualification?.result, pump.mpn.qualification?.result, lid.mpn.qualification]).toEqual(["QUALIFIED", "NOT_QUALIFIED", null]);
+    expect(board.harvest).toEqual(unset.harvest);
+    // Same physical rules for a qualified, a not-qualified and an unresearched part.
     expect(ids(pump.harvest.harvestCandidates)).toEqual(["101", "102", "103", "104", "105", "106", "201"]);
     expect(ids(lid.harvest.harvestCandidates)).toEqual(["201"]);
 
-    const s = await getSettings(db);
-    await saveSettings(db, { ...s, minProfit: 100000, minSellThroughPct: 99 });
+    await saveSettings(db, { ...s, minimumSellThroughPct: 99, minimumProfitMarginPct: 99 });
     const strict = (await mpnDetail(db, BOARD))!;
-    expect(strict.mpn.verdict?.verdict).toBe("REJECT");
+    expect(strict.mpn.qualification?.result).toBe("NOT_QUALIFIED");
     expect(strict.harvest).toEqual(board.harvest);
     await saveSettings(db, s);
   });
@@ -178,7 +183,7 @@ describe("MPN harvest candidates on the lot", () => {
     expect(await salesRows()).toEqual(before.sales);
     expect((await mpnDetail(db, BOARD))!.roadrunner).toEqual(before.roadrunner);
     const index = await mpnIndex(db, { view: "all" }, 100000);
-    expect(index.rows.map((r) => [r.mpn_canonical, r.verdict, r.market])).toEqual(before.index.rows.map((r) => [r.mpn_canonical, r.verdict, r.market]));
+    expect(index.rows.map((r) => [r.mpn_canonical, r.qualification, r.market])).toEqual(before.index.rows.map((r) => [r.mpn_canonical, r.qualification, r.market]));
   });
 });
 

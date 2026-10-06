@@ -9,7 +9,7 @@ import { redirect } from "next/navigation";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import {
-  getSettings, machineDetail, modelsNeedingBom, mpnDetail, mpnIndex, saveModelBom, setPartState,
+  getSettings, machineDetail, modelsNeedingBom, mpnDetail, mpnIndex, saveModelBom, saveSettings, setPartState,
   upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
@@ -77,7 +77,7 @@ const EXPECTED_BOARD = {
 };
 
 const allIndex = () => mpnIndex(db, { view: "all" }, 100000);
-const greenIndex = () => mpnIndex(db, { view: "greenlight" }, 100000);
+const greenIndex = () => mpnIndex(db, { view: "qualified" }, 100000);
 const marketRows = () => db.select().from(schema.marketFacts).orderBy(schema.marketFacts.mpnCanonical);
 const masterRows = () => db.select().from(schema.mpnMaster).orderBy(schema.mpnMaster.mpnCanonical);
 const salesRows = () => db.select().from(schema.roadrunnerSaleEvents).orderBy(schema.roadrunnerSaleEvents.sourceEventId);
@@ -104,6 +104,8 @@ beforeAll(async () => {
     { MPN: "WPW10006355", "Mkt Sold 90d": 30, "Mkt 90d Sell-Through": 0.1, "Mkt Active Listings (derived)": 200, "Mkt Price": 40, "Mkt Ship": 10 }
   ]);
   await upsertMarketFacts(db, rows.map((r) => ({ ...r, researchedAt: "2026-10-01" })), "decision_workbook");
+  // Test-only qualification thresholds (the app ships them blank).
+  await saveSettings(db, { ...(await getSettings(db)), minimumSellThroughPct: 30, minimumProfitMarginPct: 25 });
   await upsertSaleEvents(db, [sale("ORD-A", "2026-09-11", 2, 120), sale("ORD-B", "2026-10-05", 1, 114)]);
 
   before = { all: await allIndex(), green: await greenIndex(), market: await marketRows(), master: await masterRows(), sales: await salesRows() };
@@ -241,7 +243,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     expect(d?.models.map((m) => m.model_key)).toEqual(["MVWX655DW1"]);
   });
 
-  it("8. market facts, Roadrunner sales history and greenlight inputs are unchanged", async () => {
+  it("8. market facts, Roadrunner sales history and qualification inputs are unchanged", async () => {
     expect(await marketRows()).toEqual(before.market);
     expect(await salesRows()).toEqual(before.sales);
     // The uncached lookup legitimately added new MPNs; the ones that existed must not change.
@@ -252,8 +254,8 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     const strip = (x: Index) => ({ settings: x.settings, rows: x.rows.filter((r) => known.has(r.mpn_canonical)).map(({ donors: _d, ...r }) => r) });
     expect(strip(await allIndex())).toEqual(strip(before.all));
     expect(strip(await greenIndex())).toEqual(strip(before.green));
-    expect((await greenIndex()).rows.map((r) => [r.mpn_canonical, r.verdict])).toEqual([
-      ["W11165528", expect.objectContaining({ verdict: "GREENLIGHT", profit: 45.75 })]
+    expect((await greenIndex()).rows.map((r) => [r.mpn_canonical, r.qualification])).toEqual([
+      ["W11165528", expect.objectContaining({ result: "QUALIFIED", economics: expect.objectContaining({ contribution: 70 }) })]
     ]);
   });
 

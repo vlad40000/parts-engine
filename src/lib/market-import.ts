@@ -1,7 +1,7 @@
 import { canonicalizeMpn } from "./mpn";
 
 /**
- * Market facts import. Accepts:
+ * Market facts import (research import). Accepts:
  *   - EbayDecisions /api/parts/export CSV (90d_* columns, active_listing_qty)
  *   - Roadrunner_eBay_Decision_Workbook.xlsx "MPN Master" sheet
  *   - a plain CSV: mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at
@@ -20,6 +20,11 @@ const COLUMNS: Record<string, string[]> = {
   shipCost: ["shipcost", "myshipping"]
 };
 
+/** Stable, non-PII source label for file imports. The uploaded filename is never stored. */
+export const MARKET_IMPORT_SOURCE = "market_import";
+
+export type SellThroughSource = "manual" | "research";
+
 const normalizeHeader = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export type MarketRow = {
@@ -29,8 +34,9 @@ export type MarketRow = {
   sold90: number | null;
   avgPrice: number | null;
   avgShip: number | null;
+  /** Exact-MPN 90-day sell-through %, only when the source supplied it. Never derived. */
   sellThroughPct: number | null;
-  sellThroughDerived: boolean;
+  sellThroughSource: SellThroughSource | null;
   activeQty: number | null;
   qtyOnHand: number | null;
   researchedAt: string | null;
@@ -86,13 +92,8 @@ export function mapMarketRows(records: Array<Record<string, unknown>>): { rows: 
     if (!canonical) return;
     const sold90 = num(get(r, "sold90"));
     const activeQty = num(get(r, "activeQty"));
-    let sellThroughPct = percent(num(get(r, "sellThrough")));
-    let derived = false;
-    if (sellThroughPct == null && sold90 != null && activeQty != null && sold90 + activeQty > 0) {
-      // Same relation the decision workbook uses: active = sold × (1 − STR) / STR.
-      sellThroughPct = Math.round((sold90 / (sold90 + activeQty)) * 10000) / 100;
-      derived = true;
-    }
+    // Exact sell-through only as supplied; sold90 and activeQty stay separate facts.
+    const sellThroughPct = percent(num(get(r, "sellThrough")));
     if (sold90 == null && num(get(r, "avgPrice")) == null) {
       skipped.push(`Line ${i + 2} (${display}): no 90-day sold count or price.`);
       return;
@@ -106,7 +107,7 @@ export function mapMarketRows(records: Array<Record<string, unknown>>): { rows: 
       avgPrice: num(get(r, "avgPrice")),
       avgShip: num(get(r, "avgShip")),
       sellThroughPct,
-      sellThroughDerived: derived,
+      sellThroughSource: sellThroughPct == null ? null : "research",
       activeQty: activeQty == null ? null : Math.round(activeQty),
       qtyOnHand: num(get(r, "qtyOnHand")),
       researchedAt: dateText(get(r, "researchedAt")),

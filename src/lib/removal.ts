@@ -20,7 +20,7 @@ export const SEED_BASELINES: Baseline[] = seed.generic.map((g) => ({
 
 /**
  * D8 order: observed median → researched exact-MPN → generic component baseline.
- * Returns null minutes when nothing matches; greenlight then answers NEEDS_DATA.
+ * Returns null minutes when nothing matches; qualification then answers NEEDS_DATA.
  * There is deliberately no catch-all default (no invented minutes).
  */
 export function resolveRemoval(input: {
