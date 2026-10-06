@@ -17,6 +17,7 @@ Ledger, EbayDecisions or Image Finder databases. Files move between them as CSV.
 | 7 Compatibility | **MPN page** | Every machine on the lot that contains the part, across every model whose parts list includes it. Your parts lists are the fitment list — complete for what you own, not a sample. |
 | 8 Teardown | **Teardown queue** | Machines ranked by profit of greenlit parts still inside, capped at ~30 days of demand minus stock on hand. Export the yard pick list. |
 | 9 Harvest | **Machine page** | Mark each part pulled / failed / missing. Pulled parts stop counting on that machine. Parts in a family matching the machine's failure symptom show **test first** and never count toward its score. |
+| 10 Sales memory | **MPNs → Import Roadrunner sales history** | Roadrunner's own realized sales by MPN (CSV contract in `docs/INTEGRATION_CONTRACTS.md`), kept apart from eBay market facts. Shown on the MPN page and on every machine whose model parts list contains the MPN. |
 
 ## Setup
 

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnDetail } from "@/src/db/queries";
-import { NoDatabase, PageTitle, VerdictPill, Years } from "@/src/components/ui";
+import { NoDatabase, PageTitle, saleDay, VerdictPill, Years } from "@/src/components/ui";
 import { addAliasAction, saveMarketAction, saveMpnManualAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,7 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
   const d = await mpnDetail(await getDb(), decodeURIComponent(mpn));
   if (!d) notFound();
   const m = d.mpn;
+  const r = d.roadrunner;
   const v = (x: string | number | null | undefined) => (x == null ? "" : String(x));
 
   return (
@@ -82,6 +83,30 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
           </form>
         </section>
       </div>
+
+      <section className="card mt-5 p-4">
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <h2 className="font-semibold">Roadrunner sales history</h2>
+          {r ? <span className="pill pill-mute">Sold before by Roadrunner</span> : <span className="pill pill-mute">No Roadrunner sales recorded yet</span>}
+        </div>
+        {r ? (
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+            {[
+              ["Units sold", r.unitsSold],
+              ["Sale events", r.saleEvents],
+              ["Avg item sale price", r.avgItemPrice == null ? "unknown" : `$${r.avgItemPrice.toFixed(2)}`],
+              ["Last sold", saleDay(r.lastSoldAt)],
+              ["Avg days to sell", r.avgDaysToSell == null ? "unknown" : `${r.avgDaysToSell} (${r.daysToSellEvents} of ${r.saleEvents} events)`]
+            ].map(([label, value]) => (
+              <div key={label as string}><dt className="text-xs text-muted">{label}</dt><dd className="font-medium tabular-nums">{value}</dd></div>
+            ))}
+          </dl>
+        ) : null}
+        <p className="mt-2 text-xs text-muted">
+          What has actually sold for Roadrunner under {m.mpn_canonical}, from imported sale events
+          {r ? ` (source: ${r.sources.join(", ")})` : ""}. Separate from the eBay market facts above. Import on the MPNs page.
+        </p>
+      </section>
 
       <section className="card mt-5 overflow-x-auto p-4">
         <h2 className="mb-2 font-semibold">Machines on the lot that contain this part</h2>

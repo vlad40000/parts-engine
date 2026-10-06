@@ -5,6 +5,7 @@ import { resolveRemoval, SEED_BASELINES, type Baseline } from "@/src/lib/removal
 import { greenlight, minGreenlightPrice, rankScore, type Greenlight, type GreenlightSettings } from "@/src/lib/greenlight";
 import type { FleetRow } from "@/src/lib/fleet-import";
 import type { MarketRow } from "@/src/lib/market-import";
+import type { SaleRow } from "@/src/lib/sales-import";
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import * as t from "./schema";
@@ -459,7 +460,102 @@ export async function mpnDetail(db: Db, mpnRaw: string) {
     order by f.availability, f.machine_no`);
   const models = await q<{ brand_key: string; model_key: string; description: string; new_price: string | null; source: string }>(db, sql`
     select brand_key, model_key, description, new_price, source from model_part_edges where mpn_canonical = ${canonical} order by 1, 2`);
-  return { mpn: evaluated, aliases, machines, models, settings: s };
+  const roadrunner = (await roadrunnerPerformance(db, [canonical])).get(canonical) ?? null;
+  return { mpn: evaluated, aliases, machines, models, roadrunner, settings: s };
+}
+
+// ---------------------------------------------------------------------------
+// Roadrunner sales history ("what has actually sold for us"), kept apart from market_facts
+// ---------------------------------------------------------------------------
+/**
+ * Aggregate of recorded Roadrunner sale events for one D1 MPN. An MPN with no recorded
+ * events has no aggregate at all (null), never a row of zeros.
+ */
+export type RoadrunnerPerformance = {
+  mpnCanonical: string;
+  unitsSold: number;
+  saleEvents: number;
+  /** Per-unit price, weighted by quantity, over events whose price is known. */
+  avgItemPrice: number | null;
+  pricedUnits: number;
+  lastSoldAt: string;
+  /** Mean over events whose days-to-sell is known (supplied or derived from listed_at). */
+  avgDaysToSell: number | null;
+  daysToSellEvents: number;
+  sources: string[];
+};
+
+export async function roadrunnerPerformance(db: Db, mpns: string[]): Promise<Map<string, RoadrunnerPerformance>> {
+  const keys = [...new Set(mpns.filter(Boolean))];
+  if (!keys.length) return new Map();
+  const rows = await q<{
+    mpn_canonical: string; units_sold: number; sale_events: number; avg_item_price: string | null; priced_units: number;
+    last_sold_at: string; avg_days_to_sell: string | null; days_to_sell_events: number; sources: string[];
+  }>(db, sql`
+    select mpn_canonical,
+      sum(quantity)::int units_sold,
+      count(*)::int sale_events,
+      round(sum(item_price * quantity) filter (where item_price is not null)
+        / nullif(sum(quantity) filter (where item_price is not null), 0), 2) avg_item_price,
+      coalesce(sum(quantity) filter (where item_price is not null), 0)::int priced_units,
+      max(sold_at)::text last_sold_at,
+      round(avg(days_to_sell), 1) avg_days_to_sell,
+      count(days_to_sell)::int days_to_sell_events,
+      array_agg(distinct source order by source) sources
+    from roadrunner_sale_events
+    where mpn_canonical = any(${sql.raw(pgTextArray(keys))})
+    group by mpn_canonical`);
+  return new Map(rows.map((r) => [r.mpn_canonical, {
+    mpnCanonical: r.mpn_canonical,
+    unitsSold: r.units_sold,
+    saleEvents: r.sale_events,
+    avgItemPrice: r.avg_item_price == null ? null : Number(r.avg_item_price),
+    pricedUnits: r.priced_units,
+    lastSoldAt: r.last_sold_at,
+    avgDaysToSell: r.avg_days_to_sell == null ? null : Number(r.avg_days_to_sell),
+    daysToSellEvents: r.days_to_sell_events,
+    sources: r.sources
+  }]));
+}
+
+/** CSV import source. Kept constant so re-importing a file under another name stays idempotent. */
+export const ROADRUNNER_CSV_SOURCE = "roadrunner_csv";
+
+export async function upsertSaleEvents(
+  db: Db,
+  rows: SaleRow[],
+  opts: { source?: string } = {}
+): Promise<{ inserted: number; updated: number; notInAnyPartsList: number }> {
+  const source = opts.source ?? ROADRUNNER_CSV_SOURCE;
+  let inserted = 0;
+  for (const part of chunks(rows, 300)) {
+    const res = await db.insert(t.roadrunnerSaleEvents).values(part.map((r) => ({
+      source,
+      sourceEventId: r.sourceEventId,
+      mpnCanonical: r.mpnCanonical,
+      mpnDisplay: r.mpnDisplay,
+      soldAt: r.soldAt,
+      quantity: r.quantity,
+      itemPrice: r.itemPrice == null ? null : r.itemPrice.toFixed(2),
+      listedAt: r.listedAt,
+      daysToSell: r.daysToSell,
+      daysToSellSource: r.daysToSellSource,
+      updatedAt: new Date()
+    }))).onConflictDoUpdate({
+      target: [t.roadrunnerSaleEvents.source, t.roadrunnerSaleEvents.sourceEventId, t.roadrunnerSaleEvents.mpnCanonical],
+      set: {
+        mpnDisplay: sql`excluded.mpn_display`, soldAt: sql`excluded.sold_at`, quantity: sql`excluded.quantity`,
+        itemPrice: sql`excluded.item_price`, listedAt: sql`excluded.listed_at`, daysToSell: sql`excluded.days_to_sell`,
+        daysToSellSource: sql`excluded.days_to_sell_source`, updatedAt: sql`now()`
+      }
+    }).returning({ inserted: sql<boolean>`(xmax = 0)` });
+    inserted += res.filter((x) => x.inserted).length;
+  }
+  const mpns = [...new Set(rows.map((r) => r.mpnCanonical))];
+  const onLists = mpns.length
+    ? await q<{ m: string }>(db, sql`select distinct mpn_canonical m from model_part_edges where mpn_canonical = any(${sql.raw(pgTextArray(mpns))})`)
+    : [];
+  return { inserted, updated: rows.length - inserted, notInAnyPartsList: mpns.length - onLists.length };
 }
 
 export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: string): Promise<{ saved: number; unknown: number }> {
@@ -629,8 +725,9 @@ export async function machineDetail(db: Db, machineNo: string) {
     join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
     left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical
     where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}`);
+  const performance = await roadrunnerPerformance(db, parts.map((p) => p.mpn_canonical));
   const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id, state: p.state,
-    suspect: machine.suspectFamilies.includes(p.part_family) }));
+    suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
   evaluated.sort((a, b) => {
     const order = (r: typeof a) => (r.verdict?.verdict === "GREENLIGHT" ? 0 : r.verdict?.verdict === "NEEDS_DATA" ? 1 : r.market === "missing" && !r.prefilter ? 2 : 3);
     return order(a) - order(b) || profitOf(b) - profitOf(a) || a.diagram_id.localeCompare(b.diagram_id);

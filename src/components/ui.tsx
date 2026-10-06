@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Greenlight } from "@/src/lib/greenlight";
+import type { RoadrunnerPerformance } from "@/src/db/queries";
 
 export function PageTitle({ title, sub }: { title: string; sub?: React.ReactNode }) {
   return (
@@ -25,6 +26,22 @@ export function VerdictPill({ v, market }: { v: Greenlight | null; market?: stri
   if (v.verdict === "GREENLIGHT") return <span className="pill pill-go">LIST · ${v.profit.toFixed(2)}</span>;
   if (v.verdict === "REJECT") return <span className="pill pill-stop" title={v.reasons.join(" ")}>REJECT · {v.failed.join(", ").replace("_", " ")}</span>;
   return <span className="pill pill-wait" title={v.missing.join(", ")}>NEEDS {v.missing.join(", ").replace(/_/g, " ")}</span>;
+}
+
+/** "Oct 5", or "Oct 5, 2025" outside the current year. Dates are calendar dates (UTC). */
+export function saleDay(isoDate: string, now = new Date()): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  const sameYear = d.getUTCFullYear() === now.getUTCFullYear();
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: sameYear ? undefined : "numeric", timeZone: "UTC" });
+}
+
+/** Compact Roadrunner sales history: "6 sold · avg $118 · last Oct 5" or "No recorded sales". */
+export function RoadrunnerHistory({ p }: { p: RoadrunnerPerformance | null }) {
+  if (!p) return <span className="text-xs text-muted">No recorded sales</span>;
+  const parts = [`${p.unitsSold} sold`];
+  if (p.avgItemPrice != null) parts.push(`avg $${Math.round(p.avgItemPrice)}`);
+  parts.push(`last ${saleDay(p.lastSoldAt)}`);
+  return <span className="whitespace-nowrap text-xs" title={`${p.saleEvents} sale events recorded by Roadrunner`}>{parts.join(" · ")}</span>;
 }
 
 export function Years({ years }: { years: number[] }) {

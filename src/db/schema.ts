@@ -152,6 +152,36 @@ export const marketFacts = pgTable("market_facts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
 
+/**
+ * Roadrunner's own realized sales, one row per sale event (order line) per MPN.
+ * Separate from market_facts: this is "what has sold for us", not the wider market.
+ * mpn_canonical is the D1 key of the MPN as sold (aliases are not applied).
+ * Re-imports are idempotent on (source, source_event_id, mpn_canonical).
+ * No purchaser fields: no buyer name/username/address/email/phone/payment/ZIP.
+ * The uploaded filename is not stored either; it is user-controlled and may carry PII.
+ */
+export const roadrunnerSaleEvents = pgTable("roadrunner_sale_events", {
+  source: text("source").notNull(),
+  sourceEventId: text("source_event_id").notNull(),
+  mpnCanonical: text("mpn_canonical").notNull(),
+  mpnDisplay: text("mpn_display").notNull(),
+  soldAt: date("sold_at").notNull(),
+  quantity: integer("quantity").notNull(),
+  itemPrice: numeric("item_price", { precision: 10, scale: 2 }),
+  listedAt: date("listed_at"),
+  daysToSell: integer("days_to_sell"),
+  daysToSellSource: text("days_to_sell_source"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  primaryKey({ columns: [t.source, t.sourceEventId, t.mpnCanonical] }),
+  index("sale_events_mpn_idx").on(t.mpnCanonical),
+  check("sale_events_quantity_check", sql`${t.quantity} > 0`),
+  check("sale_events_price_check", sql`${t.itemPrice} is null or ${t.itemPrice} >= 0`),
+  check("sale_events_days_check", sql`${t.daysToSell} is null or ${t.daysToSell} >= 0`),
+  check("sale_events_days_source_check", sql`${t.daysToSellSource} is null or ${t.daysToSellSource} in ('supplied','derived')`)
+]);
+
 /** Removal minutes: generic baseline by appliance + component (Removal Time Library). */
 export const removalBaselines = pgTable("removal_baselines", {
   appliance: text("appliance").notNull(),

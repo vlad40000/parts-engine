@@ -4,7 +4,8 @@ import { mpnIndex, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, VerdictPill, qs } from "@/src/components/ui";
 import { UploadForm } from "@/src/components/forms";
-import { importMarketAction } from "../actions";
+import { SALES_HEADERS } from "@/src/lib/sales-import";
+import { importMarketAction, importSalesAction } from "../actions";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -100,6 +101,16 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
           mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at. A sell-through like 0.24 is read as 24%.
         </p>
         <UploadForm action={importMarketAction} label="Import market facts" accept=".csv,.xlsx" />
+      </section>
+
+      <section className="card mt-5 p-4">
+        <h2 className="mb-1 font-semibold">Import Roadrunner sales history</h2>
+        <p className="mb-3 text-xs text-muted">
+          What has actually sold for us, kept apart from market facts. CSV with <span className="mono">{SALES_HEADERS}</span>:
+          one row per sale event (order line), item_price per unit before shipping, dates as YYYY-MM-DD. Re-importing the same
+          source_event_id + MPN updates it instead of counting it twice. Buyer and other columns are never read.
+        </p>
+        <UploadForm action={importSalesAction} label="Import sales history" accept=".csv" />
       </section>
     </>
   );

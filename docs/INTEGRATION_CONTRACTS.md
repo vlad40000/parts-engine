@@ -76,6 +76,27 @@ Only `complete` evidence may be treated as exhaustive. A sampled model list must
 
 Full-fitment research should be requested for market-greenlit/discovery-worthy MPNs rather than every discovered MPN.
 
+## Roadrunner sales history -> Parts Engine (CSV, current)
+
+Roadrunner's own realized sales ("what has actually sold for us") are stored in `roadrunner_sale_events`, separate from `market_facts` ("what the wider eBay market looks like"). Neither feeds the other, and sales history does not change greenlight inputs.
+
+App-owned CSV contract (MPNs page → Import Roadrunner sales history):
+
+```text
+mpn,source_event_id,sold_at,quantity,item_price,listed_at[,days_to_sell]
+```
+
+- One row = one sale event (order line) for one MPN.
+- `mpn` is stored as its D1 key plus the display text. Aliases/supersessions are not applied.
+- `source_event_id` is a stable order-line/reference ID. Identity is `(source, source_event_id, mpn)` with source `roadrunner_csv`, so re-imports update in place and never double-count.
+- `sold_at`, `listed_at`: `YYYY-MM-DD` or `M/D/YYYY`. `quantity`: whole units > 0. `item_price`: per unit before shipping/tax; blank = unknown.
+- `days_to_sell` is used when supplied, otherwise derived from `listed_at` → `sold_at` when both are known and consistent, otherwise unknown.
+- Rows with no usable MPN or no `source_event_id` are skipped and counted. All other columns, including any buyer/purchaser columns, are ignored.
+
+Aggregate per D1 MPN (`roadrunnerPerformance`): units sold, sale events, quantity-weighted average item price, last sold date, average days-to-sell over events where it is known. An MPN with no recorded events has no aggregate (shown as "No recorded sales"), never zeros.
+
+A future Ledger/eBay-sync API feed should write the same events under its own `source` value.
+
 ## Ledger -> Parts Engine stock (future)
 A future stock-by-MPN contract should provide physical on-hand/listed/reserved facts without converting donor potential into stock.
 

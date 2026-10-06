@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { machineDetail } from "@/src/db/queries";
-import { NoDatabase, PageTitle, VerdictPill, Years } from "@/src/components/ui";
+import { NoDatabase, PageTitle, RoadrunnerHistory, VerdictPill, Years } from "@/src/components/ui";
 import { setPartStateAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +42,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       {m.identityStatus !== "ok" ? <div className="card mb-5 p-3 text-sm text-wait">Model is unreadable. Read the nameplate and update this machine on Intake before it can be matched.</div> : null}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr><th>Diagram</th><th>MPN</th><th>Description</th><th>Family</th><th className="num">Min</th><th className="num">New $</th><th>Verdict</th><th>State</th></tr></thead>
+          <thead><tr><th>Diagram</th><th>MPN</th><th>Description</th><th>Family</th><th className="num">Min</th><th className="num">New $</th><th>Verdict</th><th>Roadrunner history</th><th>State</th></tr></thead>
           <tbody>
             {parts.map((p) => (
               <tr key={p.mpn_canonical} className={p.state ? "opacity-50" : ""}>
@@ -53,6 +53,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
                 <td className="num">{p.removal.minutes ?? ""}</td>
                 <td className="num">{p.new_price_min ? Number(p.new_price_min).toFixed(2) : ""}</td>
                 <td>{p.prefilter && p.market === "missing" ? <span className="pill pill-mute" title={p.prefilter}>skipped</span> : <VerdictPill v={p.verdict} market={p.market} />}</td>
+                <td><RoadrunnerHistory p={p.roadrunner} /></td>
                 <td><StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} /></td>
               </tr>
             ))}
