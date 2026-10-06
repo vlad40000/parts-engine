@@ -4,9 +4,9 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionResult } from "@/app/actions";
 
-function Submit({ label }: { label: string }) {
+function Submit({ label, pendingLabel = "Working…" }: { label: string; pendingLabel?: string }) {
   const { pending } = useFormStatus();
-  return <button className="btn btn-primary" disabled={pending}>{pending ? "Working…" : label}</button>;
+  return <button className="btn btn-primary" disabled={pending}>{pending ? pendingLabel : label}</button>;
 }
 
 function Result({ r }: { r: ActionResult | null }) {
@@ -63,7 +63,7 @@ export function MachineForm({ action }: { action: (prev: ActionResult | null, fo
         {field("condition", "Condition")}
         {field("diagnosis", "Why it was retired (failure symptom)", { placeholder: "won't drain, no power, …" })}
       </div>
-      <div className="mt-3"><Submit label="Save machine" /></div>
+      <div className="mt-3"><Submit label="Save machine" pendingLabel="Saving machine, reading parts list…" /></div>
       <Result r={state} />
     </form>
   );

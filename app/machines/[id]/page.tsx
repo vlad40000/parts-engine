@@ -19,6 +19,17 @@ function StateButtons({ machineNo, mpn, state }: { machineNo: string; mpn: strin
   );
 }
 
+type Bom = NonNullable<Awaited<ReturnType<typeof machineDetail>>>["bom"];
+
+function BomStatus({ bom, identityOk }: { bom: Bom; identityOk: boolean }) {
+  const queue = <Link className="text-accent underline" href="/bom">Parts lists</Link>;
+  if (!identityOk) return <div className="text-wait">Not looked up: model unreadable.</div>;
+  if (!bom) return <div>Not read yet. {queue}</div>;
+  if (bom.status === "found") return <div>{bom.rowCount} parts from {bom.source ?? "—"} ({bom.status})</div>;
+  if (bom.status === "not_found") return <div className="text-wait">Unavailable: no supplier has a parts list for this model (not_found). No parts evaluated.</div>;
+  return <div className="text-stop">Unavailable: supplier lookup failed (error). No parts evaluated; queued for retry in {queue}.</div>;
+}
+
 export default async function MachinePage({ params }: { params: Promise<{ id: string }> }) {
   if (!hasDatabase()) return <NoDatabase />;
   const { id } = await params;
@@ -36,7 +47,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
         <div className="card p-3"><div className="text-xs text-muted">Failure symptom</div><div>{m.diagnosis || "—"}</div>
           <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
         <div className="card p-3"><div className="text-xs text-muted">Parts list</div>
-          {bom ? <div>{bom.rowCount} parts from {bom.source ?? "—"} ({bom.status})</div> : <div>Not read yet. <Link className="text-accent underline" href="/bom">Parts lists</Link></div>}
+          <BomStatus bom={bom} identityOk={m.identityStatus === "ok"} />
           <div className="mt-2 text-xs text-muted">Greenlit parts still inside</div><div className="text-lg font-semibold">{green.length} · ${green.reduce((n, p) => n + (p.verdict?.verdict === "GREENLIGHT" ? p.verdict.profit : 0), 0).toFixed(2)}</div></div>
       </div>
       {m.identityStatus !== "ok" ? <div className="card mb-5 p-3 text-sm text-wait">Model is unreadable. Read the nameplate and update this machine on Intake before it can be matched.</div> : null}

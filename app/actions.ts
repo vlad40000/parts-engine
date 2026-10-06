@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
   addAlias, getSettings, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
@@ -8,6 +9,7 @@ import {
 import { parseCsvRecords } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
 import { mapMarketRows } from "@/src/lib/market-import";
+import { ensureMachineBom } from "@/src/lib/model-bom";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
 import { readTable } from "@/src/lib/table-read";
@@ -54,18 +56,18 @@ export async function addMachineAction(_prev: ActionResult | null, form: FormDat
   };
   if (!rec.ID) return { ok: false, message: "Machine ID is required." };
   const res = mapFleetRows([rec]);
-  await upsertFleet(await getDb(), res.rows);
-  revalidatePath("/", "layout");
+  const db = await getDb();
+  await upsertFleet(db, res.rows);
   const m = res.rows[0];
-  return {
-    ok: true,
-    message: `Saved machine ${m.machineNo}.`,
-    details: [
-      m.identityStatus === "needs_nameplate" ? "Model unreadable: marked needs nameplate." : `Model key ${m.brandKey} :: ${m.modelKey}`,
-      m.ageCandidateYears.length ? `Possible build years: ${m.ageCandidateYears.join(", ")} (${m.ageNote})` : `Age: ${m.ageNote}`,
-      m.suspectFamilies.length ? `Failure symptom flags: ${m.suspectFamilies.join(", ")}` : ""
-    ].filter(Boolean)
-  };
+  // Single-machine adds only: reuse the cached model BOM, or read it once. Bulk import never does this.
+  // A failed lookup never undoes the save; machine detail shows the BOM status.
+  try {
+    await ensureMachineBom(db, m);
+  } catch (error) {
+    console.error(`Parts list lookup failed for machine ${m.machineNo}:`, error instanceof Error ? error.message : error);
+  }
+  revalidatePath("/", "layout");
+  redirect(`/machines/${encodeURIComponent(m.machineNo)}`);
 }
 
 const isMarketHeader = (cells: string[]) => cells.some((c) => /^(mpn|part ?number|sku)$/i.test(c.trim()));
