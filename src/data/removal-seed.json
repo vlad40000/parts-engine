@@ -1,0 +1,784 @@
+{
+ "generic": [
+  {
+   "appliance": "Washer",
+   "component": "Main control board / ACU",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "User-interface / display board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Timer",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Console / control panel assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Lid switch",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Lid lock assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Front-load door lock",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Water inlet valve",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Pressure switch / water-level sensor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Flow meter",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Detergent dispenser assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Drain pump",
+   "minutes": 15
+  },
+  {
+   "appliance": "Washer",
+   "component": "Recirculation pump",
+   "minutes": 15
+  },
+  {
+   "appliance": "Washer",
+   "component": "Motor control board / inverter",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Drive motor",
+   "minutes": 20
+  },
+  {
+   "appliance": "Washer",
+   "component": "Stator",
+   "minutes": 15
+  },
+  {
+   "appliance": "Washer",
+   "component": "Rotor",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Motor capacitor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Shift actuator",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Drive belt",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Drive pulley",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Clutch assembly",
+   "minutes": 20
+  },
+  {
+   "appliance": "Washer",
+   "component": "Gearcase / transmission",
+   "minutes": 35
+  },
+  {
+   "appliance": "Washer",
+   "component": "Agitator",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Washplate / impeller",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Basket hub",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Inner basket / spin basket",
+   "minutes": 25
+  },
+  {
+   "appliance": "Washer",
+   "component": "Outer tub",
+   "minutes": 45
+  },
+  {
+   "appliance": "Washer",
+   "component": "Tub ring",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Suspension rod set",
+   "minutes": 15
+  },
+  {
+   "appliance": "Washer",
+   "component": "Shock absorbers",
+   "minutes": 15
+  },
+  {
+   "appliance": "Washer",
+   "component": "Suspension springs",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Counterweights",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Door boot / bellows",
+   "minutes": 20
+  },
+  {
+   "appliance": "Washer",
+   "component": "Door assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Lid assembly",
+   "minutes": 5
+  },
+  {
+   "appliance": "Washer",
+   "component": "Door/lid hinge",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Heater",
+   "minutes": 15
+  },
+  {
+   "appliance": "Washer",
+   "component": "Temperature sensor / thermistor",
+   "minutes": 10
+  },
+  {
+   "appliance": "Washer",
+   "component": "Main wiring harness",
+   "minutes": 25
+  },
+  {
+   "appliance": "Washer",
+   "component": "Top panel",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Main control board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "User-interface / display board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Timer",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Console/control panel",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Door switch",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Thermal fuse",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Cycling thermostat",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "High-limit thermostat",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Thermistor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Moisture sensor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Heating element",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Complete heater housing",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Gas valve coils",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Gas valve assembly",
+   "minutes": 15
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Igniter",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Flame sensor",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Burner assembly",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Drive motor",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Blower wheel",
+   "minutes": 15
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Drive belt",
+   "minutes": 15
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Idler pulley",
+   "minutes": 15
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Drum rollers",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Drum",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Rear drum bearing",
+   "minutes": 25
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Front bearing / glides",
+   "minutes": 15
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Lint duct / blower housing",
+   "minutes": 15
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Door assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Door hinge",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Wiring harness",
+   "minutes": 20
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Terminal block",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Power cord",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Top panel",
+   "minutes": 5
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Front panel",
+   "minutes": 10
+  },
+  {
+   "appliance": "Dryer",
+   "component": "Rear panel",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Main oven control / ERC",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Display / UI board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Touchpad",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Control-panel assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Infinite switch",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Coil surface element",
+   "minutes": 2
+  },
+  {
+   "appliance": "Range",
+   "component": "Radiant surface element",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Induction element",
+   "minutes": 15
+  },
+  {
+   "appliance": "Range",
+   "component": "Induction power/control module",
+   "minutes": 15
+  },
+  {
+   "appliance": "Range",
+   "component": "Surface burner valve",
+   "minutes": 15
+  },
+  {
+   "appliance": "Range",
+   "component": "Spark module",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Surface burner igniter",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Oven igniter",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Bake element",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Broil element",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Convection element",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Convection fan motor",
+   "minutes": 15
+  },
+  {
+   "appliance": "Range",
+   "component": "Oven temperature sensor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Thermal fuse",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Thermostat",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Door latch motor",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Oven door assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Door hinges",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Door glass / glass pack",
+   "minutes": 20
+  },
+  {
+   "appliance": "Range",
+   "component": "Glass cooktop",
+   "minutes": 15
+  },
+  {
+   "appliance": "Range",
+   "component": "Complete cooktop assembly",
+   "minutes": 15
+  },
+  {
+   "appliance": "Range",
+   "component": "Gas regulator",
+   "minutes": 10
+  },
+  {
+   "appliance": "Range",
+   "component": "Gas manifold",
+   "minutes": 20
+  },
+  {
+   "appliance": "Range",
+   "component": "Terminal block",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Power cord",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Warming/storage drawer",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Drawer slides",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Oven-light assembly",
+   "minutes": 5
+  },
+  {
+   "appliance": "Range",
+   "component": "Main wiring harness",
+   "minutes": 20
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Main control board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Compressor inverter board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Dispenser/UI control board",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Complete dispenser assembly",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Ice maker assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Ice-maker control/module",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Ice auger motor",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Ice-bin assembly",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Water inlet valve",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Filter housing / filter head",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Water reservoir",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Evaporator fan motor",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Condenser fan motor",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Air damper / diffuser",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Thermistor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Defrost thermostat",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Defrost heater",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Compressor start relay / overload",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Run capacitor",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Temperature control / thermostat",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Door switch",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "LED/light-control board",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Door assembly",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Door hinge",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Door gasket",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Door handle",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Mullion / flipper",
+   "minutes": 5
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Shelf",
+   "minutes": 2
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Crisper/freezer bin",
+   "minutes": 2
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Freezer drawer rails",
+   "minutes": 15
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Freezer drawer front",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Dispenser paddle/lever",
+   "minutes": 10
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Main wiring harness",
+   "minutes": 25
+  },
+  {
+   "appliance": "Refrigerator",
+   "component": "Air tower / duct assembly",
+   "minutes": 10
+  }
+ ],
+ "overrides": [
+  {
+   "mpn": "W10830046",
+   "appliance": "Refrigerator",
+   "component": "Door gasket",
+   "minutes": 5,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "W11305293",
+   "appliance": "Dishwasher",
+   "component": "Electronic control board",
+   "minutes": 15,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "W11567368",
+   "appliance": "Range",
+   "component": "Main oven control / ERC",
+   "minutes": 10,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "WP2304016",
+   "appliance": "Refrigerator",
+   "component": "Ice-maker control/module",
+   "minutes": 20,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "W11621183",
+   "appliance": "Washer",
+   "component": "Main control board / ACU",
+   "minutes": 15,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "WE1M1011",
+   "appliance": "Dryer",
+   "component": "Door latch / catch",
+   "minutes": 2,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "WE1M1033",
+   "appliance": "Dryer",
+   "component": "Door hinge",
+   "minutes": 5,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "WE03X25277",
+   "appliance": "Dryer",
+   "component": "Console/control panel",
+   "minutes": 10,
+   "source": "Researched exact-MPN estimate"
+  },
+  {
+   "mpn": "WE4M127",
+   "appliance": "Dryer",
+   "component": "Cycling thermostat",
+   "minutes": 15,
+   "source": "Researched exact-MPN estimate"
+  }
+ ]
+}

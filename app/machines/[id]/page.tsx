@@ -1,0 +1,64 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getDb, hasDatabase } from "@/src/db";
+import { machineDetail } from "@/src/db/queries";
+import { NoDatabase, PageTitle, VerdictPill, Years } from "@/src/components/ui";
+import { setPartStateAction } from "../../actions";
+
+export const dynamic = "force-dynamic";
+
+function StateButtons({ machineNo, mpn, state }: { machineNo: string; mpn: string; state: string | null }) {
+  const opts = state ? ["clear"] : ["pulled", "failed", "missing"];
+  return (
+    <form action={setPartStateAction} className="flex gap-1">
+      <input type="hidden" name="machineNo" value={machineNo} />
+      <input type="hidden" name="mpn" value={mpn} />
+      {state ? <span className="pill pill-mute mr-1">{state}</span> : null}
+      {opts.map((o) => <button key={o} name="state" value={o} className="btn px-2 py-0.5 text-xs">{o === "clear" ? "undo" : o}</button>)}
+    </form>
+  );
+}
+
+export default async function MachinePage({ params }: { params: Promise<{ id: string }> }) {
+  if (!hasDatabase()) return <NoDatabase />;
+  const { id } = await params;
+  const d = await machineDetail(await getDb(), decodeURIComponent(id));
+  if (!d) notFound();
+  const { machine: m, bom, parts } = d;
+  const green = parts.filter((p) => p.verdict?.verdict === "GREENLIGHT" && !p.state);
+
+  return (
+    <>
+      <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
+      <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
+        <div className="card p-3"><div className="text-xs text-muted">Serial</div><div className="mono">{m.serial || "—"}</div>
+          <div className="mt-2 text-xs text-muted">Possible build years</div><Years years={m.ageCandidateYears} /><div className="text-xs text-muted">{m.ageNote}</div></div>
+        <div className="card p-3"><div className="text-xs text-muted">Failure symptom</div><div>{m.diagnosis || "—"}</div>
+          <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
+        <div className="card p-3"><div className="text-xs text-muted">Parts list</div>
+          {bom ? <div>{bom.rowCount} parts from {bom.source ?? "—"} ({bom.status})</div> : <div>Not read yet. <Link className="text-accent underline" href="/bom">Parts lists</Link></div>}
+          <div className="mt-2 text-xs text-muted">Greenlit parts still inside</div><div className="text-lg font-semibold">{green.length} · ${green.reduce((n, p) => n + (p.verdict?.verdict === "GREENLIGHT" ? p.verdict.profit : 0), 0).toFixed(2)}</div></div>
+      </div>
+      {m.identityStatus !== "ok" ? <div className="card mb-5 p-3 text-sm text-wait">Model is unreadable. Read the nameplate and update this machine on Intake before it can be matched.</div> : null}
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr><th>Diagram</th><th>MPN</th><th>Description</th><th>Family</th><th className="num">Min</th><th className="num">New $</th><th>Verdict</th><th>State</th></tr></thead>
+          <tbody>
+            {parts.map((p) => (
+              <tr key={p.mpn_canonical} className={p.state ? "opacity-50" : ""}>
+                <td className="text-xs">{p.diagram_id}</td>
+                <td><Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(p.mpn_canonical)}`}>{p.mpn_display}</Link></td>
+                <td>{p.description}</td>
+                <td className="text-xs text-muted">{p.part_family}{p.suspect ? <span className="pill pill-wait ml-1">test first</span> : null}</td>
+                <td className="num">{p.removal.minutes ?? ""}</td>
+                <td className="num">{p.new_price_min ? Number(p.new_price_min).toFixed(2) : ""}</td>
+                <td>{p.prefilter && p.market === "missing" ? <span className="pill pill-mute" title={p.prefilter}>skipped</span> : <VerdictPill v={p.verdict} market={p.market} />}</td>
+                <td><StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
