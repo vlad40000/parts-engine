@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/src/db";
 import {
-  addAlias, getSettings, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts
+  addAlias, getSettings, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
+import { parseCsvRecords } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
 import { mapMarketRows } from "@/src/lib/market-import";
 import { canonicalizeMpn } from "@/src/lib/mpn";
+import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
 import { readTable } from "@/src/lib/table-read";
 
 export type ActionResult = { ok: boolean; message: string; details?: string[] };
@@ -85,6 +87,36 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
         res.unknown ? `${res.unknown} are not in any parts list yet (added to the MPN index with no donors).` : "",
         derived ? `${derived} had no sell-through column; derived as sold ÷ (sold + active).` : "",
         skipped.length ? `${skipped.length} skipped: ${skipped.slice(0, 5).join(" ")}` : ""
+      ].filter(Boolean)
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Import failed." };
+  }
+}
+
+export async function importSalesAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const file = form.get("file");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, message: "Choose a .csv file." };
+  if (!/\.csv$/i.test(file.name)) return { ok: false, message: "Sales history import takes the .csv contract only." };
+  try {
+    const records = parseCsvRecords(new TextDecoder().decode(await file.arrayBuffer()));
+    const res = mapSaleRows(records);
+    if (res.missingColumns.length) {
+      return { ok: false, message: `Missing required columns: ${res.missingColumns.join(", ")}.`, details: [`Expected: ${SALES_HEADERS}`] };
+    }
+    const skippedLine = res.skipped.length
+      ? `${res.skipped.length} rows skipped: ${res.skipped.slice(0, 5).map((s) => `line ${s.line} ${s.reason}`).join("; ")}`
+      : "";
+    if (!res.rows.length) return { ok: false, message: "No sale rows saved.", details: [`Saved 0, skipped ${res.skipped.length}.`, skippedLine].filter(Boolean) };
+    const saved = await upsertSaleEvents(await getDb(), res.rows, { importedFrom: file.name });
+    revalidatePath("/", "layout");
+    return {
+      ok: true,
+      message: `Saved ${res.rows.length} sale rows (${saved.inserted} new, ${saved.updated} already recorded and refreshed), skipped ${res.skipped.length}.`,
+      details: [
+        skippedLine,
+        saved.notInAnyPartsList ? `${saved.notInAnyPartsList} MPNs are not in any parts list yet. Their history is kept and appears when a parts list includes them.` : "",
+        res.ignoredColumns.length ? `Columns not imported: ${res.ignoredColumns.join(", ")}` : ""
       ].filter(Boolean)
     };
   } catch (error) {

@@ -1,0 +1,1013 @@
+{
+  "id": "0bc51ef7-8b3f-4def-8fd1-81dc6d5b76ed",
+  "prevId": "8d0f9d77-c08c-4b8b-948c-70e25221e736",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.fleet_machines": {
+      "name": "fleet_machines",
+      "schema": "",
+      "columns": {
+        "machine_no": {
+          "name": "machine_no",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "availability": {
+          "name": "availability",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'UNCHECKED'"
+        },
+        "appliance_type": {
+          "name": "appliance_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "configuration": {
+          "name": "configuration",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "brand_key": {
+          "name": "brand_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "model_raw": {
+          "name": "model_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "model_key": {
+          "name": "model_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "serial": {
+          "name": "serial",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "color": {
+          "name": "color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "condition": {
+          "name": "condition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location": {
+          "name": "location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "diagnosis": {
+          "name": "diagnosis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "list_price": {
+          "name": "list_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "acquired_at": {
+          "name": "acquired_at",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "identity_status": {
+          "name": "identity_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ok'"
+        },
+        "suspect_families": {
+          "name": "suspect_families",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "age_family": {
+          "name": "age_family",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "age_candidate_years": {
+          "name": "age_candidate_years",
+          "type": "integer[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::int[]"
+        },
+        "age_month": {
+          "name": "age_month",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "age_week": {
+          "name": "age_week",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "age_confidence": {
+          "name": "age_confidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "age_note": {
+          "name": "age_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'import'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fleet_model_idx": {
+          "name": "fleet_model_idx",
+          "columns": [
+            {
+              "expression": "brand_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "model_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "fleet_availability_idx": {
+          "name": "fleet_availability_idx",
+          "columns": [
+            {
+              "expression": "availability",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fleet_identity_check": {
+          "name": "fleet_identity_check",
+          "value": "\"fleet_machines\".\"identity_status\" in ('ok','needs_nameplate')"
+        },
+        "fleet_age_conf_check": {
+          "name": "fleet_age_conf_check",
+          "value": "\"fleet_machines\".\"age_confidence\" in ('unique','ambiguous','none')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.machine_part_state": {
+      "name": "machine_part_state",
+      "schema": "",
+      "columns": {
+        "machine_no": {
+          "name": "machine_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "machine_part_state_machine_no_mpn_canonical_pk": {
+          "name": "machine_part_state_machine_no_mpn_canonical_pk",
+          "columns": [
+            "machine_no",
+            "mpn_canonical"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "part_state_check": {
+          "name": "part_state_check",
+          "value": "\"machine_part_state\".\"state\" in ('pulled','failed','missing','skip')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.market_facts": {
+      "name": "market_facts",
+      "schema": "",
+      "columns": {
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sold_90": {
+          "name": "sold_90",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avg_price": {
+          "name": "avg_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avg_ship": {
+          "name": "avg_ship",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sell_through_pct": {
+          "name": "sell_through_pct",
+          "type": "numeric(6, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active_qty": {
+          "name": "active_qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "free_shipping": {
+          "name": "free_shipping",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "ship_cost": {
+          "name": "ship_cost",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "qty_on_hand": {
+          "name": "qty_on_hand",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "researched_at": {
+          "name": "researched_at",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'manual'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.model_bom_cache": {
+      "name": "model_bom_cache",
+      "schema": "",
+      "columns": {
+        "brand_key": {
+          "name": "brand_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_key": {
+          "name": "model_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "brand_display": {
+          "name": "brand_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_display": {
+          "name": "model_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_url": {
+          "name": "source_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "row_count": {
+          "name": "row_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "dropped_rows": {
+          "name": "dropped_rows",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "warnings": {
+          "name": "warnings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "fetched_at": {
+          "name": "fetched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "model_bom_cache_brand_key_model_key_pk": {
+          "name": "model_bom_cache_brand_key_model_key_pk",
+          "columns": [
+            "brand_key",
+            "model_key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "bom_status_check": {
+          "name": "bom_status_check",
+          "value": "\"model_bom_cache\".\"status\" in ('found','not_found','error')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.model_part_edges": {
+      "name": "model_part_edges",
+      "schema": "",
+      "columns": {
+        "brand_key": {
+          "name": "brand_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_key": {
+          "name": "model_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_display": {
+          "name": "mpn_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "diagram_id": {
+          "name": "diagram_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "supplier_part_id": {
+          "name": "supplier_part_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_price": {
+          "name": "new_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "nla": {
+          "name": "nla",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "edges_mpn_idx": {
+          "name": "edges_mpn_idx",
+          "columns": [
+            {
+              "expression": "mpn_canonical",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "model_part_edges_brand_key_model_key_mpn_canonical_pk": {
+          "name": "model_part_edges_brand_key_model_key_mpn_canonical_pk",
+          "columns": [
+            "brand_key",
+            "model_key",
+            "mpn_canonical"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mpn_alias": {
+      "name": "mpn_alias",
+      "schema": "",
+      "columns": {
+        "alias_canonical": {
+          "name": "alias_canonical",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'manual'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "alias_kind_check": {
+          "name": "alias_kind_check",
+          "value": "\"mpn_alias\".\"kind\" in ('supersedes','wp_prefix','variant')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.mpn_master": {
+      "name": "mpn_master",
+      "schema": "",
+      "columns": {
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "mpn_display": {
+          "name": "mpn_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "part_family": {
+          "name": "part_family",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'other'"
+        },
+        "appliance_hint": {
+          "name": "appliance_hint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "new_price_min": {
+          "name": "new_price_min",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "removal_min": {
+          "name": "removal_min",
+          "type": "numeric(6, 1)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "removal_source": {
+          "name": "removal_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "force_research": {
+          "name": "force_research",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.removal_baselines": {
+      "name": "removal_baselines",
+      "schema": "",
+      "columns": {
+        "appliance": {
+          "name": "appliance",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "component": {
+          "name": "component",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "minutes": {
+          "name": "minutes",
+          "type": "numeric(6, 1)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "removal_baselines_appliance_component_pk": {
+          "name": "removal_baselines_appliance_component_pk",
+          "columns": [
+            "appliance",
+            "component"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.roadrunner_sale_events": {
+      "name": "roadrunner_sale_events",
+      "schema": "",
+      "columns": {
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_event_id": {
+          "name": "source_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_display": {
+          "name": "mpn_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sold_at": {
+          "name": "sold_at",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_price": {
+          "name": "item_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "listed_at": {
+          "name": "listed_at",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "days_to_sell": {
+          "name": "days_to_sell",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "days_to_sell_source": {
+          "name": "days_to_sell_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imported_from": {
+          "name": "imported_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sale_events_mpn_idx": {
+          "name": "sale_events_mpn_idx",
+          "columns": [
+            {
+              "expression": "mpn_canonical",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "roadrunner_sale_events_source_source_event_id_mpn_canonical_pk": {
+          "name": "roadrunner_sale_events_source_source_event_id_mpn_canonical_pk",
+          "columns": [
+            "source",
+            "source_event_id",
+            "mpn_canonical"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "sale_events_quantity_check": {
+          "name": "sale_events_quantity_check",
+          "value": "\"roadrunner_sale_events\".\"quantity\" > 0"
+        },
+        "sale_events_price_check": {
+          "name": "sale_events_price_check",
+          "value": "\"roadrunner_sale_events\".\"item_price\" is null or \"roadrunner_sale_events\".\"item_price\" >= 0"
+        },
+        "sale_events_days_check": {
+          "name": "sale_events_days_check",
+          "value": "\"roadrunner_sale_events\".\"days_to_sell\" is null or \"roadrunner_sale_events\".\"days_to_sell\" >= 0"
+        },
+        "sale_events_days_source_check": {
+          "name": "sale_events_days_source_check",
+          "value": "\"roadrunner_sale_events\".\"days_to_sell_source\" is null or \"roadrunner_sale_events\".\"days_to_sell_source\" in ('supplied','derived')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.settings": {
+      "name": "settings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "fee_pct": {
+          "name": "fee_pct",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'25.00'"
+        },
+        "default_ship_cost": {
+          "name": "default_ship_cost",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0.00'"
+        },
+        "min_sell_through_pct": {
+          "name": "min_sell_through_pct",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'20.00'"
+        },
+        "harvest_cushion": {
+          "name": "harvest_cushion",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'20.00'"
+        },
+        "min_profit": {
+          "name": "min_profit",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'1.00'"
+        },
+        "labor_rate_hr": {
+          "name": "labor_rate_hr",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'15.00'"
+        },
+        "machine_overhead": {
+          "name": "machine_overhead",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'30.00'"
+        },
+        "stock_window_days": {
+          "name": "stock_window_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30
+        },
+        "batch_size": {
+          "name": "batch_size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10
+        },
+        "market_stale_days": {
+          "name": "market_stale_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30
+        },
+        "donor_availabilities": {
+          "name": "donor_availabilities",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{UNCHECKED,PARTS ONLY,NEEDS PARTS,PARTS PROGRAM}'::text[]"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "settings_singleton": {
+          "name": "settings_singleton",
+          "value": "\"settings\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
