@@ -64,7 +64,21 @@ Provider: EbayDecisions `POST /api/integrations/market-facts`, response `schemaV
 - Price basis gate: `avg_price`/`avg_ship` feed PE-4 economics as sold-price evidence, so they are written only when `sold90.priceBasis` is `sold`. For `asking` or `unknown`, `sold_90`, `sell_through_pct`, `researched_at` and `source` still update from that 90-day observation, but existing `avg_price`/`avg_ship` are kept (a new row leaves them null). `active.askingPrice`/`askingShipping` are never substituted.
 - Not persisted in A2: `active.askingPrice`, `active.askingShipping`, `active.sampleSize`/`truncated`, `sold90.source`, and `sold90.priceBasis` itself (it gates the price write above but is not stored). `market_facts` has no non-conflicting columns for asking-price evidence; caching it is the next additive market-evidence extension and must not change qualification semantics.
 
-Not built yet: ensuring/registering exact MPNs and requesting research for stale/missing MPNs in EbayDecisions.
+### One-click research (A4, current)
+
+Provider: EbayDecisions A3 (merged at EbayDecisions `761393a`): `POST /api/integrations/parts/register` and `POST /api/integrations/research`, both `schemaVersion: 1`, same bearer key. Parts Engine still never opens the EbayDecisions database.
+
+- Trigger: MPNs → Research queue → **Research next 20 with EbayDecisions**. One explicit click; no polling, cron or background research. The plain **Refresh market facts from EbayDecisions** button stays as the stored-facts-only fallback.
+- Working set: the first 20 rendered queue rows, in queue order (donors first). The server takes at most 20 D1 keys however many are posted, and sends only MPNs in Parts Engine's own MPN index.
+- Server-side, in order:
+  1. **Register**: `{ parts: [{ mpn, description }] }`: the stored display MPN (or the D1 key when the display would not map back to it) and the MPN-index description, clipped to the provider's 200/500-character bounds. Nothing else is sent: no donor counts (recoverable donor stock is not provider inventory), stock, economics, or machine data. Insert-only on the provider. 15 s timeout.
+  2. **Research**: `{ mpns: [D1 keys] }`. The provider researches registered parts through the official eBay APIs and saves what it verifies. 240 s timeout; the `/mpns` page runs with `maxDuration = 300`.
+  3. **Read stored facts**: the A2 zero-write `market-facts` call for the same keys.
+  4. **Write**: the A2 `planMarketFacts` → `patchProviderMarketFacts` path unchanged, so the same provider-owned fields, price-basis gate and null handling apply. Research outcomes are reported only, never stored.
+- Registration and research responses are validated in full (v1 shape, exactly one result per requested D1 key, research `overall` consistent with its sold/active outcomes) and fail closed.
+- Failure handling: a failed registration stops before research and saves nothing. A failed, timed-out or malformed research call still ends in the stored-facts read, because the provider saves each MPN as it goes; that read is validated on its own and saves nothing if it fails. Unregistered/failed MPNs never erase existing facts.
+- Summary: newly vs. already registered; sold/active research saved; sold unavailable/unverified; failed (nothing saved); the provider's fixed notes with counts; market facts refreshed; how many still lack exact sell-through; and the resulting Parts Engine qualification counts. Research does not qualify a part. Without exact sell-through from EbayDecisions it stays NEEDS DATA.
+- No migration.
 
 CSV import/export remains a fallback.
 

@@ -4,11 +4,13 @@ import { mpnIndex, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { ButtonForm, UploadForm } from "@/src/components/forms";
-import { EBAYDECISIONS_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
+import { EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_RESEARCH_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
 import { SALES_HEADERS } from "@/src/lib/sales-import";
-import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
+import { importMarketAction, importSalesAction, refreshMarketFactsAction, researchQueueAction } from "../actions";
 
 export const dynamic = "force-dynamic";
+/** One-click research (register → up to 20 researched MPNs → stored-facts refresh) runs in this page's actions. */
+export const maxDuration = 300;
 type SP = Promise<Record<string, string | undefined>>;
 
 const VIEWS: Array<{ key: NonNullable<MpnFilter["view"]>; label: string }> = [
@@ -68,10 +70,27 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
           <div className="basis-full">
             {isEbayDecisionsConfigured() ? (
               rows.length ? (
-                <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
-                  {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
-                  {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
-                </ButtonForm>
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <ButtonForm action={researchQueueAction} label={`Research next ${Math.min(rows.length, EBAYDECISIONS_RESEARCH_MAX_MPNS)} with EbayDecisions`}
+                      pendingLabel="Registering, researching on eBay, refreshing… (can take a few minutes)">
+                      {/* The first rows below, in queue order; the server sends at most 20 and the API key never leaves it. */}
+                      {rows.slice(0, EBAYDECISIONS_RESEARCH_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
+                    </ButtonForm>
+                    <p className="mt-1 text-xs text-muted">
+                      Registers the first {Math.min(rows.length, EBAYDECISIONS_RESEARCH_MAX_MPNS)} MPNs below in EbayDecisions (MPN and description only), runs exact-MPN
+                      eBay research there, then refreshes their stored facts. Research alone does not qualify a part: exact sell-through is never derived, so
+                      without it a part stays NEEDS DATA.
+                    </p>
+                  </div>
+                  <div>
+                    <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
+                      {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
+                      {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
+                    </ButtonForm>
+                    <p className="mt-1 text-xs text-muted">Reads facts already stored in EbayDecisions for every MPN on this page. No registration, no research.</p>
+                  </div>
+                </div>
               ) : null
             ) : (
               <span className="text-xs text-muted">Live EbayDecisions refresh is not configured (EBAYDECISIONS_URL and EBAYDECISIONS_API_KEY). Use the CSV export and the market facts import below.</span>

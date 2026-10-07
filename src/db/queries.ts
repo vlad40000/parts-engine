@@ -498,6 +498,16 @@ export async function mpnIndex(db: Db, f: MpnFilter, limit = 200, offset = 0) {
 
 const valueOf = (r: MpnEvaluated) => r.qualification?.modeledValueSlotDay ?? -Infinity;
 
+/** Evaluated index rows for a bounded set of D1 keys, in the given order; keys not in the index are omitted. */
+export async function mpnRowsFor(db: Db, keys: string[]): Promise<MpnEvaluated[]> {
+  if (!keys.length) return [];
+  const s = await getSettings(db);
+  const baselines = await getBaselines(db);
+  const rows = await q<MpnRow>(db, sql`select * from (${MPN_SELECT(s.donorAvailabilities)}) x where mpn_canonical = any(${sql.raw(pgTextArray(keys))})`);
+  const byKey = new Map(rows.map((r) => [r.mpn_canonical, evaluateMpn(r, s, baselines)]));
+  return keys.flatMap((k) => byKey.get(k) ?? []);
+}
+
 export async function mpnDetail(db: Db, mpnRaw: string) {
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
