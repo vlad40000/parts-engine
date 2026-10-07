@@ -236,9 +236,16 @@ export type ModelCandidate = {
   brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
 };
 
-/** Unique models still needing a parts list, most machines first (best BOM reuse). */
-export async function modelsNeedingBom(db: Db, f: FleetFilter, donorSet: string[], limit = 200): Promise<ModelCandidate[]> {
-  return q<ModelCandidate>(db, sql`
+/** Parts lists page size. */
+export const BOM_QUEUE_PAGE_SIZE = 300;
+
+/**
+ * The pending parts-list queue: one group per Brand + Model (never serial), counting only machines with a
+ * readable model whose status is in the Settings donor set. found / not_found leave the queue; error stays
+ * for retry. Page rows and totals both read this, so the totals cannot drift from the queue.
+ */
+function pendingBomGroups(f: FleetFilter, donorSet: string[]) {
+  return sql`
     select f.brand_key, f.model_key, min(f.brand) brand, min(f.model_raw) model, count(*)::int machines,
       string_agg(distinct f.appliance_type, ', ') types, min(c.status) bom_status
     from fleet_machines f
@@ -247,9 +254,34 @@ export async function modelsNeedingBom(db: Db, f: FleetFilter, donorSet: string[
       and f.availability = any(${sql.raw(pgTextArray(donorSet))})
       and (c.status is null or c.status = 'error')
       and ${fleetWhere(f)}
-    group by f.brand_key, f.model_key
-    order by count(*) desc, f.brand_key, f.model_key
-    limit ${limit}`);
+    group by f.brand_key, f.model_key`;
+}
+
+/** Unique models still needing a parts list, most machines first (best BOM reuse). */
+export async function modelsNeedingBom(db: Db, f: FleetFilter, donorSet: string[], limit = 200, offset = 0): Promise<ModelCandidate[]> {
+  return q<ModelCandidate>(db, sql`
+    select * from (${pendingBomGroups(f, donorSet)}) g
+    order by g.machines desc, g.brand_key, g.model_key
+    limit ${limit} offset ${offset}`);
+}
+
+export type BomQueue = { rows: ModelCandidate[]; totalModels: number; totalMachines: number; offset: number };
+
+/**
+ * One bounded page of the pending queue, plus totals over every pending group (not just this page).
+ * An offset past the end (the queue shrank after a batch, or a stale link) falls back to the last page.
+ */
+export async function bomQueue(db: Db, f: FleetFilter, donorSet: string[], limit = BOM_QUEUE_PAGE_SIZE, offset = 0): Promise<BomQueue> {
+  const start = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
+  const [rows, [totals]] = await Promise.all([
+    modelsNeedingBom(db, f, donorSet, limit, start),
+    q<{ models: number; machines: number }>(db, sql`
+      select count(*)::int models, coalesce(sum(g.machines), 0)::int machines from (${pendingBomGroups(f, donorSet)}) g`)
+  ]);
+  const counts = { totalModels: totals.models, totalMachines: totals.machines };
+  if (rows.length || start === 0) return { rows, ...counts, offset: start };
+  const last = Math.max(0, Math.ceil(totals.models / limit) - 1) * limit;
+  return { rows: await modelsNeedingBom(db, f, donorSet, limit, last), ...counts, offset: last };
 }
 
 function pgTextArray(values: string[]): string {

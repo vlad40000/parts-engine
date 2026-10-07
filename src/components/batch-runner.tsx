@@ -21,6 +21,12 @@ type Job = {
 
 const keyOf = (brand: string, model: string) => `${brand.trim().toUpperCase()}::${model.trim().toUpperCase()}`;
 
+/** The selections that are still rows on this page; the same Set when nothing changed. */
+export function selectionOnPage(selected: Set<string>, candidates: Candidate[]): Set<string> {
+  const onPage = new Set(candidates.map((c) => keyOf(c.brand, c.model)));
+  return [...selected].every((k) => onPage.has(k)) ? selected : new Set([...selected].filter((k) => onPage.has(k)));
+}
+
 export function BatchRunner({ candidates, batchSize }: { candidates: Candidate[]; batchSize: number }) {
   const router = useRouter();
   const controllers = useRef(new Map<string, AbortController>());
@@ -32,6 +38,10 @@ export function BatchRunner({ candidates, batchSize }: { candidates: Candidate[]
 
   const running = jobs.filter((j) => j.state === "running").length;
   const doneKeys = new Set(jobs.filter((j) => j.state !== "canceled" && j.state !== "error").map((j) => j.key));
+
+  // Paging and refreshes swap the rows but keep this component (and any running batch) mounted,
+  // so a selection made on another page would otherwise count toward "Run" without being run.
+  useEffect(() => setSelected((cur) => selectionOnPage(cur, candidates)), [candidates]);
 
   useEffect(() => {
     if (!running) return;
