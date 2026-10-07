@@ -3,9 +3,10 @@ import { getDb, hasDatabase } from "@/src/db";
 import { mpnIndex, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
-import { UploadForm } from "@/src/components/forms";
+import { ButtonForm, UploadForm } from "@/src/components/forms";
+import { EBAYDECISIONS_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
 import { SALES_HEADERS } from "@/src/lib/sales-import";
-import { importMarketAction, importSalesAction } from "../actions";
+import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -64,6 +65,18 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
         <div className="card mb-4 flex flex-wrap items-center gap-3 p-3 text-sm">
           <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors. Export drops into EbayDecisions → Import.</span>
           <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>
+          <div className="basis-full">
+            {isEbayDecisionsConfigured() ? (
+              rows.length ? (
+                <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
+                  {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
+                  {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
+                </ButtonForm>
+              ) : null
+            ) : (
+              <span className="text-xs text-muted">Live EbayDecisions refresh is not configured (EBAYDECISIONS_URL and EBAYDECISIONS_API_KEY). Use the CSV export and the market facts import below.</span>
+            )}
+          </div>
         </div>
       ) : null}
 

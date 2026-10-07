@@ -38,6 +38,23 @@ export function UploadForm({ action, label, accept, children }: {
   );
 }
 
+/** A one-button form; the server renders whatever hidden inputs the action needs as children. */
+export function ButtonForm({ action, label, pendingLabel, children }: {
+  action: (prev: ActionResult | null, form: FormData) => Promise<ActionResult>;
+  label: string;
+  pendingLabel?: string;
+  children?: React.ReactNode;
+}) {
+  const [state, formAction] = useActionState(action, null);
+  return (
+    <form action={formAction}>
+      {children}
+      <Submit label={label} pendingLabel={pendingLabel} />
+      <Result r={state} />
+    </form>
+  );
+}
+
 export function MachineForm({ action }: { action: (prev: ActionResult | null, form: FormData) => Promise<ActionResult> }) {
   const [state, formAction] = useActionState(action, null);
   const field = (name: string, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
