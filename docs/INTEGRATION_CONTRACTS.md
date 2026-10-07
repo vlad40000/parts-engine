@@ -50,8 +50,8 @@ Provider: EbayDecisions `POST /api/integrations/market-facts`, response `schemaV
 | Provider | market_facts |
 | --- | --- |
 | `sold90.soldQty` | `sold_90` |
-| `sold90.avgSoldPrice` | `avg_price` |
-| `sold90.avgBuyerShipping` | `avg_ship` |
+| `sold90.avgSoldPrice` | `avg_price`, only when `sold90.priceBasis = sold` |
+| `sold90.avgBuyerShipping` | `avg_ship`, only when `sold90.priceBasis = sold` |
 | `sold90.sellThroughPct` | `sell_through_pct`; `sell_through_source = research` when non-null, else null |
 | UTC date of `sold90.capturedAt` | `researched_at` |
 | (with sold90) | `source = ebaydecisions_api` |
@@ -61,7 +61,8 @@ Provider: EbayDecisions `POST /api/integrations/market-facts`, response `schemaV
 - `sold90: null`: sold facts and `researched_at` stay as they were, so a newer active snapshot never makes sold research look fresh. `active: null`: `active_qty` stays as it was.
 - `unregistered`, or a requested key missing from the response (counted as failed): nothing is written; existing facts stay.
 - Provider nulls are stored as null. Sell-through is never derived.
-- Not persisted in A2: `active.askingPrice`, `active.askingShipping`, `active.sampleSize`/`truncated`, `sold90.source`/`priceBasis`. `market_facts` has no non-conflicting columns for asking-price evidence; caching it is the next additive market-evidence extension and must not change qualification semantics.
+- Price basis gate: `avg_price`/`avg_ship` feed PE-4 economics as sold-price evidence, so they are written only when `sold90.priceBasis` is `sold`. For `asking` or `unknown`, `sold_90`, `sell_through_pct`, `researched_at` and `source` still update from that 90-day observation, but existing `avg_price`/`avg_ship` are kept (a new row leaves them null). `active.askingPrice`/`askingShipping` are never substituted.
+- Not persisted in A2: `active.askingPrice`, `active.askingShipping`, `active.sampleSize`/`truncated`, `sold90.source`, and `sold90.priceBasis` itself (it gates the price write above but is not stored). `market_facts` has no non-conflicting columns for asking-price evidence; caching it is the next additive market-evidence extension and must not change qualification semantics.
 
 Not built yet: ensuring/registering exact MPNs and requesting research for stale/missing MPNs in EbayDecisions.
 

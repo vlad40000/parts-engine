@@ -648,6 +648,11 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
 export type ProviderSoldPatch = {
   mpnCanonical: string;
   sold90: number | null;
+  /**
+   * True only when the provider's 90-day price basis is "sold". Otherwise avgPrice/avgShip are
+   * null and are never written: existing confirmed price/shipping are kept, a new row stays null.
+   */
+  priceIsSold: boolean;
   avgPrice: number | null;
   avgShip: number | null;
   sellThroughPct: number | null;
@@ -670,12 +675,16 @@ export async function patchProviderMarketFacts(
   source: string
 ): Promise<void> {
   const money = (v: number | null) => (v == null ? null : v.toFixed(2));
-  if (sold.length) {
-    await db.insert(t.marketFacts).values(sold.map((r) => ({
+  // Asking/unknown-basis prices must never reach PE-4 economics as sold prices, so those rows
+  // update sold quantity, sell-through and SOLD freshness but leave avg_price/avg_ship alone.
+  for (const priced of [true, false]) {
+    const rows = sold.filter((r) => r.priceIsSold === priced);
+    if (!rows.length) continue;
+    await db.insert(t.marketFacts).values(rows.map((r) => ({
       mpnCanonical: r.mpnCanonical,
       sold90: r.sold90,
-      avgPrice: money(r.avgPrice),
-      avgShip: money(r.avgShip),
+      avgPrice: priced ? money(r.avgPrice) : null,
+      avgShip: priced ? money(r.avgShip) : null,
       sellThroughPct: money(r.sellThroughPct),
       sellThroughSource: r.sellThroughPct == null ? null : r.sellThroughSource,
       researchedAt: r.researchedAt,
@@ -684,7 +693,8 @@ export async function patchProviderMarketFacts(
     }))).onConflictDoUpdate({
       target: t.marketFacts.mpnCanonical,
       set: {
-        sold90: sql`excluded.sold_90`, avgPrice: sql`excluded.avg_price`, avgShip: sql`excluded.avg_ship`,
+        sold90: sql`excluded.sold_90`,
+        ...(priced ? { avgPrice: sql`excluded.avg_price`, avgShip: sql`excluded.avg_ship` } : {}),
         sellThroughPct: sql`excluded.sell_through_pct`, sellThroughSource: sql`excluded.sell_through_source`,
         researchedAt: sql`excluded.researched_at`, source: sql`excluded.source`, updatedAt: sql`now()`
       }

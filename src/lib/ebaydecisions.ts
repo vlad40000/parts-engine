@@ -156,8 +156,11 @@ export type MarketFactsPlan = {
 /**
  * Maps validated provider facts to the provider-owned market_facts fields only.
  *
- * - `sold90` → sold_90 / avg_price / avg_ship / sell_through_pct (+ `research` provenance when
- *   non-null) / researched_at (the SOLD capture date) / source. Nulls stay null; nothing is derived.
+ * - `sold90` → sold_90 / sell_through_pct (+ `research` provenance when non-null) / researched_at
+ *   (the SOLD capture date) / source. Nulls stay null; nothing is derived.
+ * - `sold90.avgSoldPrice` / `avgBuyerShipping` → avg_price / avg_ship only when `priceBasis` is
+ *   "sold". For "asking" or "unknown" they are dropped: existing confirmed price/shipping are kept
+ *   and a new row leaves them null. Active asking price is never substituted.
  * - `active` → active_qty only. Asking price/shipping are not persisted in A2.
  * - No `sold90`: sold facts and researched_at are left untouched, so a newer active snapshot
  *   can never make old or missing sold research look fresh.
@@ -172,11 +175,13 @@ export function planMarketFacts(requested: string[], facts: ProviderFact[]): Mar
     if (fact.status === "unregistered") { plan.unregistered.push(key); continue; }
     if (fact.sold90) {
       const s = fact.sold90;
+      const priceIsSold = s.priceBasis === "sold";
       plan.sold.push({
         mpnCanonical: key,
         sold90: s.soldQty,
-        avgPrice: s.avgSoldPrice,
-        avgShip: s.avgBuyerShipping,
+        priceIsSold,
+        avgPrice: priceIsSold ? s.avgSoldPrice : null,
+        avgShip: priceIsSold ? s.avgBuyerShipping : null,
         sellThroughPct: s.sellThroughPct,
         sellThroughSource: s.sellThroughPct == null ? null : "research",
         researchedAt: new Date(s.capturedAt).toISOString().slice(0, 10)

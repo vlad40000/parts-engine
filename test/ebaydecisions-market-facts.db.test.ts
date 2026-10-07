@@ -290,6 +290,30 @@ describe("Live refresh: market_facts writes", () => {
     expect(await db.select().from(schema.roadrunnerSaleEvents)).toEqual(salesBefore);
     expect(await roadrunnerPerformance(db, [BOARD])).toEqual(perfBefore);
   });
+
+  it("asking-basis 90-day prices never overwrite confirmed sold price/shipping; quantity, sell-through and freshness still update", async () => {
+    configure();
+    const mpn = "W22222222";
+    await saveMarketAction(form({ mpn, sold90: "5", avgPrice: "64", avgShip: "8", sellThroughPct: "30", activeQty: "6", researchedAt: "2026-05-01" }));
+    provider(envelope([found(mpn, sold90({ priceBasis: "asking", soldQty: 7, avgSoldPrice: 140, avgBuyerShipping: 19, sellThroughPct: 35 }),
+      active({ activeQty: 9, askingPrice: 150, askingShipping: 20 }))]));
+    expect((await refreshMarketFactsAction(null, form({ mpn: [mpn] })))).toMatchObject({ ok: true });
+    expect(await facts(mpn)).toMatchObject({
+      sold90: 7, avgPrice: "64.00", avgShip: "8.00", sellThroughPct: "35.00", sellThroughSource: "research",
+      activeQty: 9, researchedAt: "2026-09-20", source: "ebaydecisions_api"
+    });
+  });
+
+  it("unknown-basis 90-day prices on a new row leave price/shipping null, and active asking price is not substituted", async () => {
+    configure();
+    const mpn = "W33333333";
+    provider(envelope([found(mpn, sold90({ priceBasis: "unknown", soldQty: 3, avgSoldPrice: 77, avgBuyerShipping: 6 }),
+      active({ activeQty: 4, askingPrice: 99, askingShipping: 7 }))]));
+    expect((await refreshMarketFactsAction(null, form({ mpn: [mpn] })))).toMatchObject({ ok: true });
+    expect(await facts(mpn)).toMatchObject({
+      sold90: 3, avgPrice: null, avgShip: null, sellThroughPct: "42.50", activeQty: 4, researchedAt: "2026-09-20", source: "ebaydecisions_api"
+    });
+  });
 });
 
 describe("planMarketFacts", () => {
@@ -298,5 +322,19 @@ describe("planMarketFacts", () => {
     const plan = planMarketFacts([BOARD], facts);
     expect(plan.sold[0].researchedAt).toBe("2026-03-02");
     expect(plan.active).toEqual([{ mpnCanonical: BOARD, activeQty: 37 }]);
+  });
+
+  it("passes avg price/shipping through only for a sold price basis", () => {
+    const keys = [BOARD, PUMP, LID];
+    const facts = parseMarketFactsResponse(envelope([
+      found(BOARD, sold90(), null),
+      found(PUMP, sold90({ priceBasis: "asking" }), active()),
+      found(LID, sold90({ priceBasis: "unknown" }), null)
+    ]), keys);
+    expect(planMarketFacts(keys, facts).sold.map(({ mpnCanonical, priceIsSold, avgPrice, avgShip, sold90: q }) => ({ mpnCanonical, priceIsSold, avgPrice, avgShip, q }))).toEqual([
+      { mpnCanonical: BOARD, priceIsSold: true, avgPrice: 95.5, avgShip: 11.25, q: 12 },
+      { mpnCanonical: PUMP, priceIsSold: false, avgPrice: null, avgShip: null, q: 12 },
+      { mpnCanonical: LID, priceIsSold: false, avgPrice: null, avgShip: null, q: 12 }
+    ]);
   });
 });
