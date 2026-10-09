@@ -7,7 +7,7 @@ import type { FleetRow } from "@/src/lib/fleet-import";
 import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candidates";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
-import type { SharedResearchRow } from "@/src/lib/shared-research-csv";
+import { buildSharedResearchExport, type SharedResearchRow } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import * as t from "./schema";
@@ -978,4 +978,20 @@ export async function setPartState(db: Db, machineNo: string, mpnCanonical: stri
 export async function researchQueueCsvRows(db: Db) {
   const { rows } = await mpnIndex(db, { view: "queue" }, 100000);
   return rows;
+}
+
+/**
+ * The research queue as one shared research CSV batch, in queue order (see buildSharedResearchExport):
+ * the first SHARED_RESEARCH_MAX_ROWS exportable rows. Researched rows leave the queue once imported,
+ * so the next export holds the next batch. Also reports what the file leaves out.
+ */
+export async function researchQueueExport(db: Db) {
+  return buildSharedResearchExport((await researchQueueCsvRows(db)).map((r) => ({
+    mpnCanonical: r.mpn_canonical,
+    mpnDisplay: r.mpn_display,
+    description: r.description,
+    notes: `Parts Engine: ${r.donors} donor machine(s) across ${r.models} model(s); family ${r.part_family}` +
+      (r.market === "stale" ? "; research is stale" : ""),
+    newPrice: r.new_price_min
+  })));
 }

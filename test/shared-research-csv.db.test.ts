@@ -7,11 +7,15 @@ import ExcelJS from "exceljs";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { addAlias, getSettings, mpnDetail, saveModelBom, saveSettings, upsertFleet } from "@/src/db/queries";
+import {
+  addAlias, getSettings, mpnDetail, researchQueueCsvRows, researchQueueExport, saveModelBom, saveSettings, upsertFleet
+} from "@/src/db/queries";
 import { parseCsvRows, toCsv } from "@/src/lib/csv";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { mapMarketRows } from "@/src/lib/market-import";
-import { buildSharedResearchCsv, parseSharedResearchCsv, SHARED_RESEARCH_CSV_HEADERS } from "@/src/lib/shared-research-csv";
+import {
+  buildSharedResearchCsv, buildSharedResearchExport, parseSharedResearchCsv, SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS
+} from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import type { SupplierRow } from "@/src/sources/types";
 import { importMarketAction, saveMarketAction } from "@/app/actions";
@@ -58,6 +62,12 @@ const importFile = (name: string, content: BlobPart) => {
 const sharedCsv = (rows: Array<Partial<Record<Header, string>>>) =>
   toCsv([...SHARED_RESEARCH_CSV_HEADERS], rows.map((r) => SHARED_RESEARCH_CSV_HEADERS.map((h) => r[h] ?? "")));
 const exported = async () => (await exportQueue()).text();
+/** Every generated export must import as is: parses it with the import's own validator. */
+const importable = (text: string) => {
+  const parsed = parseSharedResearchCsv(text);
+  if (!parsed.ok) throw new Error(`${parsed.error}\n${parsed.errors.join("\n")}`);
+  return parsed.rows;
+};
 const facts = async (mpn: string) => (await db.select().from(schema.marketFacts).where(eq(schema.marketFacts.mpnCanonical, mpn)))[0];
 const master = async (mpn: string) => (await db.select().from(schema.mpnMaster).where(eq(schema.mpnMaster.mpnCanonical, mpn)))[0];
 const byKey = <T extends { mpnCanonical: string }>(rows: T[]) => rows.sort((a, b) => a.mpnCanonical.localeCompare(b.mpnCanonical));
@@ -96,15 +106,39 @@ describe("Export queue CSV: the shared research format", () => {
     expect(row.get(FUSE)![2]).toMatch(/^Parts Engine: 2 donor machine\(s\) across 1 model\(s\); family /);
     expect([row.get(BOARD)![3], row.get(FUSE)![3], row.get(LID)![3]]).toEqual(["180.00", "12.40", ""]);
     for (const r of rows) expect(r.slice(4)).toEqual(["", "", "", "", "", "", ""]);
+    expect(importable(text)).toHaveLength(rows.length);
   });
 
   it("only writes cells EbayDecisions accepts: a display that would not map back becomes the D1 key; descriptions clip to 500", () => {
-    const [, wp, fuse] = parseCsvRows(buildSharedResearchCsv([
+    const csv = buildSharedResearchCsv([
       { mpnCanonical: "W10545371", mpnDisplay: "WPW10545371", description: "d".repeat(600), notes: "n", newPrice: null },
       { mpnCanonical: "DC4700019A", mpnDisplay: " DC47-00019A ", description: " Thermal Fuse ", notes: "", newPrice: "12.4" }
-    ]));
+    ]);
+    const [, wp, fuse] = parseCsvRows(csv);
     expect(wp.slice(0, 4)).toEqual(["W10545371", "d".repeat(500), "n", ""]);
     expect(fuse.slice(0, 4)).toEqual(["DC47-00019A", "Thermal Fuse", "", "12.40"]);
+    expect(importable(csv)).toHaveLength(2);
+  });
+
+  it("never writes a file its own import rejects: overlong keys left out whole, an out-of-range New Price blank, at most 5,000 rows", () => {
+    const row = (mpnCanonical: string, newPrice: string | number | null = null) =>
+      ({ mpnCanonical, mpnDisplay: mpnCanonical, description: "Drain Pump", notes: "", newPrice });
+    const OVERLONG = "A".repeat(201);
+    const LONGEST = "B".repeat(200);
+    const filler = Array.from({ length: SHARED_RESEARCH_MAX_ROWS }, (_, i) => `Q${i}`);
+    const out = buildSharedResearchExport([
+      row(OVERLONG), row(LONGEST), row("BIG1", "1000000.01"), row("TOP1", "1000000.00"), row("NEG1", -1), ...filler.map((k) => row(k, 60))
+    ]);
+    const rows = importable(out.csv);
+    expect(parseCsvRows(out.csv)[0]).toEqual([...SHARED_RESEARCH_CSV_HEADERS]);
+    // The first 5,000 exportable rows in the order given; the last 4 wait for the next batch.
+    expect(rows.map((r) => r.mpnCanonical)).toEqual([LONGEST, "BIG1", "TOP1", "NEG1", ...filler.slice(0, SHARED_RESEARCH_MAX_ROWS - 4)]);
+    expect(out).toMatchObject({ exported: SHARED_RESEARCH_MAX_ROWS, later: 4, omittedMpns: [OVERLONG] });
+    // Left out whole: no shortened form of the overlong key is written.
+    expect(out.csv).not.toContain("A".repeat(10));
+    // Kept, New Price blank only where the import would reject it, never clamped.
+    expect(rows.slice(1, 4).map((r) => [r.mpnCanonical, r.newPrice])).toEqual([["BIG1", null], ["TOP1", 1_000_000], ["NEG1", null]]);
+    expect(out.blankNewPrices).toEqual([{ mpnCanonical: "BIG1", newPrice: "1000000.01" }, { mpnCanonical: "NEG1", newPrice: -1 }]);
   });
 });
 
@@ -355,5 +389,50 @@ describe("parseSharedResearchCsv", () => {
     expect(parseSharedResearchCsv("Part,90 Day sales\nW1,3\n")).toMatchObject({ ok: false, error: "No mpn column found. Header was: Part, 90 Day sales" });
     expect(parseSharedResearchCsv("mpn,90 Day sales,90_day_sales\nW1,3,3\n"))
       .toMatchObject({ ok: false, error: 'Columns "90 Day sales" and "90_day_sales" are both "90 Day sales". Keep one.' });
+  });
+});
+
+// Last in the file: it adds over 5,000 MPNs to the queue.
+describe("Export queue CSV: a queue over 5,000 MPNs goes out in batches", () => {
+  it("each export is the next 5,000 in queue order and imports as is; overlong keys stay out whole; an out-of-range New Price goes blank, unchanged in Parts Engine", async () => {
+    const OVERLONG = "A".repeat(201);
+    const BIG = "BIGPRICE1";
+    await upsertFleet(db, mapFleetRows([{ ...washer(3), ModelNumber: "MVWX500BW0" }]).rows);
+    await saveModelBom(db, {
+      brandKey: "MAYTAG", modelKey: "MVWX500BW0", brandDisplay: "Maytag", modelDisplay: "MVWX500BW0",
+      result: chain([
+        part(OVERLONG, "Drain Pump", 50), part("BIG-PRICE-1", "Washer Electronic Control Board", 1_500_000),
+        ...Array.from({ length: SHARED_RESEARCH_MAX_ROWS + 3 }, (_, i) => part(`Q${String(i).padStart(5, "0")}`, `Drain Pump ${i}`, 60))
+      ])
+    });
+    const queue = (await researchQueueCsvRows(db)).map((r) => r.mpn_canonical);
+    expect(queue).toContain(OVERLONG);
+    const exportable = queue.filter((k) => k !== OVERLONG);
+    expect(exportable.length).toBeGreaterThan(SHARED_RESEARCH_MAX_ROWS);
+
+    const text = await exported();
+    const [header, ...cells] = parseCsvRows(text);
+    expect(header).toEqual([...SHARED_RESEARCH_CSV_HEADERS]);
+    const first = importable(text);
+    expect(first.map((r) => r.mpnCanonical)).toEqual(exportable.slice(0, SHARED_RESEARCH_MAX_ROWS));
+    expect(cells.every((r) => r[0].length <= 200 && !r[0].startsWith("AAAA"))).toBe(true);
+    expect(first.find((r) => r.mpnCanonical === BIG)).toMatchObject({ newPrice: null });
+    expect((await master(BIG))!.newPriceMin).toBe("1500000.00");
+    // What the research queue view reports next to the button.
+    expect(await researchQueueExport(db)).toMatchObject({
+      exported: SHARED_RESEARCH_MAX_ROWS, later: exportable.length - SHARED_RESEARCH_MAX_ROWS,
+      omittedMpns: [OVERLONG], blankNewPrices: [{ mpnCanonical: BIG, newPrice: "1500000.00" }]
+    });
+
+    // Research the batch and import it as is: those MPNs leave the queue, so the next export is the next batch.
+    const filled = cells.map((r) => r.map((cell, i) => (header[i] === "90 Day sales" ? "2" : cell)));
+    expect(await importFile("batch-1.csv", toCsv(header, filled))).toMatchObject({
+      ok: true, message: expect.stringContaining(`90-day research saved for ${SHARED_RESEARCH_MAX_ROWS} MPNs`)
+    });
+    expect(importable(await exported()).map((r) => r.mpnCanonical)).toEqual(exportable.slice(SHARED_RESEARCH_MAX_ROWS));
+    expect(await researchQueueExport(db)).toMatchObject({
+      exported: exportable.length - SHARED_RESEARCH_MAX_ROWS, later: 0, omittedMpns: [OVERLONG], blankNewPrices: []
+    });
+    expect((await master(BIG))!.newPriceMin).toBe("1500000.00");
   });
 });

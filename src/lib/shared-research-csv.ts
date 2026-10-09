@@ -228,21 +228,50 @@ export type SharedResearchExportRow = {
   newPrice: string | number | null;
 };
 
+export type SharedResearchExport = {
+  csv: string;
+  /** Rows in this file: at most SHARED_RESEARCH_MAX_ROWS, in the order given. */
+  exported: number;
+  /** Exportable rows after this batch. A later export holds them once this batch leaves the queue. */
+  later: number;
+  /** D1 keys longer than the shared MPN limit. Never written and never truncated. */
+  omittedMpns: string[];
+  /** Rows in this file written with New Price blank: the import would reject the value. It is not changed. */
+  blankNewPrices: Array<{ mpnCanonical: string; newPrice: string | number }>;
+};
+
 /**
- * Research-queue rows as a shared research CSV. Only mpn, description, notes and New Price are
- * filled. Every research column is left blank for the operator, so uploading an unedited export
- * changes no market facts and stamps no research date.
+ * Research-queue rows as one shared research CSV batch that both apps import as is. Only mpn,
+ * description, notes and New Price are filled. Every research column is left blank for the operator,
+ * so uploading an unedited export changes no market facts and stamps no research date.
+ * Nothing outside the shared contract is written, and nothing is shortened or clamped to fit:
+ * - a row whose D1 key is longer than the MPN limit is left out (truncating could merge distinct OEM parts);
+ * - a New Price the import would reject (such as one over 1,000,000) is written blank, the row kept;
+ * - then the first SHARED_RESEARCH_MAX_ROWS rows are written, in the order given.
  */
-export function buildSharedResearchCsv(rows: SharedResearchExportRow[]): string {
-  return toCsv([...SHARED_RESEARCH_CSV_HEADERS], rows.map((r) => {
+export function buildSharedResearchExport(rows: SharedResearchExportRow[]): SharedResearchExport {
+  const omittedMpns = rows.filter((r) => r.mpnCanonical.length > MAX_MPN_LENGTH).map((r) => r.mpnCanonical);
+  const exportable = rows.filter((r) => r.mpnCanonical.length <= MAX_MPN_LENGTH);
+  const batch = exportable.slice(0, SHARED_RESEARCH_MAX_ROWS);
+  const blankNewPrices: SharedResearchExport["blankNewPrices"] = [];
+  const csv = toCsv([...SHARED_RESEARCH_CSV_HEADERS], batch.map((r) => {
     const display = r.mpnDisplay.trim();
+    let newPrice = r.newPrice == null ? null : Number(r.newPrice).toFixed(2);
+    // The import's own rule, so a written value always reads back.
+    if (newPrice != null && "error" in readAmount(newPrice, "price", LABEL.newPrice, 0)) {
+      blankNewPrices.push({ mpnCanonical: r.mpnCanonical, newPrice: r.newPrice! });
+      newPrice = null;
+    }
     return [
       // EbayDecisions keys the part by this cell's D1 key, so it must map back to Parts Engine's key.
       display.length <= MAX_MPN_LENGTH && canonicalizeMpn(display) === r.mpnCanonical ? display : r.mpnCanonical,
       r.description.trim().slice(0, MAX_DESCRIPTION_LENGTH).trim(),
       r.notes,
-      r.newPrice == null ? null : Number(r.newPrice).toFixed(2),
+      newPrice,
       null, null, null, null, null, null, null
     ];
   }));
+  return { csv, exported: batch.length, later: exportable.length - batch.length, omittedMpns, blankNewPrices };
 }
+
+export const buildSharedResearchCsv = (rows: SharedResearchExportRow[]) => buildSharedResearchExport(rows).csv;
