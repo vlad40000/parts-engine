@@ -4,17 +4,19 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
-  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, setPartState, updateMpnManual, upsertBaseline, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartState, updateMpnManual, upsertBaseline,
+  upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
-import { parseCsvRecords } from "@/src/lib/csv";
+import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
-import { mapMarketRows, MARKET_IMPORT_SOURCE } from "@/src/lib/market-import";
+import { legacyResearchHeaders, mapMarketRows, MARKET_IMPORT_SOURCE } from "@/src/lib/market-import";
 import { ensureMachineBom } from "@/src/lib/model-bom";
 import {
   batchKeys, EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_SOURCE, EbayDecisionsError, ebayDecisionsConfig, fetchMarketFacts, planMarketFacts
 } from "@/src/lib/ebaydecisions";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
+import { parseSharedResearchTable, SHARED_RESEARCH_MAX_BYTES, SHARED_RESEARCH_SOURCE, sharedResearchHeaders } from "@/src/lib/shared-research-csv";
 import { readTable } from "@/src/lib/table-read";
 
 export type ActionResult = { ok: boolean; message: string; details?: string[] };
@@ -79,9 +81,28 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, message: "Choose a CSV or .xlsx file." };
   try {
-    const records = await readTable(file.name, await file.arrayBuffer(), isMarketHeader, "MPN Master");
+    const buffer = await file.arrayBuffer();
+    if (/\.csv$/i.test(file.name)) {
+      const table = parseCsvRows(new TextDecoder().decode(buffer));
+      if (sharedResearchHeaders(table[0] ?? []).length) {
+        // Shared research CSV must obey the same 2 MiB file limit as EbayDecisions.
+        // Legacy market CSV/XLSX files retain their existing size behavior.
+        if (file.size > SHARED_RESEARCH_MAX_BYTES) {
+          return { ok: false, message: `That shared research file is ${(file.size / 1024 / 1024).toFixed(1)} MB; the limit is 2 MB. Split or trim it and upload again; nothing was imported.` };
+        }
+        return await importSharedResearch(table);
+      }
+    }
+    const records = await readTable(file.name, buffer, isMarketHeader, "MPN Master");
     const { rows, skipped } = mapMarketRows(records);
-    if (!rows.length) return { ok: false, message: skipped[0] ?? "No market rows found." };
+    if (!rows.length) {
+      // A workbook cell formatted as a percent holds 0.45 for 45%, which the shared file's
+      // as-typed 90 Day Sell Through % cannot tell apart, so the shared format is CSV only.
+      if (sharedResearchHeaders(Object.keys(records[0] ?? {})).length) {
+        return { ok: false, message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported." };
+      }
+      return { ok: false, message: skipped[0] ?? "No market rows found." };
+    }
     // The filename is user-controlled and may carry PII, so it is never passed on or stored.
     const res = await upsertMarketFacts(await getDb(), rows, MARKET_IMPORT_SOURCE);
     revalidatePath("/", "layout");
@@ -98,6 +119,43 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Import failed." };
   }
+}
+
+const MAX_ERROR_DETAILS = 10;
+
+/**
+ * The shared research CSV, the same file EbayDecisions imports and exports. The whole file is
+ * validated before anything is saved; only New Price and the 90-day window are stored.
+ */
+async function importSharedResearch(table: string[][]): Promise<ActionResult> {
+  const legacy = legacyResearchHeaders(table[0]);
+  if (legacy.length) {
+    return { ok: false, message: `This file mixes shared research columns with older market columns (${legacy.join(", ")}). Use one format per file; nothing was imported.` };
+  }
+  const parsed = parseSharedResearchTable(table);
+  if (!parsed.ok) {
+    const more = parsed.errors.length - MAX_ERROR_DETAILS;
+    return { ok: false, message: parsed.error, details: [...parsed.errors.slice(0, MAX_ERROR_DETAILS), more > 0 ? `…and ${more} more.` : ""].filter(Boolean) };
+  }
+  const researchedOn = new Date().toISOString().slice(0, 10);
+  // The filename is user-controlled and may carry PII, so it is never passed on or stored.
+  const res = await saveSharedResearch(await getDb(), parsed.rows, { researchedOn, source: SHARED_RESEARCH_SOURCE });
+  revalidatePath("/", "layout");
+  const researched = parsed.rows.filter((r) => r.research90 != null);
+  const noSellThrough = researched.filter((r) => r.research90?.sellThroughPct == null).length;
+  const undated = researched.filter((r) => r.researchedAt == null).length;
+  return {
+    ok: true,
+    message: `Imported the shared research CSV: 90-day research saved for ${res.research} MPN${res.research === 1 ? "" : "s"}, New Price changed for ${res.newPrices}.`,
+    details: [
+      res.untouched ? `No 90-day research and no New Price, left as they were (no new research date): ${res.untouched}.` : "",
+      noSellThrough ? `Saved without 90 Day Sell Through % (left blank, needs research; never calculated): ${noSellThrough}.` : "",
+      undated ? `Researched rows with no research date, dated ${researchedOn} (the import date): ${undated}.` : "",
+      res.unknown ? `Not in any parts list yet (added to the MPN index with no donors): ${res.unknown}.` : "",
+      parsed.notStored.length ? `Accepted, not stored in Parts Engine: ${parsed.notStored.join(", ")}.` : "",
+      parsed.ignored.length ? `Columns not imported: ${parsed.ignored.join(", ")}.` : ""
+    ].filter(Boolean)
+  };
 }
 
 /**
