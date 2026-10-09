@@ -4,13 +4,12 @@ import { mpnIndex, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { ButtonForm, UploadForm } from "@/src/components/forms";
-import { EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_RESEARCH_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
+import { EBAYDECISIONS_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
 import { SALES_HEADERS } from "@/src/lib/sales-import";
-import { importMarketAction, importSalesAction, refreshMarketFactsAction, researchQueueAction } from "../actions";
+import { SHARED_RESEARCH_CSV_HEADERS } from "@/src/lib/shared-research-csv";
+import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
 
 export const dynamic = "force-dynamic";
-/** One-click research (register → up to 20 researched MPNs → stored-facts refresh) runs in this page's actions. */
-export const maxDuration = 300;
 type SP = Promise<Record<string, string | undefined>>;
 
 const VIEWS: Array<{ key: NonNullable<MpnFilter["view"]>; label: string }> = [
@@ -65,32 +64,23 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
 
       {view === "queue" ? (
         <div className="card mb-4 flex flex-wrap items-center gap-3 p-3 text-sm">
-          <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors. Export drops into EbayDecisions → Import.</span>
+          <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors.</span>
           <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>
+          <ol className="basis-full list-decimal pl-5 text-xs text-muted">
+            <li><b>Export queue CSV</b>: the shared research CSV, with New Price filled in where Parts Engine knows it and the research columns blank.</li>
+            <li>Research each MPN in eBay Product Research and fill in its row. Leave a cell blank when you have no value; blank stays unknown, never zero.</li>
+            <li>Upload the completed file below with <b>Import market facts</b>, as is. The same file also imports into EbayDecisions (Settings → Shared research CSV).</li>
+          </ol>
           <div className="basis-full">
             {isEbayDecisionsConfigured() ? (
               rows.length ? (
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <ButtonForm action={researchQueueAction} label={`Research next ${Math.min(rows.length, EBAYDECISIONS_RESEARCH_MAX_MPNS)} with EbayDecisions`}
-                      pendingLabel="Registering, researching on eBay, refreshing… (can take a few minutes)">
-                      {/* The first rows below, in queue order; the server sends at most 20 and the API key never leaves it. */}
-                      {rows.slice(0, EBAYDECISIONS_RESEARCH_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
-                    </ButtonForm>
-                    <p className="mt-1 text-xs text-muted">
-                      Registers the first {Math.min(rows.length, EBAYDECISIONS_RESEARCH_MAX_MPNS)} MPNs below in EbayDecisions (MPN and description only), runs exact-MPN
-                      eBay research there, then refreshes their stored facts. Research alone does not qualify a part: exact sell-through is never derived, so
-                      without it a part stays NEEDS DATA.
-                    </p>
-                  </div>
-                  <div>
-                    <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
-                      {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
-                      {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
-                    </ButtonForm>
-                    <p className="mt-1 text-xs text-muted">Reads facts already stored in EbayDecisions for every MPN on this page. No registration, no research.</p>
-                  </div>
-                </div>
+                <>
+                  <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
+                    {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
+                    {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
+                  </ButtonForm>
+                  <p className="mt-1 text-xs text-muted">Reads facts already stored in EbayDecisions for every MPN on this page, for research imported there. No registration, no research.</p>
+                </>
               ) : null
             ) : (
               <span className="text-xs text-muted">Live EbayDecisions refresh is not configured (EBAYDECISIONS_URL and EBAYDECISIONS_API_KEY). Use the CSV export and the market facts import below.</span>
@@ -140,8 +130,13 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
       <section className="card mt-6 p-4">
         <h2 className="mb-1 font-semibold">Import eBay market facts</h2>
         <p className="mb-3 text-xs text-muted">
-          Accepts the EbayDecisions export CSV, the decision workbook (MPN Master sheet), or a CSV with
-          mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at. A sell-through like 0.24 is read as 24%.
+          Accepts the shared research CSV (<span className="mono">{SHARED_RESEARCH_CSV_HEADERS.join(", ")}</span>), the same file EbayDecisions
+          imports and exports. Parts Engine stores New Price and the 90-day columns; the 7- and 30-day columns are accepted and not stored.
+          In it, 90 Day Sell Through % is read as typed: 45 is 45%, 0.45 is 0.45%. A row with no 90-day value gets no new research date.
+        </p>
+        <p className="mb-3 text-xs text-muted">
+          Also accepts the older EbayDecisions export CSV, the decision workbook (MPN Master sheet), or a CSV with
+          mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at. In those, a sell-through like 0.24 is read as 24%.
           Sell-through is stored only when the file supplies exact-MPN sell-through; it is never calculated from sold and active counts.
         </p>
         <UploadForm action={importMarketAction} label="Import market facts" accept=".csv,.xlsx" />

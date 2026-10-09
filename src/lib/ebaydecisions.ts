@@ -7,8 +7,10 @@ import { canonicalizeMpn } from "./mpn";
  * EbayDecisions integration client (Integrations A2 + A4).
  *
  * Explicit, user-triggered POSTs to EbayDecisions' merged provider routes (schemaVersion 1):
- * `/api/integrations/market-facts` (A2, zero-write stored facts), and the A3 provider's
- * `/api/integrations/parts/register` and `/api/integrations/research` used by one-click research.
+ * `/api/integrations/market-facts` (A2, zero-write stored facts, behind "Refresh market facts"), and the
+ * A3 provider's `/api/integrations/parts/register` and `/api/integrations/research`. The last two are
+ * dormant: no page or action calls them until official eBay API research is activated; the shared
+ * research CSV is the research path meanwhile.
  * Service-to-service over HTTPS with `Authorization: Bearer EBAYDECISIONS_API_KEY`; this module never
  * opens EbayDecisions' database and never logs or returns the key. Any response that does not match
  * v1 exactly is rejected before anything is written.
@@ -19,11 +21,11 @@ export const EBAYDECISIONS_RESEARCH_ROUTE = "/api/integrations/research";
 export const EBAYDECISIONS_SCHEMA_VERSION = 1;
 export const EBAYDECISIONS_MAX_MPNS = 100;
 export const EBAYDECISIONS_TIMEOUT_MS = 15_000;
-/** One-click research working set; also the provider's per-call research cap. */
+/** The provider's per-call registration and research cap. */
 export const EBAYDECISIONS_RESEARCH_MAX_MPNS = 20;
 /**
  * Research runs a Browse and an Insights call per MPN, spaced out by the provider. Register (15 s) +
- * research (240 s) + market facts (15 s) stays inside the /mpns page's 300 s function budget.
+ * research (240 s) + market facts (15 s) needs a function budget of 300 s once research is activated.
  */
 export const EBAYDECISIONS_RESEARCH_TIMEOUT_MS = 240_000;
 /** market_facts.source for facts cached from the live provider. */
@@ -183,7 +185,8 @@ function coversExactly(keys: string[], requested: string[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// One-click research (A4): exact-MPN registration, then targeted research
+// Targeted research (A4): exact-MPN registration, then research. Dormant: nothing calls these
+// until official eBay API research is activated.
 // ---------------------------------------------------------------------------
 
 /** The whole registration payload for one MPN. There is deliberately no other field. */

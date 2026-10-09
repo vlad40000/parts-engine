@@ -7,6 +7,7 @@ import type { FleetRow } from "@/src/lib/fleet-import";
 import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candidates";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
+import type { SharedResearchRow } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import * as t from "./schema";
@@ -498,7 +499,10 @@ export async function mpnIndex(db: Db, f: MpnFilter, limit = 200, offset = 0) {
 
 const valueOf = (r: MpnEvaluated) => r.qualification?.modeledValueSlotDay ?? -Infinity;
 
-/** Evaluated index rows for a bounded set of D1 keys, in the given order; keys not in the index are omitted. */
+/**
+ * Evaluated index rows for a bounded set of D1 keys, in the given order; keys not in the index are omitted.
+ * Registration plumbing for the dormant targeted research (A4).
+ */
 export async function mpnRowsFor(db: Db, keys: string[]): Promise<MpnEvaluated[]> {
   if (!keys.length) return [];
   const s = await getSettings(db);
@@ -750,6 +754,90 @@ export async function patchProviderMarketFacts(
       set: { activeQty: sql`excluded.active_qty`, updatedAt: sql`now()` }
     });
   }
+}
+
+/**
+ * Saves a validated shared research CSV. Unlike upsertMarketFacts it writes only what the file supplies:
+ * - New Price → mpn_master.new_price_min. A blank New Price leaves the stored value alone.
+ * - A supplied 90-day observation → sold_90, avg_price, sell_through_pct (`research` provenance when
+ *   non-null), researched_at (the row's research date, else `researchedOn`) and source, as one unit:
+ *   a blank cell in it is stored as null (unknown), never zero, and never filled from older facts.
+ * - A row with no 90-day value leaves market_facts alone, so it never gets a fresh researched_at.
+ * avg_ship, active_qty, free shipping, ship cost and qty on hand are never written.
+ * Aliases resolve as in the market import. Two rows that resolve to one MPN fail before anything is written.
+ * Counts: rows saved as research, New Prices that changed, MPNs new to the index, rows left alone.
+ */
+export async function saveSharedResearch(
+  db: Db,
+  rows: SharedResearchRow[],
+  opts: { researchedOn: string; source: string }
+): Promise<{ research: number; newPrices: number; unknown: number; untouched: number }> {
+  const aliases = rows.length
+    ? await db.select().from(t.mpnAlias).where(inArray(t.mpnAlias.aliasCanonical, rows.map((r) => r.mpnCanonical)))
+    : [];
+  const aliasMap = new Map(aliases.map((a) => [a.aliasCanonical, a.mpnCanonical]));
+  const resolved = rows.map((r) => ({ ...r, mpnCanonical: aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical }));
+  const linesByKey = new Map<string, number[]>();
+  for (const r of resolved) linesByKey.set(r.mpnCanonical, [...(linesByKey.get(r.mpnCanonical) ?? []), r.line]);
+  const clashes = [...linesByKey].filter(([, lines]) => lines.length > 1);
+  if (clashes.length) {
+    throw new Error(`${clashes.map(([key, lines]) => `Lines ${lines.join(", ")} are the same MPN (${key}) through an alias`).join("; ")}. Keep one row per MPN; nothing was imported.`);
+  }
+
+  const saving = resolved.filter((r) => r.research90 != null || r.newPrice != null);
+  const known = new Set(saving.length
+    ? (await db.select({ m: t.mpnMaster.mpnCanonical }).from(t.mpnMaster).where(inArray(t.mpnMaster.mpnCanonical, saving.map((r) => r.mpnCanonical)))).map((r) => r.m)
+    : []);
+  const master = (r: SharedResearchRow) => ({
+    mpnCanonical: r.mpnCanonical,
+    mpnDisplay: r.mpnDisplay,
+    description: r.description,
+    partFamily: classifyFamily(r.description),
+    newPriceMin: optionalNumeric(r.newPrice)
+  });
+  let newPrices = 0;
+  for (const part of chunks(saving.filter((r) => r.newPrice != null), 300)) {
+    const changed = await db.insert(t.mpnMaster).values(part.map(master)).onConflictDoUpdate({
+      target: t.mpnMaster.mpnCanonical,
+      set: { newPriceMin: sql`excluded.new_price_min`, updatedAt: sql`now()` },
+      setWhere: sql`mpn_master.new_price_min is distinct from excluded.new_price_min`
+    }).returning({ m: t.mpnMaster.mpnCanonical });
+    newPrices += changed.length;
+  }
+  // Research for an MPN not in any parts list still needs a master row to show up.
+  for (const part of chunks(saving.filter((r) => r.newPrice == null && !known.has(r.mpnCanonical)), 300)) {
+    await db.insert(t.mpnMaster).values(part.map(master)).onConflictDoNothing();
+  }
+
+  const researched = saving.filter((r) => r.research90 != null);
+  for (const part of chunks(researched, 300)) {
+    await db.insert(t.marketFacts).values(part.map((r) => {
+      const s = r.research90!;
+      return {
+        mpnCanonical: r.mpnCanonical,
+        sold90: s.sold90,
+        avgPrice: optionalNumeric(s.avgPrice),
+        sellThroughPct: optionalNumeric(s.sellThroughPct),
+        sellThroughSource: s.sellThroughPct == null ? null : "research",
+        researchedAt: r.researchedAt ?? opts.researchedOn,
+        source: opts.source,
+        updatedAt: new Date()
+      };
+    })).onConflictDoUpdate({
+      target: t.marketFacts.mpnCanonical,
+      set: {
+        sold90: sql`excluded.sold_90`, avgPrice: sql`excluded.avg_price`,
+        sellThroughPct: sql`excluded.sell_through_pct`, sellThroughSource: sql`excluded.sell_through_source`,
+        researchedAt: sql`excluded.researched_at`, source: sql`excluded.source`, updatedAt: sql`now()`
+      }
+    });
+  }
+  return {
+    research: researched.length,
+    newPrices,
+    unknown: saving.filter((r) => !known.has(r.mpnCanonical)).length,
+    untouched: rows.length - saving.length
+  };
 }
 
 export async function updateMpnManual(db: Db, canonical: string, patch: {
