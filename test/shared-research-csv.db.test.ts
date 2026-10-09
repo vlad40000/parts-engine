@@ -143,12 +143,14 @@ describe("Import: the same completed CSV, without conversion", () => {
     expect((await importFile("research-queue-done.csv", toCsv(header, filled))).ok).toBe(true);
     expect(await facts(BOARD)).toMatchObject({
       sold90: 7, avgPrice: "139.99", sellThroughPct: "38.50", sellThroughSource: "research", researchedAt: TODAY, source: "shared_research_csv",
+      // The new observation has no shipping, so the older 12 is cleared, as the EbayDecisions path does.
+      avgShip: null,
       // Not in the shared file, so never written by it.
-      avgShip: "12.00", activeQty: 9
+      activeQty: 9
     });
   });
 
-  it("maps New Price and the 90-day window; blanks stay null, never zero; local facts and shipping are untouched", async () => {
+  it("maps New Price and the 90-day window; blanks stay null, never zero; new research clears old shipping; local facts are untouched", async () => {
     await saveMarketAction(form({ mpn: PUMP, sold90: "5", avgPrice: "64", avgShip: "8", sellThroughPct: "20", activeQty: "6",
       qtyOnHand: "3", researchedAt: "2026-05-01", freeShipping: "on", shipCost: "14" }));
     await saveMarketAction(form({ mpn: LID, sold90: "2", avgPrice: "40", avgShip: "7", sellThroughPct: "", activeQty: "4", researchedAt: "2026-04-01" }));
@@ -181,14 +183,16 @@ describe("Import: the same completed CSV, without conversion", () => {
     });
     expect((await master("DC4700019A"))!.newPriceMin).toBe("14.99");
     // The 90-day values are one observation: blank price and sell-through are unknown now, not the older 64 / 20, and not zero.
+    // Buyer shipping is unknown for it too, so the older 8 is cleared; active count and local fields stay.
     expect(await facts(PUMP)).toMatchObject({
       sold90: 3, avgPrice: null, sellThroughPct: null, sellThroughSource: null, researchedAt: TODAY, source: "shared_research_csv",
-      avgShip: "8.00", activeQty: 6, qtyOnHand: 3, freeShipping: true, shipCost: "14.00"
+      avgShip: null, activeQty: 6, qtyOnHand: 3, freeShipping: true, shipCost: "14.00"
     });
     // A blank New Price leaves the stored one alone.
     expect((await master(PUMP))!.newPriceMin).toBe("60.00");
-    // New Price alone is not research: market facts and their research date stay as they were.
+    // New Price alone is not research: market facts, their research date and shipping stay as they were.
     expect((await master(LID))!.newPriceMin).toBe("1250.00");
+    expect(lidBefore.avgShip).toBe("7.00");
     expect(await facts(LID)).toEqual(lidBefore);
     // Nothing supplied, nothing written.
     expect(await facts(VALVE)).toBeUndefined();

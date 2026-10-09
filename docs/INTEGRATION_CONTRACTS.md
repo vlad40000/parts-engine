@@ -86,8 +86,9 @@ mpn,description,notes,New Price,7 Day sales,7 Day Avg Price,30 Day sales,30 Day 
 | `notes`, 7- and 30-day columns | accepted, not stored |
 | optional `researched_at` / `research_date` / `date` (not in the contract) | `researched_at`; without it, the import date |
 
-- The three 90-day values are one observation. A row that supplies any of them writes all three plus `researched_at` and `source = shared_research_csv`; a blank one is stored as null, never zero, and never filled from older facts. A row with none of them leaves `market_facts` alone, including `researched_at`.
-- `avg_ship`, `active_qty`, free shipping, ship cost and qty on hand are never written by this import. Sell-through is never derived.
+- The three 90-day values are one observation. A row that supplies any of them writes all three plus `researched_at` and `source = shared_research_csv`; a blank one is stored as null, never zero, and never filled from older facts. A row with none of them leaves `market_facts` alone, including `researched_at` and `avg_ship`.
+- The shared file has no shipping column, so a row with a 90-day observation also sets `avg_ship` to null (unknown) rather than keeping an older buyer-shipping value under the new research date. EbayDecisions' shared CSV import saves null shipping for the same row, and the A2 sold-facts refresh takes that null as the new observation's `avg_ship`, so importing directly and going through EbayDecisions then **Refresh market facts** leave the same PE-4 economics.
+- `active_qty`, free shipping, ship cost and qty on hand are never written by this import. Sell-through is never derived.
 - The ≤ 1 → fraction rule belongs to the older formats only (`sell_through_pct`, the workbook's `Mkt 90d Sell-Through`, …), never to the shared column. A CSV mixing shared and older market columns is rejected. The shared file imports as CSV only, because a workbook cell formatted as a percent holds 0.45 for 45%.
 - `sell_through_pct` is `numeric(6,2)`: values above 9,999.99 are rejected, although EbayDecisions accepts up to 100,000.
 - A later parts-list read still applies `least(new_price_min, supplier price)`. `new_price_min` has no provenance column.

@@ -762,8 +762,10 @@ export async function patchProviderMarketFacts(
  * - A supplied 90-day observation → sold_90, avg_price, sell_through_pct (`research` provenance when
  *   non-null), researched_at (the row's research date, else `researchedOn`) and source, as one unit:
  *   a blank cell in it is stored as null (unknown), never zero, and never filled from older facts.
+ *   avg_ship is cleared to null with it: the shared file has no shipping column, and EbayDecisions saves
+ *   null shipping for the same row, so a later A2 refresh and this import leave the same economics.
  * - A row with no 90-day value leaves market_facts alone, so it never gets a fresh researched_at.
- * avg_ship, active_qty, free shipping, ship cost and qty on hand are never written.
+ * active_qty, free shipping, ship cost and qty on hand are never written.
  * Aliases resolve as in the market import. Two rows that resolve to one MPN fail before anything is written.
  * Counts: rows saved as research, New Prices that changed, MPNs new to the index, rows left alone.
  */
@@ -817,6 +819,7 @@ export async function saveSharedResearch(
         mpnCanonical: r.mpnCanonical,
         sold90: s.sold90,
         avgPrice: optionalNumeric(s.avgPrice),
+        avgShip: null,
         sellThroughPct: optionalNumeric(s.sellThroughPct),
         sellThroughSource: s.sellThroughPct == null ? null : "research",
         researchedAt: r.researchedAt ?? opts.researchedOn,
@@ -826,7 +829,7 @@ export async function saveSharedResearch(
     })).onConflictDoUpdate({
       target: t.marketFacts.mpnCanonical,
       set: {
-        sold90: sql`excluded.sold_90`, avgPrice: sql`excluded.avg_price`,
+        sold90: sql`excluded.sold_90`, avgPrice: sql`excluded.avg_price`, avgShip: sql`excluded.avg_ship`,
         sellThroughPct: sql`excluded.sell_through_pct`, sellThroughSource: sql`excluded.sell_through_source`,
         researchedAt: sql`excluded.researched_at`, source: sql`excluded.source`, updatedAt: sql`now()`
       }
