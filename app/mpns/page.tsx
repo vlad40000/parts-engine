@@ -7,7 +7,7 @@ import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } 
 import { ButtonForm, UploadForm } from "@/src/components/forms";
 import { EBAYDECISIONS_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
 import { SALES_HEADERS } from "@/src/lib/sales-import";
-import { SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, type SharedResearchExport } from "@/src/lib/shared-research-csv";
+import { SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SharedResearchExportError, type SharedResearchExport } from "@/src/lib/shared-research-csv";
 import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,15 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const db = await getDb();
   const { rows, total, settings, rulesSet } = await mpnIndex(db, { view, family: sp.family, q: sp.q }, 100, offset);
   // What the next queue export holds and leaves out, shown next to its button.
-  const exportBatch = view === "queue" ? await researchQueueExport(db) : null;
+  let exportBatch: SharedResearchExport | null = null;
+  let exportError: string | null = null;
+  if (view === "queue") {
+    try { exportBatch = await researchQueueExport(db); }
+    catch (error) {
+      if (!(error instanceof SharedResearchExportError)) throw error;
+      exportError = error.message;
+    }
+  }
   const base = { view, family: sp.family, q: sp.q };
 
   return (
@@ -69,10 +77,10 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
       {view === "queue" ? (
         <div className="card mb-4 flex flex-wrap items-center gap-3 p-3 text-sm">
           <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors.</span>
-          <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>
+          {exportError ? <span className="text-wait">{exportError}</span> : <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>}
           <ol className="basis-full list-decimal pl-5 text-xs text-muted">
             <li><b>Export queue CSV</b>: the shared research CSV, with New Price filled in where Parts Engine knows it and the research columns blank.
-              One file holds at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs, in queue order. Researched MPNs leave the queue once
+              One file holds at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs and reserves space below the 2 MiB upload limit for filled research, in queue order. Researched MPNs leave the queue once
               imported, so the next export holds the next batch.</li>
             <li>Research each MPN in eBay Product Research and fill in its row. Leave a cell blank when you have no value; blank stays unknown, never zero.</li>
             <li>Upload the completed file below with <b>Import market facts</b>, as is. The same file also imports into EbayDecisions (Settings → Shared research CSV).</li>

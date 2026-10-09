@@ -31,6 +31,11 @@ export const SHARED_RESEARCH_SOURCE = "shared_research_csv";
 
 // EbayDecisions' bounds, so a file one app accepts the other accepts too.
 export const SHARED_RESEARCH_MAX_ROWS = 5000;
+/** Matches EbayDecisions shared CSV upload limit, including the edited research values. */
+export const SHARED_RESEARCH_MAX_BYTES = 2 * 1024 * 1024;
+/** Seven blank research cells per row; 32 UTF-8 bytes each reserves room for normal max-value entry and formatting. */
+const EDITABLE_RESEARCH_HEADROOM_PER_ROW = 7 * 32;
+export class SharedResearchExportError extends Error {}
 const MAX_MPN_LENGTH = 200;
 const MAX_DESCRIPTION_LENGTH = 500;
 const MAX_AMOUNT = 1_000_000;
@@ -244,33 +249,66 @@ export type SharedResearchExport = {
  * Research-queue rows as one shared research CSV batch that both apps import as is. Only mpn,
  * description, notes and New Price are filled. Every research column is left blank for the operator,
  * so uploading an unedited export changes no market facts and stamps no research date.
- * Nothing outside the shared contract is written, and nothing is shortened or clamped to fit:
+ * Nothing outside the shared contract is written. Apart from the existing 500-character description cap, no identity or price is shortened/clamped:
  * - a row whose D1 key is longer than the MPN limit is left out (truncating could merge distinct OEM parts);
  * - a New Price the import would reject (such as one over 1,000,000) is written blank, the row kept;
  * - then the first SHARED_RESEARCH_MAX_ROWS rows are written, in the order given.
  */
+/** A literal leading apostrophe prevents Excel/Sheets from interpreting supplier text as a formula.
+ * For MPNs, the extra punctuation does not change the D1 key; leave it in the CSV for safe re-opening.
+ */
+const spreadsheetSafe = (value: string, maxLength?: number): string => {
+  const unsafe = /^\s*[=+\-@]/u.test(value);
+  const safe = unsafe ? "'" + value : value;
+  return maxLength == null ? safe : safe.slice(0, maxLength);
+};
+
 export function buildSharedResearchExport(rows: SharedResearchExportRow[]): SharedResearchExport {
   const omittedMpns = rows.filter((r) => r.mpnCanonical.length > MAX_MPN_LENGTH).map((r) => r.mpnCanonical);
   const exportable = rows.filter((r) => r.mpnCanonical.length <= MAX_MPN_LENGTH);
-  const batch = exportable.slice(0, SHARED_RESEARCH_MAX_ROWS);
+  const headers = [...SHARED_RESEARCH_CSV_HEADERS];
+  const headerCsv = toCsv(headers, []);
+  let bytes = Buffer.byteLength(headerCsv, "utf8");
+  const batch: unknown[][] = [];
   const blankNewPrices: SharedResearchExport["blankNewPrices"] = [];
-  const csv = toCsv([...SHARED_RESEARCH_CSV_HEADERS], batch.map((r) => {
+
+  for (const r of exportable) {
+    if (batch.length === SHARED_RESEARCH_MAX_ROWS) break;
     const display = r.mpnDisplay.trim();
+    const chosenMpn = display.length <= MAX_MPN_LENGTH && canonicalizeMpn(display) === r.mpnCanonical
+      ? display : r.mpnCanonical;
+    const protectedMpn = spreadsheetSafe(chosenMpn);
+    // If apostrophe protection would breach the shared 200-character limit, use the safe D1 key instead.
+    const mpn = protectedMpn.length <= MAX_MPN_LENGTH ? protectedMpn : r.mpnCanonical;
     let newPrice = r.newPrice == null ? null : Number(r.newPrice).toFixed(2);
-    // The import's own rule, so a written value always reads back.
-    if (newPrice != null && "error" in readAmount(newPrice, "price", LABEL.newPrice, 0)) {
-      blankNewPrices.push({ mpnCanonical: r.mpnCanonical, newPrice: r.newPrice! });
-      newPrice = null;
-    }
-    return [
-      // EbayDecisions keys the part by this cell's D1 key, so it must map back to Parts Engine's key.
-      display.length <= MAX_MPN_LENGTH && canonicalizeMpn(display) === r.mpnCanonical ? display : r.mpnCanonical,
-      r.description.trim().slice(0, MAX_DESCRIPTION_LENGTH).trim(),
-      r.notes,
+    const invalidPrice = newPrice != null && "error" in readAmount(newPrice, "price", LABEL.newPrice, 0);
+    if (invalidPrice) newPrice = null;
+    const record = [
+      mpn,
+      spreadsheetSafe(r.description.trim().slice(0, MAX_DESCRIPTION_LENGTH), MAX_DESCRIPTION_LENGTH),
+      spreadsheetSafe(r.notes),
       newPrice,
       null, null, null, null, null, null, null
     ];
-  }));
+    // Keep queue order and reserve the bytes that filling the seven research cells will add.
+    const rowCsv = toCsv(headers, [record]).slice(headerCsv.length);
+    const nextBytes = bytes + Buffer.byteLength(rowCsv, "utf8");
+    if (nextBytes + (batch.length + 1) * EDITABLE_RESEARCH_HEADROOM_PER_ROW > SHARED_RESEARCH_MAX_BYTES) {
+      if (!batch.length) {
+        throw new SharedResearchExportError(
+          "The first queue row is too large for the shared 2 MiB CSV limit, including research-entry headroom. Review its notes."
+        );
+      }
+      break;
+    }
+    bytes = nextBytes;
+    batch.push(record);
+    if (invalidPrice) blankNewPrices.push({ mpnCanonical: r.mpnCanonical, newPrice: r.newPrice! });
+  }
+  const csv = toCsv(headers, batch);
+  if (Buffer.byteLength(csv, "utf8") !== bytes || bytes > SHARED_RESEARCH_MAX_BYTES) {
+    throw new SharedResearchExportError("Research export exceeds the shared 2 MiB CSV limit.");
+  }
   return { csv, exported: batch.length, later: exportable.length - batch.length, omittedMpns, blankNewPrices };
 }
 

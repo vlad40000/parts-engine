@@ -8,13 +8,13 @@ import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import {
-  addAlias, getSettings, mpnDetail, researchQueueCsvRows, researchQueueExport, saveModelBom, saveSettings, upsertFleet
+  addAlias, getSettings, mpnDetail, mpnIndex, researchQueueCsvRows, researchQueueExport, saveModelBom, saveSettings, upsertFleet
 } from "@/src/db/queries";
 import { parseCsvRows, toCsv } from "@/src/lib/csv";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { mapMarketRows } from "@/src/lib/market-import";
 import {
-  buildSharedResearchCsv, buildSharedResearchExport, parseSharedResearchCsv, SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS
+  buildSharedResearchCsv, buildSharedResearchExport, parseSharedResearchCsv, SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SHARED_RESEARCH_MAX_BYTES, SharedResearchExportError
 } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import type { SupplierRow } from "@/src/sources/types";
@@ -140,6 +140,56 @@ describe("Export queue CSV: the shared research format", () => {
     expect(rows.slice(1, 4).map((r) => [r.mpnCanonical, r.newPrice])).toEqual([["BIG1", null], ["TOP1", 1_000_000], ["NEG1", null]]);
     expect(out.blankNewPrices).toEqual([{ mpnCanonical: "BIG1", newPrice: "1000000.01" }, { mpnCanonical: "NEG1", newPrice: -1 }]);
   });
+  it("prefixes formula-triggering supplier cells while preserving D1 identity and cross-app parsing", () => {
+    const cases = [
+      { mpnCanonical: "EQ1", mpnDisplay: "=EQ-1", description: "=HYPERLINK(1)", notes: "=1+1" },
+      { mpnCanonical: "PL2", mpnDisplay: "+PL-2", description: "+SUM(1,2)", notes: "+1" },
+      { mpnCanonical: "MI3", mpnDisplay: "-MI-3", description: "-1+1", notes: "-1" },
+      { mpnCanonical: "AT4", mpnDisplay: "@AT-4", description: "@SUM(1,2)", notes: "@1" },
+      { mpnCanonical: "MAX5", mpnDisplay: "=" + "MAX5".padEnd(199, "-"), description: "=X".padEnd(500, "Y"), notes: " \n=2+2" }
+    ];
+    // The last display MPN has 200 characters; protection must fall back to D1 rather than emit 201.
+    const csv = buildSharedResearchCsv(cases.map((r) => ({ ...r, newPrice: null })));
+    const [, ...cells] = parseCsvRows(csv);
+    for (const row of cells.slice(0, 4)) {
+      expect(row[0]).toMatch(/^'[=+\-@]/);
+      expect(row[1]).toMatch(/^'[=+\-@]/);
+      expect(row[2]).toMatch(/^'[=+\-@]/);
+    }
+    expect(cells[4][0]).toBe("MAX5");
+    expect(cells[4][1]).toHaveLength(500);
+    expect(cells[4][2]).toMatch(/^'\s+=/);
+    expect(importable(csv).map((r) => r.mpnCanonical)).toEqual(cases.map((r) => r.mpnCanonical));
+  });
+
+  it("reserves UTF-8 byte headroom for all seven edited cells, and splits big queues at the 2 MiB upload limit", () => {
+    const rows = Array.from({ length: SHARED_RESEARCH_MAX_ROWS }, (_, i) => ({
+      mpnCanonical: `UTF${i}`, mpnDisplay: `UTF${i}`, description: "é".repeat(450),
+      notes: "Donation units: 🔧".repeat(6), newPrice: null
+    }));
+    const batch = buildSharedResearchExport(rows);
+    expect(batch.exported).toBeGreaterThan(0);
+    expect(batch.exported).toBeLessThan(SHARED_RESEARCH_MAX_ROWS);
+    expect(batch.later).toBe(SHARED_RESEARCH_MAX_ROWS - batch.exported);
+    expect(Buffer.byteLength(batch.csv, "utf8")).toBeLessThanOrEqual(SHARED_RESEARCH_MAX_BYTES);
+    const [headers, ...cells] = parseCsvRows(batch.csv);
+    const completed = toCsv(headers, cells.map((row) => row.map((cell, col) => (
+      col === 4 || col === 6 || col === 8 ? "1000000"
+      : col === 5 || col === 7 || col === 9 ? "1000000.00"
+      : col === 10 ? "9999.99" : cell
+    ))));
+    expect(Buffer.byteLength(completed, "utf8")).toBeLessThanOrEqual(SHARED_RESEARCH_MAX_BYTES);
+    expect(importable(completed)).toHaveLength(batch.exported);
+    const compact = buildSharedResearchExport(Array.from({ length: SHARED_RESEARCH_MAX_ROWS }, (_, i) => ({
+      mpnCanonical: `C${i}`, mpnDisplay: `C${i}`, description: "Pump", notes: "", newPrice: 11
+    })));
+    expect(compact.exported).toBe(SHARED_RESEARCH_MAX_ROWS);
+    expect(compact.later).toBe(0);
+    expect(() => buildSharedResearchExport([{
+      mpnCanonical: "HUGE", mpnDisplay: "HUGE", description: "Pump", notes: "Q".repeat(3 * 1024 * 1024), newPrice: null
+    }])).toThrow(SharedResearchExportError);
+  });
+
 });
 
 describe("Import: the same completed CSV, without conversion", () => {
@@ -435,4 +485,17 @@ describe("Export queue CSV: a queue over 5,000 MPNs goes out in batches", () => 
     });
     expect((await master(BIG))!.newPriceMin).toBe("1500000.00");
   });
+  it("treats a sell-through-only observation as researched, but still requires missing sold and price data", async () => {
+    const res = await importFile("str-only.csv", sharedCsv([{ mpn: BOARD, "90 Day Sell Through %": "42.5" }]));
+    expect(res.ok).toBe(true);
+    expect(await facts(BOARD)).toMatchObject({
+      sold90: null, avgPrice: null, sellThroughPct: "42.50", researchedAt: TODAY
+    });
+    const queue = await mpnIndex(db, { view: "queue" }, 100000);
+    expect(queue.rows.some((r) => r.mpn_canonical === BOARD)).toBe(false);
+    const needsData = await mpnIndex(db, { view: "needs_data" }, 100000);
+    const matching = needsData.rows.find((r) => r.mpn_canonical === BOARD);
+    expect(matching).toMatchObject({ market: "current", qualification: { result: "NEEDS_DATA" } });
+  });
+
 });

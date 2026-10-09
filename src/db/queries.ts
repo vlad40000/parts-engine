@@ -427,7 +427,7 @@ export function evaluateMpn(row: MpnRow, s: AppSettings, baselines: Baseline[], 
     storedSource: row.removal_source,
     baselines
   });
-  const hasMarket = row.sold_90 != null || row.avg_price != null;
+  const hasMarket = row.sold_90 != null || row.avg_price != null || row.sell_through_pct != null;
   const ageDays = row.researched_at ? (now.getTime() - new Date(row.researched_at).getTime()) / 86_400_000 : Infinity;
   const market: MpnEvaluated["market"] = !hasMarket ? "missing" : ageDays > s.marketStaleDays ? "stale" : "current";
 
@@ -468,7 +468,7 @@ export async function mpnIndex(db: Db, f: MpnFilter, limit = 200, offset = 0) {
   if (f.family) where.push(sql`part_family = ${f.family}`);
   if (f.q) where.push(sql`(mpn_canonical ilike ${"%" + f.q.toUpperCase().replace(/[^A-Z0-9]/g, "") + "%"} or description ilike ${"%" + f.q + "%"})`);
   if (f.view === "qualified" || f.view === "not_qualified" || f.view === "needs_data" || f.view === "set_rule") {
-    where.push(sql`(sold_90 is not null or avg_price is not null)`);
+    where.push(sql`(sold_90 is not null or avg_price is not null or sell_through_pct is not null)`);
   }
   const all = await q<MpnRow>(db, sql`select * from (${MPN_SELECT(s.donorAvailabilities)}) x where ${sql.join(where, sql` and `)} order by donors desc, mpn_canonical`);
   let rows = all.map((r) => evaluateMpn(r, s, baselines));

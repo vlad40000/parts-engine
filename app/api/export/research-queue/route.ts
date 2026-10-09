@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/src/db";
 import { researchQueueExport } from "@/src/db/queries";
+import { SharedResearchExportError } from "@/src/lib/shared-research-csv";
 
 export const dynamic = "force-dynamic";
 
@@ -12,11 +13,18 @@ export const dynamic = "force-dynamic";
  * SHARED_RESEARCH_MAX_ROWS queue rows; the MPNs page reports what a file leaves out.
  */
 export async function GET() {
-  const { csv } = await researchQueueExport(await getDb());
-  return new NextResponse(csv, {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="research-queue-${new Date().toISOString().slice(0, 10)}.csv"`
+  try {
+    const { csv } = await researchQueueExport(await getDb());
+    return new NextResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="research-queue-${new Date().toISOString().slice(0, 10)}.csv"`
+      }
+    });
+  } catch (error) {
+    if (error instanceof SharedResearchExportError) {
+      return NextResponse.json({ error: error.message }, { status: 422 });
     }
-  });
+    throw error;
+  }
 }
