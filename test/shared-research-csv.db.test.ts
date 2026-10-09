@@ -193,6 +193,20 @@ describe("Export queue CSV: the shared research format", () => {
 });
 
 describe("Import: the same completed CSV, without conversion", () => {
+
+  it("rejects a shared research CSV larger than 2 MiB without writing, including long ignored notes", async () => {
+    const before = await snapshot();
+    const csv = sharedCsv([{
+      mpn: "SIZE-LIMIT-TEST-1", description: "Test", notes: "N".repeat(SHARED_RESEARCH_MAX_BYTES),
+      "90 Day sales": "7", "90 Day Avg Price": "50", "90 Day Sell Through %": "33"
+    }]);
+    expect(Buffer.byteLength(csv, "utf8")).toBeGreaterThan(SHARED_RESEARCH_MAX_BYTES);
+    const result = await importFile("large-shared.csv", csv);
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("the limit is 2 MB") });
+    expect(result.message).toContain("nothing was imported");
+    expect(await snapshot()).toEqual(before);
+  });
+
   it("an unedited export uploaded as is changes no market facts, stamps no research date and leaves New Price as it was", async () => {
     await saveMarketAction(form({ mpn: BOARD, sold90: "4", avgPrice: "150", avgShip: "12", sellThroughPct: "33", activeQty: "9", researchedAt: "2026-01-02" }));
     const before = await snapshot();

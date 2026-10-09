@@ -16,7 +16,7 @@ import {
 } from "@/src/lib/ebaydecisions";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
-import { parseSharedResearchTable, SHARED_RESEARCH_SOURCE, sharedResearchHeaders } from "@/src/lib/shared-research-csv";
+import { parseSharedResearchTable, SHARED_RESEARCH_MAX_BYTES, SHARED_RESEARCH_SOURCE, sharedResearchHeaders } from "@/src/lib/shared-research-csv";
 import { readTable } from "@/src/lib/table-read";
 
 export type ActionResult = { ok: boolean; message: string; details?: string[] };
@@ -84,7 +84,14 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
     const buffer = await file.arrayBuffer();
     if (/\.csv$/i.test(file.name)) {
       const table = parseCsvRows(new TextDecoder().decode(buffer));
-      if (sharedResearchHeaders(table[0] ?? []).length) return await importSharedResearch(table);
+      if (sharedResearchHeaders(table[0] ?? []).length) {
+        // Shared research CSV must obey the same 2 MiB file limit as EbayDecisions.
+        // Legacy market CSV/XLSX files retain their existing size behavior.
+        if (file.size > SHARED_RESEARCH_MAX_BYTES) {
+          return { ok: false, message: `That shared research file is ${(file.size / 1024 / 1024).toFixed(1)} MB; the limit is 2 MB. Split or trim it and upload again; nothing was imported.` };
+        }
+        return await importSharedResearch(table);
+      }
     }
     const records = await readTable(file.name, buffer, isMarketHeader, "MPN Master");
     const { rows, skipped } = mapMarketRows(records);
