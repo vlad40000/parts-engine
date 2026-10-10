@@ -94,13 +94,14 @@ export async function importMarketAction(_prev: ActionResult | null, form: FormD
       }
     }
     const records = await readTable(file.name, buffer, isMarketHeader, "MPN Master");
+    // A workbook cell formatted as a percent holds 0.45 for 45%, which the shared file's
+    // as-typed 90 Day Sell Through % cannot tell apart. Reject even when legacy columns
+    // are also populated; silently importing only those columns would lose shared facts.
+    if (/\.xlsx$/i.test(file.name) && sharedResearchHeaders(Object.keys(records[0] ?? {})).length) {
+      return { ok: false, message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported." };
+    }
     const { rows, skipped } = mapMarketRows(records);
     if (!rows.length) {
-      // A workbook cell formatted as a percent holds 0.45 for 45%, which the shared file's
-      // as-typed 90 Day Sell Through % cannot tell apart, so the shared format is CSV only.
-      if (sharedResearchHeaders(Object.keys(records[0] ?? {})).length) {
-        return { ok: false, message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported." };
-      }
       return { ok: false, message: skipped[0] ?? "No market rows found." };
     }
     // The filename is user-controlled and may carry PII, so it is never passed on or stored.

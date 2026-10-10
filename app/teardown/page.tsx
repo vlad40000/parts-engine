@@ -1,24 +1,52 @@
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
-import { teardownQueue } from "@/src/db/queries";
-import { NoDatabase, PageTitle, pct, perSlotDay, usd, Years } from "@/src/components/ui";
+import { physicalReviewCount, physicalReviewQueue, teardownQueue } from "@/src/db/queries";
+import { NoDatabase, PageTitle, Pager, pct, perSlotDay, qs, usd, Years } from "@/src/components/ui";
 
 export const dynamic = "force-dynamic";
 
-export default async function TeardownPage() {
+export default async function TeardownPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   if (!hasDatabase()) return <NoDatabase />;
-  const { status, rows, qualified } = await teardownQueue(await getDb(), 150);
+  const db = await getDb();
+  const sp = await searchParams;
+  const requested = Number(sp.offset ?? 0);
+  const pageSize = 150;
+  const { status, rows, qualified } = await teardownQueue(db, 150);
+  const physicalTotal = status === "set_rule" ? await physicalReviewCount(db) : 0;
+  const offset = Number.isFinite(requested) && requested >= 0
+    ? Math.min(Math.trunc(requested), Math.max(0, Math.ceil(physicalTotal / pageSize) - 1) * pageSize) : 0;
+  const physical = status === "set_rule" ? await physicalReviewQueue(db, pageSize, offset) : [];
   return (
     <>
       <PageTitle
         title="Teardown queue"
-        sub="Machines holding QUALIFIED parts (Store Economics v7), ordered by the modeled value / slot-day of those parts. That ordering metric is not a profit score or a probability, and no stock target or pull cap is applied. Parts matching a machine's failure symptom are shown as test first and not counted."
+        sub="Review parts on available donor machines. When qualification rules are configured, qualified parts are ranked by modeled value / slot-day. Parts matching a machine's failure symptom are marked test first."
       />
       {status === "set_rule" ? (
-        <div className="card p-5 text-sm text-wait">
-          Set qualification rules. Automated teardown ranking is off until the owner enters the minimum 90-day sell-through % and
-          minimum projected profit margin % in <Link className="underline" href="/settings">Settings</Link>.
-        </div>
+        <>
+          <div className="card mb-4 flex flex-wrap items-center gap-3 p-4 text-sm">
+            <span className="mr-auto">{physicalTotal.toLocaleString()} donor machines with parts to review. This is a physical worklist, with no economic qualification or pull recommendation.</span>
+            <a className="btn btn-primary" href="/api/export/teardown">Export review CSV</a>
+            <p className="basis-full text-xs text-muted">Optional: set sell-through and margin thresholds in <Link className="underline" href="/settings">Settings</Link> to enable qualified ranking.</p>
+          </div>
+          {physical.length ? (
+            <div className="card overflow-x-auto p-4">
+              <table className="w-full text-sm">
+                <thead><tr><th>Machine</th><th>Status</th><th>Brand</th><th>Model</th><th>MPN</th><th>Description</th><th>Diagram</th><th>Review</th></tr></thead>
+                <tbody>{physical.flatMap((machine) => machine.lines.map((line) => (
+                  <tr key={`${machine.machine_no}:${line.mpn_canonical}`}>
+                    <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(machine.machine_no)}`}>{machine.machine_no}</Link></td>
+                    <td>{machine.availability}</td><td>{machine.brand}</td><td className="mono">{machine.model_raw}</td>
+                    <td><Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(line.mpn_canonical)}`}>{line.mpn_display}</Link></td>
+                    <td>{line.description}</td><td>{line.diagram_id}</td>
+                    <td><span className={`pill ${line.action === "test_first" ? "pill-wait" : "pill-mute"}`}>{line.action === "test_first" ? "test first" : "review"}</span></td>
+                  </tr>
+                )))}</tbody>
+              </table>
+            </div>
+          ) : <div className="card p-5 text-sm text-muted">No parts to review yet. Import machines and read their model parts lists first.</div>}
+          {physicalTotal > pageSize ? <Pager total={physicalTotal} limit={pageSize} offset={offset} href={(o) => qs({}, { offset: o })} /> : null}
+        </>
       ) : (
         <>
           <div className="mb-4 flex items-center gap-3 text-sm">

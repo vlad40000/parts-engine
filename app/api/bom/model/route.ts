@@ -1,24 +1,31 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/src/db";
+import { getSettings, hasEligibleModelDonor } from "@/src/db/queries";
 import { readModelBom } from "@/src/lib/model-bom";
-import { isUnreadableModel } from "@/src/lib/model-key";
+import { brandKey, isUnreadableModel, modelKey } from "@/src/lib/model-key";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const Body = z.object({ brand: z.string().trim().min(1), model: z.string().trim().min(1) });
+const Body = z.object({ brand: z.string().trim().min(1), model: z.string().trim().min(1), availability: z.string().trim().optional() });
 
 export async function POST(request: Request) {
   if (!hasDatabase()) return NextResponse.json({ error: "DATABASE_URL is not configured." }, { status: 503 });
   const parsed = Body.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "brand and model are required." }, { status: 400 });
-  const { brand, model } = parsed.data;
+  const { brand, model, availability } = parsed.data;
   if (isUnreadableModel(model)) return NextResponse.json({ error: "Model is unreadable; read the nameplate first." }, { status: 400 });
 
+  const db = await getDb();
+  const settings = await getSettings(db);
+  if (!(await hasEligibleModelDonor(db, brandKey(brand), modelKey(model), settings.donorAvailabilities, availability))) {
+    return NextResponse.json({ error: "No eligible donor machine has this model in the selected status. Nothing was researched." }, { status: 409 });
+  }
+
   const started = Date.now();
-  const { result, saved } = await readModelBom(await getDb(), { brand, model });
+  const { result, saved } = await readModelBom(db, { brand, model });
   return NextResponse.json({
     status: result.status,
     supplier: result.winner?.supplier ?? null,

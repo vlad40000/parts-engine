@@ -27,7 +27,7 @@ export function selectionOnPage(selected: Set<string>, candidates: Candidate[]):
   return [...selected].every((k) => onPage.has(k)) ? selected : new Set([...selected].filter((k) => onPage.has(k)));
 }
 
-export function BatchRunner({ candidates, batchSize }: { candidates: Candidate[]; batchSize: number }) {
+export function BatchRunner({ candidates, batchSize, availability }: { candidates: Candidate[]; batchSize: number; availability?: string }) {
   const router = useRouter();
   const controllers = useRef(new Map<string, AbortController>());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -81,7 +81,7 @@ export function BatchRunner({ candidates, batchSize }: { candidates: Candidate[]
     fetch("/api/bom/model", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ brand, model }),
+      body: JSON.stringify({ brand, model, availability }),
       signal: controller.signal
     })
       .then(async (res) => {

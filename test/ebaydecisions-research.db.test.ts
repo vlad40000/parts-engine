@@ -43,7 +43,7 @@ const chain = (rows: SupplierRow[]): ChainResult => ({
   attempts: [{ supplier: "encompass", status: "found", droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 }]
 });
 const machine = (id: number, type: string, model: string) =>
-  ({ ID: id, Availability: "UNCHECKED", ApplianceType: type, Brand: "Maytag", ModelNumber: model, SerialNumber: "" });
+  ({ ID: id, Availability: "PARTS ONLY", ApplianceType: type, Brand: "Maytag", ModelNumber: model, SerialNumber: "" });
 const form = (fields: Record<string, string | string[]>) => {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) for (const x of [v].flat()) f.append(k, x);

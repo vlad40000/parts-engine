@@ -47,7 +47,7 @@ const chain = (rows: SupplierRow[]): ChainResult => ({
   winner: { supplier: "encompass", status: "found", rows, droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 },
   attempts: [{ supplier: "encompass", status: "found", droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 }]
 });
-const washer = (id: number) => ({ ID: id, Availability: "UNCHECKED", ApplianceType: "Washer - Top Load", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" });
+const washer = (id: number) => ({ ID: id, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" });
 const form = (fields: Record<string, string>) => {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.append(k, v);
@@ -409,6 +409,10 @@ describe("Import: the same completed CSV, without conversion", () => {
     };
     // A percent-formatted cell would hold 0.45 for 45%, which the as-typed shared column cannot tell apart.
     expect(await importFile("research.xlsx", await workbook(["mpn", "90 Day sales", "90 Day Sell Through %"], ["XL-1", 4, 0.45]))).toEqual({
+      ok: false,
+      message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported."
+    });
+    expect(await importFile("mixed-workbook.xlsx", await workbook(["mpn", "90 Day sales", "sold90"], ["XL-3", 4, 4]))).toEqual({
       ok: false,
       message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported."
     });

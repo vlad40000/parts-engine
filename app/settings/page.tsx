@@ -44,7 +44,7 @@ export default async function SettingsPage() {
             title="Qualification rules (owner-set)"
             note={rulesSet(s)
               ? "Both set. Leave a field blank to unset it; qualification then returns SET RULE."
-              : "Optional and blank until you choose them. While either is blank, every researched MPN shows SET RULE and teardown ranking is off."}
+              : "Optional and blank until you choose them. While either is blank, economic ranking is off and Teardown shows an unranked physical review list."}
             fields={[
               ["minimumSellThroughPct", "Minimum exact-MPN 90-day sell-through %", s.minimumSellThroughPct],
               ["minimumProfitMarginPct", "Minimum projected profit margin %", s.minimumProfitMarginPct],
@@ -84,8 +84,9 @@ export default async function SettingsPage() {
             ]}
           />
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted">Statuses that count as donor machines (comma separated)</span>
+            <span className="text-xs text-muted">On-hand donor statuses (comma separated)</span>
             <input name="donorAvailabilities" defaultValue={s.donorAvailabilities.join(", ")} className="input" />
+            <span className="text-xs text-muted">Optional preference for default MPN donor counts and Teardown. Blank uses PARTS ONLY, NEEDS PARTS and PARTS PROGRAM. Parts-list runs require a status selected from the imported machines. SOLD, SCRAPED and SCRAPPED are always excluded.</span>
           </label>
           <div><button className="btn btn-primary">Save settings</button></div>
         </form>

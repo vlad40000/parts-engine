@@ -37,3 +37,9 @@ const esc = (v: unknown) => {
 export function toCsv(header: string[], rows: unknown[][]): string {
   return [header, ...rows].map((r) => r.map(esc).join(",")).join("\r\n") + "\r\n";
 }
+
+/** Prevent imported text from being evaluated as a formula when opened in a spreadsheet. */
+export function spreadsheetCell(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  return /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
+}
