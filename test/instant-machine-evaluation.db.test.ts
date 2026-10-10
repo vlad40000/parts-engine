@@ -196,7 +196,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     if (status === "error") {
       // Errors stay in the Parts lists queue for retry.
       const s = await getSettings(db);
-      expect((await modelsNeedingBom(db, {}, s.donorAvailabilities)).map((m) => [m.model_key, m.bom_status])).toContainEqual([model, "error"]);
+      expect((await modelsNeedingBom(db, { availability: "PARTS ONLY" }, s.donorAvailabilities)).map((m) => [m.model_key, m.bom_status])).toContainEqual([model, "error"]);
     }
   });
 
@@ -232,7 +232,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     expect(redirect).not.toHaveBeenCalled();
     expect(await db.$count(schema.modelBomCache)).toBe(cachesBefore);
     const s = await getSettings(db);
-    const queued = (await modelsNeedingBom(db, {}, s.donorAvailabilities)).map((m) => m.model_key);
+    const queued = (await modelsNeedingBom(db, { availability: "PARTS ONLY" }, s.donorAvailabilities)).map((m) => m.model_key);
     expect(queued).toContain("WTW5000DW1");
     expect(queued).not.toContain("DV45H7000EW/A2");
     expect((await modelsNeedingBom(db, { availability: "UNCHECKED" }, s.donorAvailabilities)).map((m) => m.model_key)).toContain("DV45H7000EW/A2");
@@ -264,7 +264,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
   it("the Parts lists API route still reads and saves through the same path", async () => {
     supplier = "not_found";
     const res = await bomRoute(new Request("http://local/api/bom/model", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ brand: "Whirlpool", model: "WTW5000DW1" })
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ brand: "Whirlpool", model: "WTW5000DW1", availability: "PARTS ONLY" })
     }));
     expect(await res.json()).toMatchObject({ status: "not_found", rows: 0, supplier: null });
     expect(lookupModelBom).toHaveBeenCalledTimes(1);

@@ -1,16 +1,10 @@
 import { NextResponse } from "next/server";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnDetail } from "@/src/db/queries";
-import { toCsv } from "@/src/lib/csv";
+import { spreadsheetCell, toCsv } from "@/src/lib/csv";
 import { machineMatchesByStatus } from "@/src/lib/harvest-candidates";
 
 export const dynamic = "force-dynamic";
-
-// A spreadsheet must not interpret imported machine text as a formula.
-const cell = (value: unknown) => {
-  const text = value == null ? "" : String(value);
-  return /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
-};
 
 export async function GET(request: Request) {
   if (!hasDatabase()) return NextResponse.json({ error: "DATABASE_URL is not configured." }, { status: 503 });
@@ -26,7 +20,7 @@ export async function GET(request: Request) {
   const csv = toCsv(
     ["MPN", "machine", "status", "candidate", "type", "brand", "model", "diagram", "possible_years", "part_state", "reason"],
     matches.map((m) => [detail.mpn.mpn_display, m.machine_no, m.availability, m.candidate, m.appliance_type,
-      m.brand, m.model_raw, m.diagram_id, m.age_candidate_years.join("; "), m.state ?? "", m.reasons.join(" ")].map(cell))
+      m.brand, m.model_raw, m.diagram_id, m.age_candidate_years.join("; "), m.state ?? "", m.reasons.join(" ")].map(spreadsheetCell))
   );
   return new NextResponse(csv, {
     headers: {

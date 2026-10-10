@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import {
-  BOM_QUEUE_PAGE_SIZE, bomQueue, getSettings, modelsNeedingBom, saveModelBom, saveSettings, upsertFleet,
+  BOM_QUEUE_PAGE_SIZE, bomQueue as rawBomQueue, getSettings, modelsNeedingBom, saveModelBom, saveSettings, upsertFleet,
   type FleetFilter, type ModelCandidate
 } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
@@ -37,7 +37,10 @@ const washer = (ID: number, ModelNumber: string, Availability = "PARTS ONLY", Se
 const dryer = (ID: number, ModelNumber: string) =>
   ({ ID, Availability: "PARTS ONLY", ApplianceType: DRYER, Brand: "Maytag", ModelNumber, SerialNumber: "" });
 const machinesIn = (rows: ModelCandidate[]) => rows.reduce((n, r) => n + r.machines, 0);
-const wholeQueue = (f: FleetFilter = {}) => modelsNeedingBom(db, f, donors, 100000);
+// Existing pagination fixtures cover the full checked set via an explicit choice.
+const checked = (f: FleetFilter = {}): FleetFilter => ({ availability: "include_unchecked", ...f });
+const bomQueue = (db: Db, f: FleetFilter, donorSet: string[], limit = PAGE, offset = 0) => rawBomQueue(db, checked(f), donorSet, limit, offset);
+const wholeQueue = (f: FleetFilter = {}) => modelsNeedingBom(db, checked(f), donors, 100000);
 
 beforeAll(async () => {
   const client = new PGlite();
@@ -130,7 +133,9 @@ describe("pending parts-list queue: totals and paging", () => {
     expect(whole.find((r) => r.model_key === "WTWBIG1")?.machines).toBe(4);
     // The donor set is authoritative: READY TO SALE as a donor status adds WTWOFF (2 machines) and unit 1005.
     expect(await bomQueue(db, {}, [...donors, "READY TO SALE"])).toMatchObject({ totalModels: 329, totalMachines: 343 });
-    expect(await bomQueue(db, {}, [])).toMatchObject({ rows: [], totalModels: 0, totalMachines: 0, offset: 0 });
+    // Blank advanced preference still allows an explicit combined selection.
+    expect(await bomQueue(db, {}, [])).toMatchObject({ ...TOTAL, offset: 0 });
+    expect(await rawBomQueue(db, {}, donors)).toMatchObject({ rows: [], totalModels: 0, totalMachines: 0 });
   });
 
   it("an offset past the end (the queue shrank under the page) falls back to the last page", async () => {
@@ -150,38 +155,38 @@ describe("Parts lists page", () => {
   const pager = (html: string) => [...html.matchAll(/<a[^>]*href="([^"]*)"[^>]*>(← Prev|Next →)<\/a>/g)].map((m) => [m[2], m[1].replace(/&amp;/g, "&")]);
 
   it("page 1 shows the full pending totals, says it is a grouped queue, and offers Next", async () => {
-    const html = await render();
+    const html = await render({ availability: "PARTS ONLY" });
     const text = textOf(html);
-    expect(text).toContain("328 Brand + Model groups need a parts list · 340 donor machines in those groups");
+    expect(text).toContain("327 Brand + Model groups need a parts list · 336 donor machines in those groups");
     expect(text).toContain("grouped parts-list (BOM) queue, not the full Fleet");
-    expect(text).toContain("checked donor status in Settings (PARTS ONLY, NEEDS PARTS, PARTS PROGRAM). UNCHECKED can be included");
-    expect(text).toContain("1–300 of 328");
+    expect(text).toContain("Select a status imported with the machines before running a lookup.");
+    expect(text).toContain("1–300 of 327");
     expect(queueRows(html)).toBe(300);
-    expect(pager(html)).toEqual([["Next →", "?offset=300"]]);
+    expect(pager(html)).toEqual([["Next →", "?availability=PARTS+ONLY&offset=300"]]);
   });
 
   it("page 2 shows the remaining rows under the same totals, with Prev", async () => {
-    const html = await render({ offset: "300" });
-    expect(textOf(html)).toContain("328 Brand + Model groups need a parts list · 340 donor machines in those groups");
-    expect(textOf(html)).toContain("301–328 of 328");
-    expect(queueRows(html)).toBe(28);
-    expect(pager(html)).toEqual([["← Prev", "?"]]);
+    const html = await render({ availability: "PARTS ONLY", offset: "300" });
+    expect(textOf(html)).toContain("327 Brand + Model groups need a parts list · 336 donor machines in those groups");
+    expect(textOf(html)).toContain("301–327 of 327");
+    expect(queueRows(html)).toBe(27);
+    expect(pager(html)).toEqual([["← Prev", "?availability=PARTS+ONLY"]]);
   });
 
   it("paging links keep the filters, and the totals are for the filtered set", async () => {
-    const html = await render({ brand: "WHIRLPOOL", band: "unknown" });
-    expect(textOf(html)).toContain("314 Brand + Model groups need a parts list · 322 donor machines in those groups");
+    const html = await render({ availability: "PARTS ONLY", brand: "WHIRLPOOL", band: "unknown" });
+    expect(textOf(html)).toContain("314 Brand + Model groups need a parts list · 321 donor machines in those groups");
     expect(textOf(html)).toContain("SOLD and SCRAPED/SCRAPPED cannot be donors. The selected age, type, and brand filters also apply.");
-    expect(pager(html)).toEqual([["Next →", "?band=unknown&brand=WHIRLPOOL&offset=300"]]);
+    expect(pager(html)).toEqual([["Next →", "?band=unknown&brand=WHIRLPOOL&availability=PARTS+ONLY&offset=300"]]);
 
-    const next = await render({ brand: "WHIRLPOOL", band: "unknown", offset: "300" });
+    const next = await render({ availability: "PARTS ONLY", brand: "WHIRLPOOL", band: "unknown", offset: "300" });
     expect(textOf(next)).toContain("301–314 of 314");
     expect(queueRows(next)).toBe(14);
-    expect(pager(next)).toEqual([["← Prev", "?band=unknown&brand=WHIRLPOOL"]]);
+    expect(pager(next)).toEqual([["← Prev", "?band=unknown&brand=WHIRLPOOL&availability=PARTS+ONLY"]]);
   });
 
   it("a queue that fits on one page says so and shows no pager", async () => {
-    const html = await render({ type: DRYER });
+    const html = await render({ availability: "PARTS ONLY", type: DRYER });
     expect(textOf(html)).toContain("13 Brand + Model groups need a parts list · 14 donor machines in those groups");
     expect(textOf(html)).toContain("All 13 groups are on this page.");
     expect(queueRows(html)).toBe(13);
@@ -189,17 +194,32 @@ describe("Parts lists page", () => {
   });
 
   it("a stale page past the end shows the last page instead of an empty queue", async () => {
-    const html = await render({ offset: "900" });
-    expect(textOf(html)).toContain("301–328 of 328");
+    const html = await render({ availability: "PARTS ONLY", offset: "900" });
+    expect(textOf(html)).toContain("301–327 of 327");
     expect(textOf(html)).not.toContain("Every donor model in this filter has a parts list.");
-    expect(queueRows(html)).toBe(28);
+    expect(queueRows(html)).toBe(27);
   });
 
-  it("totals follow the Settings donor statuses", async () => {
+  it("an imported status can be selected regardless of Settings", async () => {
     const s = await getSettings(db);
     await saveSettings(db, { ...s, donorAvailabilities: [...s.donorAvailabilities, "READY TO SALE"] });
     try {
-      expect(textOf(await render())).toContain("329 Brand + Model groups need a parts list · 343 donor machines in those groups");
+      expect(textOf(await render({ availability: "READY TO SALE" }))).toContain("2 Brand + Model groups need a parts list · 3 donor machines in those groups");
+    } finally {
+      await saveSettings(db, s);
+    }
+  });
+
+  it("shows only imported statuses and waits for a selection", async () => {
+    const s = await getSettings(db);
+    await saveSettings(db, { ...s, donorAvailabilities: s.donorAvailabilities.filter((x) => x !== "UNCHECKED") });
+    try {
+      const html = await render();
+      expect(html).toContain('value="READY TO SALE"');
+      expect(html).toContain('value="UNCHECKED"');
+      expect(html).not.toContain('value="SOLD"');
+      expect(textOf(html)).toContain("Choose a donor machine status above");
+      expect(queueRows(html)).toBe(0);
     } finally {
       await saveSettings(db, s);
     }

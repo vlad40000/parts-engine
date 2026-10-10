@@ -44,7 +44,7 @@ beforeAll(async () => {
 describe("pipeline on a real Postgres (PGlite)", () => {
   it("queues models by machine count, excluding non-donors and unreadable models", async () => {
     const s = await getSettings(db);
-    const models = await modelsNeedingBom(db, {}, s.donorAvailabilities);
+    const models = await modelsNeedingBom(db, { availability: "PARTS ONLY" }, s.donorAvailabilities);
     expect(models.map((m) => [m.model_key, m.machines])).toEqual([["MVWX655DW1", 2], ["WTW5000DW1", 1]]);
   });
 

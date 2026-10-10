@@ -6,12 +6,14 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { getSettings, hasEligibleModelDonor, modelsNeedingBom, mpnDetail, mpnIndex, saveModelBom, saveSettings, upsertFleet } from "@/src/db/queries";
+import { getSettings, hasEligibleModelDonor, modelsNeedingBom, mpnDetail, mpnIndex, physicalReviewCount, physicalReviewQueue, saveModelBom, saveSettings, teardownQueue, upsertFleet } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { parseCsvRows } from "@/src/lib/csv";
 import { GET as exportDonors } from "@/app/api/export/mpn-donors/route";
 import { POST as runBom } from "@/app/api/bom/model/route";
 import MpnPage from "@/app/mpns/[mpn]/page";
+import TeardownPage from "@/app/teardown/page";
+import { GET as exportTeardown } from "@/app/api/export/teardown/route";
 import type { ChainResult } from "@/src/sources/chain";
 
 const holder = vi.hoisted(() => ({ db: null as unknown }));
@@ -37,23 +39,32 @@ beforeAll(async () => {
     ...Array.from({ length: 30 }, (_, i) => row(1000 + i, "PARTS ONLY")),
     ...Array.from({ length: 20 }, (_, i) => row(2000 + i, "NEEDS PARTS", "WTW2222")),
     row(3000, "UNCHECKED", "WTW3333"), row(4000, "SOLD", "WTW4444"),
-    row(4001, "SCRAPED", "WTW4444"), row(4002, "SCRAPPED", "WTW4444")
+    row(4001, "SCRAPED", "WTW4444"), row(4002, "SCRAPPED", "WTW4444"),
+    row(5000, "READY TO SALE", "WTW5555")
   ]).rows);
 });
 
 describe("donor status at lookup and in existing BOM cross-reference", () => {
   it("requires explicit UNCHECKED selection and never accepts off-lot statuses, even if configured", async () => {
     const s = await getSettings(db);
-    await saveSettings(db, { ...s, donorAvailabilities: [...s.donorAvailabilities, "SOLD", "SCRAPED", "SCRAPPED"] });
+    await saveSettings(db, { ...s, donorAvailabilities: [...s.donorAvailabilities.filter((x) => x !== "UNCHECKED"), "SOLD", "SCRAPED", "SCRAPPED"] });
     const allowed = (await getSettings(db)).donorAvailabilities;
-    expect(allowed).not.toEqual(expect.arrayContaining(["SOLD", "SCRAPED", "SCRAPPED"]));
-    expect((await modelsNeedingBom(db, {}, allowed)).map((x) => x.model_key)).toEqual(["WTW1111", "WTW2222"]);
+    for (const excluded of ["UNCHECKED", "SOLD", "SCRAPED", "SCRAPPED"]) expect(allowed).not.toContain(excluded);
+    expect(await modelsNeedingBom(db, {}, allowed)).toEqual([]);
     expect((await modelsNeedingBom(db, { availability: "UNCHECKED" }, allowed)).map((x) => x.model_key)).toEqual(["WTW3333"]);
     expect((await modelsNeedingBom(db, { availability: "include_unchecked" }, allowed)).map((x) => x.model_key)).toEqual(["WTW1111", "WTW2222", "WTW3333"]);
+    expect((await modelsNeedingBom(db, { availability: "READY TO SALE" }, allowed)).map((x) => x.model_key)).toEqual(["WTW5555"]);
     expect(await modelsNeedingBom(db, { availability: "SOLD" }, allowed)).toEqual([]);
+    expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW1111", allowed)).toBe(false);
+    const unselected = await runBom(new Request("http://local/api/bom/model", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brand: "Whirlpool", model: "WTW1111" })
+    }));
+    expect(unselected.status).toBe(409);
     expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", allowed)).toBe(false);
     expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", allowed, "UNCHECKED")).toBe(true);
     expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", allowed, "include_unchecked")).toBe(true);
+    expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW5555", allowed, "READY TO SALE")).toBe(true);
     for (const status of ["SOLD", "SCRAPED", "SCRAPPED"]) {
       expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW4444", allowed, status)).toBe(false);
       const response = await runBom(new Request("http://local/api/bom/model", {
@@ -62,6 +73,12 @@ describe("donor status at lookup and in existing BOM cross-reference", () => {
       }));
       expect(response.status).toBe(409);
     }
+    await saveSettings(db, { ...(await getSettings(db)), donorAvailabilities: [] });
+    const blank = (await getSettings(db)).donorAvailabilities;
+    expect(blank).toEqual([]);
+    expect(await modelsNeedingBom(db, {}, blank)).toEqual([]);
+    expect((await modelsNeedingBom(db, { availability: "PARTS ONLY" }, blank)).map((x) => x.model_key)).toEqual(["WTW1111"]);
+    expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", blank, "UNCHECKED")).toBe(true);
   });
 
   it("lists and exports all 50 checked donors across two cached model BOMs", async () => {
@@ -105,5 +122,39 @@ describe("donor status at lookup and in existing BOM cross-reference", () => {
     expect((await mpnDetail(db, MPN, "eligible"))!.machines).toHaveLength(49);
     expect((await mpnDetail(db, MPN, "all"))!.machines).toHaveLength(54);
     expect((await mpnDetail(db, MPN, "SOLD"))!.harvest.unavailable).toHaveLength(2);
+  });
+
+  it("shows a physical review list and CSV with blank qualification thresholds", async () => {
+    expect((await teardownQueue(db)).status).toBe("set_rule");
+    const physical = await physicalReviewQueue(db);
+    expect(physical).toHaveLength(49);
+    expect(physical.every((m) => m.lines.length === 1 && m.lines[0].action === "review")).toBe(true);
+    const html = renderToStaticMarkup(await TeardownPage({ searchParams: Promise.resolve({}) }));
+    expect(html).toContain("physical worklist");
+    expect(html).toContain("Export review CSV");
+    const response = await exportTeardown();
+    const csv = parseCsvRows(await response.text());
+    expect(csv).toHaveLength(50);
+    expect(csv[0]).toEqual(["machine", "status", "brand", "model", "mpn", "description", "diagram", "action"]);
+    expect(csv.slice(1).every((r) => r[7] === "review")).toBe(true);
+  });
+
+  it("permits an explicit checked on-lot status absent from Settings without changing default supply", async () => {
+    await saveModelBom(db, { brandKey: "WHIRLPOOL", modelKey: "WTW5555", brandDisplay: "Whirlpool", modelDisplay: "WTW5555", result });
+    expect((await mpnDetail(db, MPN, "eligible"))!.machines).toHaveLength(49);
+    const selected = (await mpnDetail(db, MPN, "READY TO SALE"))!;
+    expect(selected.harvest.harvestCandidates.map((m) => m.machine_no)).toEqual(["5000"]);
+  });
+
+  it("pages the unranked review worklist and exports every candidate", async () => {
+    await upsertFleet(db, mapFleetRows(Array.from({ length: 510 }, (_, i) => row(6000 + i, "PARTS ONLY"))).rows);
+    expect(await physicalReviewCount(db)).toBe(559);
+    expect(await physicalReviewQueue(db, 150, 150)).toHaveLength(150);
+    const html = renderToStaticMarkup(await TeardownPage({ searchParams: Promise.resolve({ offset: "150" }) }));
+    expect(html).toContain("151–300 of 559");
+    expect(html).toContain("?offset=300");
+    const csv = parseCsvRows(await (await exportTeardown()).text());
+    expect(csv).toHaveLength(560);
+    expect(new Set(csv.slice(1).map((r) => r[0])).size).toBe(559);
   });
 });

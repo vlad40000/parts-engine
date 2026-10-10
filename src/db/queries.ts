@@ -5,7 +5,7 @@ import { resolveRemoval, SEED_BASELINES, type Baseline } from "@/src/lib/removal
 import { qualify, type EconomicsSettings, type Qualification } from "@/src/lib/economics";
 import type { FleetRow } from "@/src/lib/fleet-import";
 import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candidates";
-import { defaultDonorStatuses, eligibleDonorStatuses } from "@/src/lib/donor-status";
+import { defaultDonorStatuses, donorStatusesForSelection, eligibleDonorStatuses, isOffLotDonorStatus, selectedDonorStatuses } from "@/src/lib/donor-status";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
 import { buildSharedResearchExport, type SharedResearchRow } from "@/src/lib/shared-research-csv";
@@ -243,12 +243,11 @@ export const BOM_QUEUE_PAGE_SIZE = 300;
 
 /**
  * The pending parts-list queue: one group per Brand + Model (never serial), counting only machines with a
- * readable model whose status is in the Settings donor set. found / not_found leave the queue; error stays
+ * readable model whose status was explicitly selected. found / not_found leave the queue; error stays
  * for retry. Page rows and totals both read this, so the totals cannot drift from the queue.
  */
 function pendingBomGroups(f: FleetFilter, donorSet: string[]) {
-  const allowed = f.availability === "UNCHECKED" || f.availability === "include_unchecked"
-    ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
+  const allowed = donorStatusesForSelection(donorSet, f.availability);
   return sql`
     select f.brand_key, f.model_key, min(f.brand) brand, min(f.model_raw) model, count(*)::int machines,
       string_agg(distinct f.appliance_type, ', ') types, min(c.status) bom_status
@@ -257,7 +256,7 @@ function pendingBomGroups(f: FleetFilter, donorSet: string[]) {
     where f.identity_status = 'ok' and f.model_key <> ''
       and f.availability = any(${sql.raw(pgTextArray(allowed))})
       and (c.status is null or c.status = 'error')
-      and ${fleetWhere(f.availability === "include_unchecked" ? { ...f, availability: undefined } : f)}
+      and ${fleetWhere(f.availability === "include_unchecked" ? { ...f, availability: undefined } : { ...f, availability: allowed.length === 1 ? allowed[0] : undefined })}
     group by f.brand_key, f.model_key`;
 }
 
@@ -290,14 +289,13 @@ export async function bomQueue(db: Db, f: FleetFilter, donorSet: string[], limit
 
 /** Gate a direct or pasted BOM lookup against a real, currently eligible machine. */
 export async function hasEligibleModelDonor(db: Db, brand: string, model: string, donorSet: string[], availability?: string): Promise<boolean> {
-  const allowed = availability === "UNCHECKED" || availability === "include_unchecked"
-    ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
-  if (availability && availability !== "include_unchecked" && !allowed.includes(availability)) return false;
+  const allowed = donorStatusesForSelection(donorSet, availability);
+  if (!allowed.length) return false;
   const [row] = await q<{ present: boolean }>(db, sql`
     select exists (
       select 1 from fleet_machines f where f.brand_key = ${brand} and f.model_key = ${model}
         and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(allowed))})
-        ${availability && availability !== "include_unchecked" ? sql`and f.availability = ${availability}` : sql``}
+        ${availability && availability !== "include_unchecked" ? sql`and f.availability = ${availability.trim().toUpperCase()}` : sql``}
     ) present`);
   return row.present;
 }
@@ -546,7 +544,7 @@ export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "
     where e.mpn_canonical = ${canonical}
     group by f.availability order by f.availability`);
   const matchFilter = availability === "eligible" || availability === "include_unchecked"
-    ? sql`and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(availability === "include_unchecked" ? eligibleDonorStatuses(s.donorAvailabilities) : defaultDonorStatuses(s.donorAvailabilities)))}) and s.state is null`
+    ? sql`and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(selectedDonorStatuses(s.donorAvailabilities, availability === "include_unchecked")))}) and s.state is null`
     : availability !== "all" ? sql`and f.availability = ${availability}` : sql``;
   const machines = await q<MachineMatchRow>(db, sql`
     select f.machine_no, f.availability, f.appliance_type, f.brand, f.brand_key, f.model_raw, f.model_key, e.diagram_id,
@@ -560,7 +558,11 @@ export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "
     select brand_key, model_key, description, new_price, source from model_part_edges where mpn_canonical = ${canonical} order by 1, 2`);
   const roadrunner = (await roadrunnerPerformance(db, [canonical])).get(canonical) ?? null;
   // Physical facts only; economic qualification never decides who is a candidate.
-  const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities, availability === "UNCHECKED" || availability === "include_unchecked");
+  const explicitlySelected = availability !== "all" && availability !== "eligible" && availability !== "include_unchecked" && !isOffLotDonorStatus(availability)
+    ? availability : null;
+  const harvest = harvestCandidates(machines, row.part_family,
+    explicitlySelected ? [...s.donorAvailabilities, explicitlySelected] : s.donorAvailabilities,
+    availability === "UNCHECKED" || availability === "include_unchecked");
   return { mpn: evaluated, aliases, machines, harvest, models, roadrunner, settings: s, statusCounts };
 }
 
@@ -909,6 +911,74 @@ export type TeardownRow = {
   lines: PullLine[]; suspect_lines: PullLine[];
 };
 export type TeardownResult = { status: "set_rule" | "ok"; rows: TeardownRow[]; qualified: number; settings: AppSettings };
+
+export type PhysicalReviewLine = {
+  mpn_canonical: string; mpn_display: string; description: string; diagram_id: string;
+  action: "review" | "test_first";
+};
+export type PhysicalReviewRow = {
+  machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
+  age_candidate_years: number[]; lines: PhysicalReviewLine[];
+};
+
+/** An unranked, physical worklist when economic qualification rules are not configured. */
+export async function physicalReviewCount(db: Db): Promise<number> {
+  const settings = await getSettings(db);
+  const [row] = await q<{ machines: number }>(db, sql`
+    select count(*)::int machines from fleet_machines f
+    where f.identity_status = 'ok'
+      and f.availability = any(${sql.raw(pgTextArray(defaultDonorStatuses(settings.donorAvailabilities)))})
+      and exists (
+        select 1 from model_part_edges e where e.brand_key = f.brand_key and e.model_key = f.model_key
+          and not exists (select 1 from machine_part_state ps where ps.machine_no = f.machine_no and ps.mpn_canonical = e.mpn_canonical)
+      )`);
+  return row.machines;
+}
+
+export async function physicalReviewQueue(db: Db, limit = 150, offset = 0): Promise<PhysicalReviewRow[]> {
+  const settings = await getSettings(db);
+  const matches = await q<{
+    machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
+    age_candidate_years: number[]; suspect_families: string[]; mpn_canonical: string; mpn_display: string;
+    description: string; diagram_id: string; part_family: string;
+  }>(db, sql`
+    with selected as (
+      select f.machine_no, f.brand, f.model_raw, f.appliance_type, f.availability, f.age_candidate_years,
+        f.suspect_families, f.brand_key, f.model_key
+      from fleet_machines f
+      where f.identity_status = 'ok'
+        and f.availability = any(${sql.raw(pgTextArray(defaultDonorStatuses(settings.donorAvailabilities)))})
+        and exists (
+          select 1 from model_part_edges e where e.brand_key = f.brand_key and e.model_key = f.model_key
+            and not exists (select 1 from machine_part_state ps where ps.machine_no = f.machine_no and ps.mpn_canonical = e.mpn_canonical)
+        )
+      order by f.machine_no
+      limit ${limit} offset ${offset}
+    )
+    select s.machine_no, s.brand, s.model_raw, s.appliance_type, s.availability, s.age_candidate_years, s.suspect_families,
+      e.mpn_canonical, m.mpn_display, coalesce(nullif(e.description, ''), m.description) description,
+      e.diagram_id, m.part_family
+    from selected s
+    join model_part_edges e on e.brand_key = s.brand_key and e.model_key = s.model_key
+    join mpn_master m on m.mpn_canonical = e.mpn_canonical
+    where not exists (select 1 from machine_part_state ps where ps.machine_no = s.machine_no and ps.mpn_canonical = e.mpn_canonical)
+    order by s.machine_no, e.diagram_id, e.mpn_canonical`);
+  const machines = new Map<string, PhysicalReviewRow>();
+  for (const match of matches) {
+    const machine = machines.get(match.machine_no) ?? {
+      machine_no: match.machine_no, brand: match.brand, model_raw: match.model_raw,
+      appliance_type: match.appliance_type, availability: match.availability,
+      age_candidate_years: match.age_candidate_years, lines: []
+    };
+    machine.lines.push({
+      mpn_canonical: match.mpn_canonical, mpn_display: match.mpn_display,
+      description: match.description, diagram_id: match.diagram_id,
+      action: (match.suspect_families ?? []).includes(match.part_family) ? "test_first" : "review"
+    });
+    machines.set(match.machine_no, machine);
+  }
+  return [...machines.values()];
+}
 
 /**
  * Only QUALIFIED MPNs enter the teardown layer, and only once both owner thresholds are set.
