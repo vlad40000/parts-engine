@@ -1,8 +1,9 @@
 import { and, eq } from "drizzle-orm";
-import { saveModelBom } from "@/src/db/queries";
+import { getSettings, saveModelBom } from "@/src/db/queries";
 import * as t from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import type { FleetRow } from "@/src/lib/fleet-import";
+import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { brandKey, modelKey } from "@/src/lib/model-key";
 import { lookupModelBom, type ChainResult } from "@/src/sources/chain";
 import { createFetcher } from "@/src/sources/http";
@@ -31,6 +32,7 @@ export async function readModelBom(
 
 export type MachineBom =
   | { outcome: "needs_nameplate" }
+  | { outcome: "ineligible_status" }
   | { outcome: "cached"; rows: number }
   | { outcome: "looked_up"; status: ChainResult["status"]; rows: number };
 
@@ -41,10 +43,11 @@ export type MachineBom =
  */
 export async function ensureMachineBom(
   db: Db,
-  machine: Pick<FleetRow, "brand" | "brandKey" | "modelRaw" | "modelKey" | "identityStatus">,
+  machine: Pick<FleetRow, "brand" | "brandKey" | "modelRaw" | "modelKey" | "identityStatus" | "availability">,
   fetcher: Fetcher = supplierFetcher
 ): Promise<MachineBom> {
   if (machine.identityStatus !== "ok" || !machine.modelKey) return { outcome: "needs_nameplate" };
+  if (!isEligibleDonorStatus(machine.availability, (await getSettings(db)).donorAvailabilities)) return { outcome: "ineligible_status" };
   const [cached] = await db.select().from(t.modelBomCache)
     .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)));
   if (cached?.status === "found") return { outcome: "cached", rows: cached.rowCount };

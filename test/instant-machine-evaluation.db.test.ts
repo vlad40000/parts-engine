@@ -150,7 +150,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
   });
 
   it("3. an uncached readable model goes through the existing lookup once, then detail uses the saved BOM", async () => {
-    await addMachine({ machineNo: "902", brand: "Maytag", model: "MEDC465HW0", serial: "DDD444" });
+    await addMachine({ machineNo: "902", brand: "Maytag", model: "MEDC465HW0", serial: "DDD444", availability: "PARTS ONLY" });
 
     expect(redirect).toHaveBeenCalledWith("/machines/902");
     expect(lookupModelBom).toHaveBeenCalledTimes(1);
@@ -170,7 +170,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     // A second machine of that model (different serial) reuses the BOM just read.
     vi.mocked(lookupModelBom).mockClear();
     supplierHttp.mockClear();
-    await addMachine({ machineNo: "903", brand: "Maytag", model: "MEDC465HW0", serial: "EEE555" });
+    await addMachine({ machineNo: "903", brand: "Maytag", model: "MEDC465HW0", serial: "EEE555", availability: "PARTS ONLY" });
     expect(lookupModelBom).not.toHaveBeenCalled();
     expect(supplierHttp).not.toHaveBeenCalled();
     expect(await cacheRow("MAYTAG", "MEDC465HW0")).toEqual(cache);
@@ -183,7 +183,7 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     const mastersBefore = await db.$count(schema.mpnMaster);
     const machineNo = status === "error" ? "905" : "904";
 
-    await addMachine({ machineNo, brand: "Whirlpool", model, serial: "FFF666" });
+    await addMachine({ machineNo, brand: "Whirlpool", model, serial: "FFF666", availability: "PARTS ONLY" });
 
     expect(redirect).toHaveBeenCalledWith(`/machines/${machineNo}`);
     expect(lookupModelBom).toHaveBeenCalledTimes(1);
@@ -233,7 +233,9 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     expect(await db.$count(schema.modelBomCache)).toBe(cachesBefore);
     const s = await getSettings(db);
     const queued = (await modelsNeedingBom(db, {}, s.donorAvailabilities)).map((m) => m.model_key);
-    expect(queued).toEqual(expect.arrayContaining(["WTW5000DW1", "DV45H7000EW/A2"]));
+    expect(queued).toContain("WTW5000DW1");
+    expect(queued).not.toContain("DV45H7000EW/A2");
+    expect((await modelsNeedingBom(db, { availability: "UNCHECKED" }, s.donorAvailabilities)).map((m) => m.model_key)).toContain("DV45H7000EW/A2");
     expect(queued).not.toContain("MVWX655DW1");
   });
 

@@ -34,7 +34,7 @@ const chain = (rows: SupplierRow[]): ChainResult => ({
   attempts: [{ supplier: "encompass", status: "found", droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 }]
 });
 const washer = (id: number) =>
-  ({ ID: id, Availability: "UNCHECKED", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" });
+  ({ ID: id, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" });
 const form = (fields: Record<string, string>) => {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);

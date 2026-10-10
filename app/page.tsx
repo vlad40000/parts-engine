@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
-import { fleetFacets, fleetSummary, listFleet } from "@/src/db/queries";
+import { fleetFacets, fleetSummary, getSettings, listFleet } from "@/src/db/queries";
+import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
 
@@ -13,7 +14,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
   const db = await getDb();
   const offset = Number(sp.offset ?? 0) || 0;
   const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q };
-  const [summary, facets, list] = await Promise.all([fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset)]);
+  const [summary, facets, list, settings] = await Promise.all([fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset), getSettings(db)]);
   const base = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q };
 
   if (!summary.totals?.machines) {
@@ -92,7 +93,11 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 <td className="mono text-xs">{m.serial}</td>
                 <td className="text-xs"><Years years={m.age_candidate_years} /></td>
                 <td className="text-xs text-muted">{m.suspect_families.join(", ")}</td>
-                <td>{m.bom_status === "found" ? <span className="pill pill-go">yes</span> : m.bom_status ? <span className="pill pill-mute">{m.bom_status.replace("_", " ")}</span> : null}</td>
+                <td>{m.bom_status === "found"
+                  ? isEligibleDonorStatus(m.availability, settings.donorAvailabilities)
+                    ? <span className="pill pill-go">yes</span>
+                    : <span className="pill pill-mute" title="Model parts list is cached, but this machine is not a currently eligible donor.">model cached · ineligible</span>
+                  : m.bom_status ? <span className="pill pill-mute">{m.bom_status.replace("_", " ")}</span> : null}</td>
               </tr>
             ))}
           </tbody>

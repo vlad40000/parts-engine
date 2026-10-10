@@ -35,7 +35,7 @@ const chain = (rows: SupplierRow[]): ChainResult => ({
   attempts: [{ supplier: "encompass", status: "found", droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 }]
 });
 const washer = (id: number, serial: string, model = "MVWX655DW1", brand = "Maytag") =>
-  ({ ID: id, Availability: "UNCHECKED", ApplianceType: "Washer - Top Load / No Agitator", Brand: brand, ModelNumber: model, SerialNumber: serial });
+  ({ ID: id, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load / No Agitator", Brand: brand, ModelNumber: model, SerialNumber: serial });
 
 // Placeholder buyer columns prove the importer ignores them; the values are not real people.
 const SALES_CSV = [

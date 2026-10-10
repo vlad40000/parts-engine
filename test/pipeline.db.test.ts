@@ -32,11 +32,11 @@ beforeAll(async () => {
   await migrate(drizzle(client), { migrationsFolder: path.join(__dirname, "..", "drizzle") });
 
   const fleet = mapFleetRows([
-    { ID: 1, Availability: "UNCHECKED", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "CD2412345" },
-    { ID: 2, Availability: "UNCHECKED", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "SU1727374", Diagnosis: "No power, dead" },
+    { ID: 1, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "CD2412345" },
+    { ID: 2, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "SU1727374", Diagnosis: "No power, dead" },
     { ID: 3, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Whirlpool", ModelNumber: "WTW5000DW1", SerialNumber: "" },
     { ID: 4, Availability: "READY TO SALE", ApplianceType: "Washer - Top Load / No Agitator", Brand: "Whirlpool", ModelNumber: "WTW5000DW1", SerialNumber: "" },
-    { ID: 5, Availability: "UNCHECKED", ApplianceType: "Range - Drop In", Brand: "GE", ModelNumber: "NO NAMEPLATE", SerialNumber: "" }
+    { ID: 5, Availability: "PARTS ONLY", ApplianceType: "Range - Drop In", Brand: "GE", ModelNumber: "NO NAMEPLATE", SerialNumber: "" }
   ], NOW).rows;
   await upsertFleet(db, fleet);
 });

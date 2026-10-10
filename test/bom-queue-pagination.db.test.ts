@@ -32,10 +32,10 @@ const TOTAL = { totalModels: 328, totalMachines: 340 };
 
 const pad = (n: number) => String(n).padStart(4, "0");
 const seq = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
-const washer = (ID: number, ModelNumber: string, Availability = "UNCHECKED", SerialNumber = "") =>
+const washer = (ID: number, ModelNumber: string, Availability = "PARTS ONLY", SerialNumber = "") =>
   ({ ID, Availability, ApplianceType: WASHER, Brand: "Whirlpool", ModelNumber, SerialNumber });
 const dryer = (ID: number, ModelNumber: string) =>
-  ({ ID, Availability: "UNCHECKED", ApplianceType: DRYER, Brand: "Maytag", ModelNumber, SerialNumber: "" });
+  ({ ID, Availability: "PARTS ONLY", ApplianceType: DRYER, Brand: "Maytag", ModelNumber, SerialNumber: "" });
 const machinesIn = (rows: ModelCandidate[]) => rows.reduce((n, r) => n + r.machines, 0);
 const wholeQueue = (f: FleetFilter = {}) => modelsNeedingBom(db, f, donors, 100000);
 
@@ -48,7 +48,7 @@ beforeAll(async () => {
 
   await upsertFleet(db, mapFleetRows([
     // 4 donor machines (one serial allows 1994 or 2024); the READY TO SALE unit is not a donor.
-    washer(1001, "WTWBIG1", "UNCHECKED", "CD2412345"), washer(1002, "WTWBIG1"), washer(1003, "WTWBIG1", "PARTS ONLY"),
+    washer(1001, "WTWBIG1", "PARTS ONLY", "CD2412345"), washer(1002, "WTWBIG1"), washer(1003, "WTWBIG1", "PARTS ONLY"),
     washer(1004, "WTWBIG1", "NEEDS PARTS"), washer(1005, "WTWBIG1", "READY TO SALE"),
     // 3 donor machines built in 2007.
     ...seq(1011, 1013).map((id) => washer(id, "WTWBIG2", "PARTS PROGRAM", "SU1727374")),
@@ -61,7 +61,7 @@ beforeAll(async () => {
     ...seq(1, 12).map((n) => dryer(3100 + n, `MED${pad(n)}`)),
     // Never queued: a model whose only machines are not donors, and an unreadable model.
     washer(5001, "WTWOFF", "READY TO SALE"), washer(5002, "WTWOFF", "READY TO SALE"),
-    { ID: 5101, Availability: "UNCHECKED", ApplianceType: "Range", Brand: "GE", ModelNumber: "NO NAMEPLATE" }
+    { ID: 5101, Availability: "PARTS ONLY", ApplianceType: "Range", Brand: "GE", ModelNumber: "NO NAMEPLATE" }
   ], NOW).rows);
   // identity 'ok' with an empty model key is still not a parts-list identity.
   await db.insert(schema.fleetMachines).values({ machineNo: "5201", brand: "Whirlpool", brandKey: "WHIRLPOOL", identityStatus: "ok" });
@@ -154,7 +154,7 @@ describe("Parts lists page", () => {
     const text = textOf(html);
     expect(text).toContain("328 Brand + Model groups need a parts list · 340 donor machines in those groups");
     expect(text).toContain("grouped parts-list (BOM) queue, not the full Fleet");
-    expect(text).toContain("donor status in Settings (UNCHECKED, PARTS ONLY, NEEDS PARTS, PARTS PROGRAM).");
+    expect(text).toContain("checked donor status in Settings (PARTS ONLY, NEEDS PARTS, PARTS PROGRAM). UNCHECKED can be included");
     expect(text).toContain("1–300 of 328");
     expect(queueRows(html)).toBe(300);
     expect(pager(html)).toEqual([["Next →", "?offset=300"]]);
@@ -171,7 +171,7 @@ describe("Parts lists page", () => {
   it("paging links keep the filters, and the totals are for the filtered set", async () => {
     const html = await render({ brand: "WHIRLPOOL", band: "unknown" });
     expect(textOf(html)).toContain("314 Brand + Model groups need a parts list · 322 donor machines in those groups");
-    expect(textOf(html)).toContain("PARTS PROGRAM) and that match the filters above.");
+    expect(textOf(html)).toContain("SOLD and SCRAPED/SCRAPPED cannot be donors. The selected age, type, and brand filters also apply.");
     expect(pager(html)).toEqual([["Next →", "?band=unknown&brand=WHIRLPOOL&offset=300"]]);
 
     const next = await render({ brand: "WHIRLPOOL", band: "unknown", offset: "300" });

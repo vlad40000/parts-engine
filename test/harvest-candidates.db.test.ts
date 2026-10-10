@@ -48,16 +48,16 @@ beforeAll(async () => {
   await migrate(drizzle(client), { migrationsFolder: path.join(__dirname, "..", "drizzle") });
 
   await upsertFleet(db, mapFleetRows([
-    machine(101, "MVWX655DW1", "Maytag", "UNCHECKED", "AAA111"),
-    machine(102, "MVWX655DW1", "Maytag", "UNCHECKED", "BBB222", "No power, dead"),
-    machine(103, "MVWX655DW1", "Maytag", "UNCHECKED", ""),
-    machine(104, "MVWX655DW1", "Maytag", "UNCHECKED", "CCC333"),
-    machine(105, "MVWX655DW1", "Maytag", "UNCHECKED", "CCC333"),
+    machine(101, "MVWX655DW1", "Maytag", "PARTS ONLY", "AAA111"),
+    machine(102, "MVWX655DW1", "Maytag", "PARTS ONLY", "BBB222", "No power, dead"),
+    machine(103, "MVWX655DW1", "Maytag", "PARTS ONLY", ""),
+    machine(104, "MVWX655DW1", "Maytag", "PARTS ONLY", "CCC333"),
+    machine(105, "MVWX655DW1", "Maytag", "PARTS ONLY", "CCC333"),
     machine(106, "MVWX655DW1", "Maytag", "PARTS ONLY", "DDD444"),
     machine(201, "WTW5000DW1", "Whirlpool", "PARTS ONLY", ""),
     machine(202, "WTW5000DW1", "Whirlpool", "READY TO SALE", "EEE555"),
-    machine(301, "NO NAMEPLATE", "GE", "UNCHECKED", ""),
-    machine(401, "WTW9999XX1", "Whirlpool", "UNCHECKED", "MVWX655DW1")
+    machine(301, "NO NAMEPLATE", "GE", "PARTS ONLY", ""),
+    machine(401, "WTW9999XX1", "Whirlpool", "PARTS ONLY", "MVWX655DW1")
   ], NOW).rows);
   const shared = [part(BOARD, "Washer Electronic Control Board", 180), part("WPW10006355", "Drain Pump", 60), part("W10189966", "Hex Screw", 4)];
   await saveModelBom(db, { brandKey: "MAYTAG", modelKey: "MVWX655DW1", brandDisplay: "Maytag", modelDisplay: "MVWX655DW1", result: chain(shared) });
@@ -121,7 +121,7 @@ describe("MPN harvest candidates on the lot", () => {
   it("5. a non-donor availability stays visible but is not actionable", async () => {
     const h = await harvest(BOARD);
     expect(h.unavailable.map((m) => [m.machine_no, m.availability, m.reasons])).toEqual([
-      ["202", "READY TO SALE", ["Availability READY TO SALE is not a donor status."]]
+      ["202", "READY TO SALE", ["Availability READY TO SALE is not an eligible donor status."]]
     ]);
   });
 
@@ -137,7 +137,7 @@ describe("MPN harvest candidates on the lot", () => {
     const rowsBefore = (await mpnDetail(db, BOARD))!.machines;
     // 401's serial is a BOM model number; it is still not matched. Re-serialing 101 changes nothing else.
     expect(rowsBefore.map((m) => m.machine_no)).not.toContain("401");
-    await upsertFleet(db, mapFleetRows([machine(101, "MVWX655DW1", "Maytag", "UNCHECKED", "ZZZ999")], NOW).rows);
+    await upsertFleet(db, mapFleetRows([machine(101, "MVWX655DW1", "Maytag", "PARTS ONLY", "ZZZ999")], NOW).rows);
     const after = await harvest(BOARD);
     expect(ids(after.harvestCandidates)).toEqual(["101", "103", "104", "105", "106", "201"]);
     expect((await mpnDetail(db, BOARD))!.machines).toEqual(rowsBefore);
@@ -189,16 +189,16 @@ describe("MPN harvest candidates on the lot", () => {
 
 describe("classifyMachineMatch", () => {
   const row: MachineMatchRow = {
-    machine_no: "1", availability: "UNCHECKED", appliance_type: "", brand: "GE", brand_key: "GE", model_raw: "X", model_key: "X",
+    machine_no: "1", availability: "PARTS ONLY", appliance_type: "", brand: "GE", brand_key: "GE", model_raw: "X", model_key: "X",
     diagram_id: "1", age_candidate_years: [], suspect_families: ["control_board"], identity_status: "ok", state: null
   };
-  const donors = ["UNCHECKED", "PARTS ONLY"];
+  const donors = ["PARTS ONLY", "PARTS ONLY"];
 
   it("marks unusable identity unavailable and lists every reason", () => {
     expect(classifyMachineMatch({ ...row, identity_status: "needs_nameplate" }, "pump", donors))
       .toMatchObject({ candidate: "unavailable", reasons: ["Model unreadable: needs nameplate."] });
     expect(classifyMachineMatch({ ...row, availability: "SOLD", state: "skip" }, "control_board", donors).reasons).toEqual([
-      "Part already recorded as skip on this machine.", "Availability SOLD is not a donor status."
+      "Part already recorded as skip on this machine.", "Availability SOLD is not an eligible donor status."
     ]);
   });
 

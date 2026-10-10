@@ -10,10 +10,13 @@ export const dynamic = "force-dynamic";
 
 const CANDIDATE_PILL: Record<HarvestStatus, string> = { harvest_candidate: "pill-go", test_first: "pill-wait", unavailable: "pill-mute" };
 
-export default async function MpnPage({ params }: { params: Promise<{ mpn: string }> }) {
+export default async function MpnPage({ params, searchParams }: { params: Promise<{ mpn: string }>; searchParams: Promise<{ availability?: string }> }) {
   if (!hasDatabase()) return <NoDatabase />;
   const { mpn } = await params;
-  const d = await mpnDetail(await getDb(), decodeURIComponent(mpn));
+  const { availability: selected } = await searchParams;
+  const availability = selected?.trim().toUpperCase() === "ELIGIBLE" ? "eligible"
+    : selected?.trim().toUpperCase() === "ALL" ? "all" : selected?.trim().toUpperCase() || "eligible";
+  const d = await mpnDetail(await getDb(), decodeURIComponent(mpn), availability);
   if (!d) notFound();
   const m = d.mpn;
   const r = d.roadrunner;
@@ -149,17 +152,31 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
       </section>
 
       <section className="card mt-5 overflow-x-auto p-4">
-        <h2 className="mb-1 font-semibold">Where to harvest this part</h2>
+        <h2 className="mb-1 font-semibold">Machine compatibility cross-reference</h2>
         <p className="mb-3 text-xs text-muted">
-          Physical availability only: donor status, recorded part state and failure symptom. It does not say whether the part is worth pulling.
+          One row per machine whose model parts list contains this MPN. Default results include only checked on-hand donors with no recorded part state. UNCHECKED is optional and requires inspection. Historical SOLD and scrap matches remain available for audit only.
         </p>
+        <form className="mb-3 flex flex-wrap items-end gap-2 text-sm">
+          <label className="flex flex-col gap-1"><span className="text-xs text-muted">Machine status</span>
+            <select name="availability" defaultValue={availability} className="input">
+              <option value="eligible">Eligible checked donors</option>
+              <option value="all">All model matches (audit)</option>
+              {[...new Set([...d.statusCounts.map((x) => x.availability), availability])].filter((s) => s !== "eligible" && s !== "all").sort().map((s) => (
+                <option key={s} value={s}>{s} ({d.statusCounts.find((x) => x.availability === s)?.machines ?? 0})</option>
+              ))}
+            </select>
+          </label>
+          <button className="btn">Filter</button>
+          <a className="btn" href={`/api/export/mpn-donors?mpn=${encodeURIComponent(m.mpn_canonical)}&availability=${encodeURIComponent(availability)}`}>Export this table CSV</a>
+          <span className="text-xs text-muted">{d.machines.length.toLocaleString()} matching machines</span>
+        </form>
         <dl className="mb-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           {[
             ["Harvest candidates now", h.counts.harvestCandidates],
             ["Test first", h.counts.testFirst],
             ["Processed / not available", h.counts.unavailable],
             ["Models represented", h.counts.models],
-            ["Donor supply", m.donors]
+            ["Default checked donor supply", m.donors]
           ].map(([label, value]) => (
             <div key={label as string}><dt className="text-xs text-muted">{label}</dt><dd className="text-lg font-semibold tabular-nums">{value}</dd></div>
           ))}
@@ -181,9 +198,10 @@ export default async function MpnPage({ params }: { params: Promise<{ mpn: strin
                 <td className="text-xs text-muted">{x.reasons.join(" ")}</td>
               </tr>
             ))}
+            {!d.machines.length ? <tr><td colSpan={10} className="py-6 text-center text-muted">No machines match this status filter.</td></tr> : null}
           </tbody>
         </table>
-        {h.counts.testFirst ? <p className="mt-2 text-xs text-muted">Donor supply counts every donor-status machine with no recorded state, including the test-first ones.</p> : null}
+        {h.counts.testFirst ? <p className="mt-2 text-xs text-muted">Test-first machines require inspection before the part can be counted as harvestable.</p> : null}
         <p className="mt-2 text-xs text-muted">Found in {d.models.length} model parts lists: {d.models.slice(0, 40).map((x) => x.model_key).join(", ")}{d.models.length > 40 ? " …" : ""}</p>
       </section>
     </>

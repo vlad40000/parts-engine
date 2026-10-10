@@ -39,7 +39,7 @@ const chain = (rows: SupplierRow[]): ChainResult => ({
   winner: { supplier: "encompass", status: "found", rows, droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 },
   attempts: [{ supplier: "encompass", status: "found", droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 }]
 });
-const washer = (id: number, availability = "UNCHECKED") =>
+const washer = (id: number, availability = "PARTS ONLY") =>
   ({ ID: id, Availability: availability, ApplianceType: "Washer - Top Load", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" });
 const form = (fields: Record<string, string | string[]>) => {
   const f = new FormData();

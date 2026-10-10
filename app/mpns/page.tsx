@@ -50,6 +50,14 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
           sold ≥ {settings.ordinarySold90Minimum} in 90 days (or a strategic exception), exact-MPN sell-through and projected margin at or above
           the owner-set minimums, and price at or above the per-part break-even. There is no general minimum part price.</>}
       />
+      <form action="/mpns/lookup" className="card mb-4 flex flex-wrap items-end gap-3 p-3 text-sm">
+        <label className="flex flex-col gap-1">
+          <span className="font-medium">Cross-reference a part with donor machines</span>
+          <input name="mpn" required placeholder="Enter exact MPN" className="input mono w-64" />
+        </label>
+        <button className="btn btn-primary">Show donor table</button>
+        <span className="text-xs text-muted">Checked on-hand donors appear by default; filter for UNCHECKED or historical statuses on the part page.</span>
+      </form>
       {!rulesSet ? (
         <div className="card mb-4 p-3 text-sm text-wait">
           Set qualification rules: the minimum 90-day sell-through % and minimum projected profit margin % are blank, so every

@@ -5,6 +5,7 @@ import { resolveRemoval, SEED_BASELINES, type Baseline } from "@/src/lib/removal
 import { qualify, type EconomicsSettings, type Qualification } from "@/src/lib/economics";
 import type { FleetRow } from "@/src/lib/fleet-import";
 import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candidates";
+import { defaultDonorStatuses, eligibleDonorStatuses } from "@/src/lib/donor-status";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
 import { buildSharedResearchExport, type SharedResearchRow } from "@/src/lib/shared-research-csv";
@@ -59,7 +60,7 @@ export async function getSettings(db: Db): Promise<AppSettings> {
     machineOverhead: Number(row.machineOverhead),
     batchSize: row.batchSize,
     marketStaleDays: row.marketStaleDays,
-    donorAvailabilities: row.donorAvailabilities
+    donorAvailabilities: eligibleDonorStatuses(row.donorAvailabilities)
   };
 }
 
@@ -85,7 +86,7 @@ export async function saveSettings(db: Db, s: AppSettings): Promise<void> {
     machineOverhead: s.machineOverhead.toFixed(2),
     batchSize: s.batchSize,
     marketStaleDays: s.marketStaleDays,
-    donorAvailabilities: s.donorAvailabilities,
+    donorAvailabilities: eligibleDonorStatuses(s.donorAvailabilities),
     updatedAt: new Date()
   };
   await db.insert(t.settings).values(values).onConflictDoUpdate({ target: t.settings.id, set: values });
@@ -246,13 +247,14 @@ export const BOM_QUEUE_PAGE_SIZE = 300;
  * for retry. Page rows and totals both read this, so the totals cannot drift from the queue.
  */
 function pendingBomGroups(f: FleetFilter, donorSet: string[]) {
+  const allowed = f.availability === "UNCHECKED" ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
   return sql`
     select f.brand_key, f.model_key, min(f.brand) brand, min(f.model_raw) model, count(*)::int machines,
       string_agg(distinct f.appliance_type, ', ') types, min(c.status) bom_status
     from fleet_machines f
     left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
     where f.identity_status = 'ok' and f.model_key <> ''
-      and f.availability = any(${sql.raw(pgTextArray(donorSet))})
+      and f.availability = any(${sql.raw(pgTextArray(allowed))})
       and (c.status is null or c.status = 'error')
       and ${fleetWhere(f)}
     group by f.brand_key, f.model_key`;
@@ -283,6 +285,19 @@ export async function bomQueue(db: Db, f: FleetFilter, donorSet: string[], limit
   if (rows.length || start === 0) return { rows, ...counts, offset: start };
   const last = Math.max(0, Math.ceil(totals.models / limit) - 1) * limit;
   return { rows: await modelsNeedingBom(db, f, donorSet, limit, last), ...counts, offset: last };
+}
+
+/** Gate a direct or pasted BOM lookup against a real, currently eligible machine. */
+export async function hasEligibleModelDonor(db: Db, brand: string, model: string, donorSet: string[], availability?: string): Promise<boolean> {
+  const allowed = availability === "UNCHECKED" ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
+  if (availability && !allowed.includes(availability)) return false;
+  const [row] = await q<{ present: boolean }>(db, sql`
+    select exists (
+      select 1 from fleet_machines f where f.brand_key = ${brand} and f.model_key = ${model}
+        and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(allowed))})
+        ${availability ? sql`and f.availability = ${availability}` : sql``}
+    ) present`);
+  return row.present;
 }
 
 function pgTextArray(values: string[]): string {
@@ -400,7 +415,7 @@ const MPN_SELECT = (donorSet: string[]) => sql`
     select e.mpn_canonical,
       count(distinct (e.brand_key, e.model_key))::int models,
       count(distinct f.machine_no) filter (
-        where f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(donorSet))})
+        where f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(defaultDonorStatuses(donorSet)))})
           and not exists (select 1 from machine_part_state s where s.machine_no = f.machine_no and s.mpn_canonical = e.mpn_canonical)
       )::int donors,
       mode() within group (order by f.appliance_type) appliance_mode
@@ -512,7 +527,7 @@ export async function mpnRowsFor(db: Db, keys: string[]): Promise<MpnEvaluated[]
   return keys.flatMap((k) => byKey.get(k) ?? []);
 }
 
-export async function mpnDetail(db: Db, mpnRaw: string) {
+export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "all") {
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
   let canonical = canonicalizeMpn(mpnRaw);
@@ -522,20 +537,29 @@ export async function mpnDetail(db: Db, mpnRaw: string) {
   if (!row) return null;
   const evaluated = evaluateMpn(row, s, baselines);
   const aliases = await db.select().from(t.mpnAlias).where(eq(t.mpnAlias.mpnCanonical, canonical));
+  const statusCounts = await q<{ availability: string; machines: number }>(db, sql`
+    select f.availability, count(distinct f.machine_no)::int machines
+    from model_part_edges e
+    join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
+    where e.mpn_canonical = ${canonical}
+    group by f.availability order by f.availability`);
+  const matchFilter = availability === "eligible"
+    ? sql`and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(defaultDonorStatuses(s.donorAvailabilities)))}) and s.state is null`
+    : availability !== "all" ? sql`and f.availability = ${availability}` : sql``;
   const machines = await q<MachineMatchRow>(db, sql`
     select f.machine_no, f.availability, f.appliance_type, f.brand, f.brand_key, f.model_raw, f.model_key, e.diagram_id,
       f.age_candidate_years, f.suspect_families, f.identity_status, s.state
     from model_part_edges e
     join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
     left join machine_part_state s on s.machine_no = f.machine_no and s.mpn_canonical = e.mpn_canonical
-    where e.mpn_canonical = ${canonical}
+    where e.mpn_canonical = ${canonical} ${matchFilter}
     order by f.availability, f.machine_no`);
   const models = await q<{ brand_key: string; model_key: string; description: string; new_price: string | null; source: string }>(db, sql`
     select brand_key, model_key, description, new_price, source from model_part_edges where mpn_canonical = ${canonical} order by 1, 2`);
   const roadrunner = (await roadrunnerPerformance(db, [canonical])).get(canonical) ?? null;
   // Physical facts only; economic qualification never decides who is a candidate.
-  const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities);
-  return { mpn: evaluated, aliases, machines, harvest, models, roadrunner, settings: s };
+  const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities, availability === "UNCHECKED");
+  return { mpn: evaluated, aliases, machines, harvest, models, roadrunner, settings: s, statusCounts };
 }
 
 // ---------------------------------------------------------------------------
@@ -905,7 +929,7 @@ export async function teardownQueue(db: Db, limit = 100): Promise<TeardownResult
     from model_part_edges e
     join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
     where e.mpn_canonical = any(${sql.raw(pgTextArray([...byMpn.keys()]))})
-      and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(s.donorAvailabilities))})
+      and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(defaultDonorStatuses(s.donorAvailabilities)))})
       and not exists (select 1 from machine_part_state ps where ps.machine_no = f.machine_no and ps.mpn_canonical = e.mpn_canonical)`);
 
   const machines = new Map<string, TeardownRow>();

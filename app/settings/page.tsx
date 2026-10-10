@@ -84,8 +84,9 @@ export default async function SettingsPage() {
             ]}
           />
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted">Statuses that count as donor machines (comma separated)</span>
+            <span className="text-xs text-muted">On-hand donor statuses (comma separated)</span>
             <input name="donorAvailabilities" defaultValue={s.donorAvailabilities.join(", ")} className="input" />
+            <span className="text-xs text-muted">UNCHECKED is optional in the Parts lists and MPN cross-reference filters; it is excluded from default donor counts. SOLD, SCRAPED and SCRAPPED are always excluded.</span>
           </label>
           <div><button className="btn btn-primary">Save settings</button></div>
         </form>
