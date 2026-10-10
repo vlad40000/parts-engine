@@ -412,6 +412,10 @@ describe("Import: the same completed CSV, without conversion", () => {
       ok: false,
       message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported."
     });
+    expect(await importFile("mixed-workbook.xlsx", await workbook(["mpn", "90 Day sales", "sold90"], ["XL-3", 4, 4]))).toEqual({
+      ok: false,
+      message: "The shared research file imports as .csv only. Save it as CSV and upload that; nothing was imported."
+    });
     expect(await snapshot()).toEqual(before);
 
     const legacy = await importFile("decision-workbook.xlsx", await workbook(["MPN", "Mkt Sold 90d", "Mkt 90d Sell-Through", "Mkt Price"], ["XL-2", 3, 0.35, 95]));
