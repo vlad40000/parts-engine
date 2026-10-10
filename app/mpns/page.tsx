@@ -1,11 +1,13 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
-import { mpnIndex, type MpnFilter } from "@/src/db/queries";
+import { mpnIndex, researchQueueExport, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { ButtonForm, UploadForm } from "@/src/components/forms";
 import { EBAYDECISIONS_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/ebaydecisions";
 import { SALES_HEADERS } from "@/src/lib/sales-import";
+import { SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SharedResearchExportError, type SharedResearchExport } from "@/src/lib/shared-research-csv";
 import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +28,18 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const view = (sp.view as MpnFilter["view"]) ?? "queue";
   const offset = Number(sp.offset ?? 0) || 0;
-  const { rows, total, settings, rulesSet } = await mpnIndex(await getDb(), { view, family: sp.family, q: sp.q }, 100, offset);
+  const db = await getDb();
+  const { rows, total, settings, rulesSet } = await mpnIndex(db, { view, family: sp.family, q: sp.q }, 100, offset);
+  // What the next queue export holds and leaves out, shown next to its button.
+  let exportBatch: SharedResearchExport | null = null;
+  let exportError: string | null = null;
+  if (view === "queue") {
+    try { exportBatch = await researchQueueExport(db); }
+    catch (error) {
+      if (!(error instanceof SharedResearchExportError)) throw error;
+      exportError = error.message;
+    }
+  }
   const base = { view, family: sp.family, q: sp.q };
 
   return (
@@ -63,15 +76,26 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
 
       {view === "queue" ? (
         <div className="card mb-4 flex flex-wrap items-center gap-3 p-3 text-sm">
-          <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors. Export drops into EbayDecisions → Import.</span>
-          <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>
+          <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors.</span>
+          {exportError ? <span className="text-wait">{exportError}</span> : <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>}
+          <ol className="basis-full list-decimal pl-5 text-xs text-muted">
+            <li><b>Export queue CSV</b>: the shared research CSV, with New Price filled in where Parts Engine knows it and the research columns blank.
+              One file holds at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs and reserves space below the 2 MiB upload limit for filled research, in queue order. Researched MPNs leave the queue once
+              imported, so the next export holds the next batch.</li>
+            <li>Research each MPN in eBay Product Research and fill in its row. Leave a cell blank when you have no value; blank stays unknown, never zero.</li>
+            <li>Upload the completed file below with <b>Import market facts</b>, as is. The same file also imports into EbayDecisions (Settings → Shared research CSV).</li>
+          </ol>
+          {exportBatch ? <ExportReport batch={exportBatch} /> : null}
           <div className="basis-full">
             {isEbayDecisionsConfigured() ? (
               rows.length ? (
-                <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
-                  {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
-                  {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
-                </ButtonForm>
+                <>
+                  <ButtonForm action={refreshMarketFactsAction} label="Refresh market facts from EbayDecisions" pendingLabel="Asking EbayDecisions…">
+                    {/* Only the MPNs rendered on this page, one batch; the API key never leaves the server. */}
+                    {rows.slice(0, EBAYDECISIONS_MAX_MPNS).map((r) => <input key={r.mpn_canonical} type="hidden" name="mpn" value={r.mpn_canonical} />)}
+                  </ButtonForm>
+                  <p className="mt-1 text-xs text-muted">Reads facts already stored in EbayDecisions for every MPN on this page, for research imported there. No registration, no research.</p>
+                </>
               ) : null
             ) : (
               <span className="text-xs text-muted">Live EbayDecisions refresh is not configured (EBAYDECISIONS_URL and EBAYDECISIONS_API_KEY). Use the CSV export and the market facts import below.</span>
@@ -121,8 +145,13 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
       <section className="card mt-6 p-4">
         <h2 className="mb-1 font-semibold">Import eBay market facts</h2>
         <p className="mb-3 text-xs text-muted">
-          Accepts the EbayDecisions export CSV, the decision workbook (MPN Master sheet), or a CSV with
-          mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at. A sell-through like 0.24 is read as 24%.
+          Accepts the shared research CSV (<span className="mono">{SHARED_RESEARCH_CSV_HEADERS.join(", ")}</span>), the same file EbayDecisions
+          imports and exports. Parts Engine stores New Price and the 90-day columns; the 7- and 30-day columns are accepted and not stored.
+          In it, 90 Day Sell Through % is read as typed: 45 is 45%, 0.45 is 0.45%. A row with no 90-day value gets no new research date.
+        </p>
+        <p className="mb-3 text-xs text-muted">
+          Also accepts the older EbayDecisions export CSV, the decision workbook (MPN Master sheet), or a CSV with
+          mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at. In those, a sell-through like 0.24 is read as 24%.
           Sell-through is stored only when the file supplies exact-MPN sell-through; it is never calculated from sold and active counts.
         </p>
         <UploadForm action={importMarketAction} label="Import market facts" accept=".csv,.xlsx" />
@@ -138,5 +167,45 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
         <UploadForm action={importSalesAction} label="Import sales history" accept=".csv" />
       </section>
     </>
+  );
+}
+
+const SHOWN = 5;
+
+/**
+ * What one queue export holds, and what it leaves out rather than writing a value the shared import
+ * would reject. Lists at most SHOWN MPNs per kind.
+ */
+function ExportReport({ batch }: { batch: SharedResearchExport }) {
+  const mpn = (key: string) => (
+    <Link className="mono inline-block max-w-48 truncate align-bottom underline" title={key} href={`/mpns/${encodeURIComponent(key)}`}>{key}</Link>
+  );
+  const list = <T,>(items: T[], key: (item: T) => string, show: (item: T) => React.ReactNode) => (
+    <>
+      {items.slice(0, SHOWN).map((item, i) => <Fragment key={key(item)}>{i ? ", " : ""}{show(item)}</Fragment>)}
+      {items.length > SHOWN ? ` and ${items.length - SHOWN} more` : ""}.
+    </>
+  );
+  return (
+    <ul className="basis-full list-disc pl-5 text-xs">
+      <li className="text-muted">
+        The next export holds {batch.exported.toLocaleString("en-US")} MPN(s)
+        {batch.later ? `; ${batch.later.toLocaleString("en-US")} more come in later exports, after these are researched and imported.` : "."}
+      </li>
+      {batch.omittedMpns.length ? (
+        <li className="text-wait">
+          Left out of the export: {batch.omittedMpns.length} MPN(s) whose part-number key is longer than the shared file&apos;s 200-character
+          limit. A key is never shortened, because that could merge different parts; enter their market facts on the MPN page:{" "}
+          {list(batch.omittedMpns, (k) => k, mpn)}
+        </li>
+      ) : null}
+      {batch.blankNewPrices.length ? (
+        <li className="text-wait">
+          New Price left blank in the export for {batch.blankNewPrices.length} MPN(s): the Parts Engine value is outside the shared
+          file&apos;s $0–$1,000,000 range. The stored value is not changed:{" "}
+          {list(batch.blankNewPrices, (p) => p.mpnCanonical, (p) => <>{mpn(p.mpnCanonical)} ({usd(Number(p.newPrice))})</>)}
+        </li>
+      ) : null}
+    </ul>
   );
 }

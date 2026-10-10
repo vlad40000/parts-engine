@@ -5,6 +5,7 @@ import { canonicalizeMpn } from "./mpn";
  *   - EbayDecisions /api/parts/export CSV (90d_* columns, active_listing_qty)
  *   - Roadrunner_eBay_Decision_Workbook.xlsx "MPN Master" sheet
  *   - a plain CSV: mpn, sold90, avg_price, avg_ship, sell_through_pct, active_qty, researched_at
+ * The shared research CSV (7/30/90 Day columns) is read by shared-research-csv.ts instead.
  */
 const COLUMNS: Record<string, string[]> = {
   mpn: ["mpn", "partnumber", "part", "sku"],
@@ -23,9 +24,18 @@ const COLUMNS: Record<string, string[]> = {
 /** Stable, non-PII source label for file imports. The uploaded filename is never stored. */
 export const MARKET_IMPORT_SOURCE = "market_import";
 
+/** Normalized names of a research-date column. */
+export const RESEARCH_DATE_HEADERS = COLUMNS.researchedAt;
+
 export type SellThroughSource = "manual" | "research";
 
 const normalizeHeader = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Headers this import reads as market facts (sold, price, shipping, sell-through, active). */
+export function legacyResearchHeaders(headers: string[]): string[] {
+  const names = new Set(["sold90", "avgPrice", "avgShip", "sellThrough", "activeQty"].flatMap((f) => COLUMNS[f]));
+  return headers.filter((h) => names.has(normalizeHeader(h)));
+}
 
 export type MarketRow = {
   mpnCanonical: string;
@@ -63,8 +73,8 @@ function dateText(v: unknown): string | null {
 }
 
 /**
- * Sell-through is stored as a percent. A value ≤ 1 is read as a fraction
- * (the decision workbook stores 0.24 for 24%).
+ * Sell-through is stored as a percent. In these legacy formats a value ≤ 1 is read as a fraction
+ * (the decision workbook stores 0.24 for 24%). The shared research CSV never does this.
  */
 export function percent(v: number | null): number | null {
   if (v == null) return null;

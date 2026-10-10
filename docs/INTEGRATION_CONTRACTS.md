@@ -36,7 +36,7 @@ Target batch contract should provide, per MPN:
 
 Sell-through must never be derived from `sold90` and `activeQty` (Store Economics v7). When no exact value exists, send null; Parts Engine stores null and the part answers NEEDS DATA. Do not turn missing inputs into zero.
 
-Parts Engine records sell-through provenance as `research` (imported) or `manual` (typed on the MPN page). The CSV/XLSX fallback import stores the source as `market_import`; the uploaded filename is never stored.
+Parts Engine records sell-through provenance as `research` (imported) or `manual` (typed on the MPN page). The CSV/XLSX fallback import stores the source as `market_import`, the shared research CSV import as `shared_research_csv`; the uploaded filename is never stored.
 
 ### Live pull (A2, current)
 
@@ -64,7 +64,42 @@ Provider: EbayDecisions `POST /api/integrations/market-facts`, response `schemaV
 - Price basis gate: `avg_price`/`avg_ship` feed PE-4 economics as sold-price evidence, so they are written only when `sold90.priceBasis` is `sold`. For `asking` or `unknown`, `sold_90`, `sell_through_pct`, `researched_at` and `source` still update from that 90-day observation, but existing `avg_price`/`avg_ship` are kept (a new row leaves them null). `active.askingPrice`/`askingShipping` are never substituted.
 - Not persisted in A2: `active.askingPrice`, `active.askingShipping`, `active.sampleSize`/`truncated`, `sold90.source`, and `sold90.priceBasis` itself (it gates the price write above but is not stored). `market_facts` has no non-conflicting columns for asking-price evidence; caching it is the next additive market-evidence extension and must not change qualification semantics.
 
-Not built yet: ensuring/registering exact MPNs and requesting research for stale/missing MPNs in EbayDecisions.
+### Shared manual-research CSV (current research path)
+
+One file moves between Parts Engine and EbayDecisions without conversion (EbayDecisions `src/lib/shared-research-csv.ts`, merged at EbayDecisions `891279c`). Parts Engine's copy is `src/lib/shared-research-csv.ts`.
+
+```text
+mpn,description,notes,New Price,7 Day sales,7 Day Avg Price,30 Day sales,30 Day Avg Price,90 Day sales,90 Day Avg Price,90 Day Sell Through %
+```
+
+- Export (MPNs → Research queue → **Export queue CSV**): exactly those headers in that order. `mpn` is the display MPN, or the D1 key when the display would not map back to it; `description` is clipped to 500 characters; `notes` carries donor/model counts; `New Price` is `mpn_master.new_price_min` when known. Every research column is blank, so uploading an unedited export changes no market facts and stamps no research date.
+- One export is one batch: up to 5,000 queue rows, further bounded by a 2 MiB UTF-8 file budget (EbayDecisions upload limit), including 32 bytes of entry headroom for each of seven research cells per row. Rows stay in queue order (donors, then MPN). Researched rows leave the queue once imported, so the next export holds the next batch. A single overlarge queue row blocks export with a clear error, rather than silently losing that row.
+- The export never writes a cell the import would reject. A queue row whose D1 key is longer than 200 characters is left out of the file (truncating it could merge distinct OEM parts) and does not count toward the 5,000. A `New Price` outside the import's range (over 1,000,000) is written blank and the row is kept; `new_price_min` itself is unchanged. The research queue view lists both, a few MPNs each with a count, and how many rows wait for later batches.
+- Spreadsheet-formula protection: supplier text beginning (after optional whitespace) with `=`, `+`, `-` or `@` is prefixed with a literal apostrophe before CSV quoting; the MPN still has the same D1 key on import. At the 200-character display-MPN boundary the D1 key is used instead. A description is clipped to 500 characters including any safety prefix. Spreadsheet-safe apostrophes may remain visible in imported descriptions/notes. The file can be re-imported into either app without conversion.
+- Sell-through-only observations count as researched/current for queue membership (and stale when old), but still require missing sold count and sold price to pass the qualification gates. No market data is inferred.
+- Import (MPNs → **Import market facts**, `.csv`): a CSV with any 7/30/90 Day column is read as the shared file. Headers match ignoring case, spaces and punctuation, a superset of EbayDecisions' spellings. The whole file is validated before anything is saved, with EbayDecisions' rules for the stored columns (nonnegative plain or comma-grouped numbers, optional `$` / `%`, whole-number sales, one row per MPN, at most 5,000 rows, and a 2 MiB file-size limit); any problem rejects the whole file without saving. The 2 MiB limit applies only to the shared research CSV, not legacy market CSV/XLSX imports.
+
+| Shared column | Parts Engine |
+| --- | --- |
+| `New Price` | `mpn_master.new_price_min`, set as supplied; blank leaves it alone |
+| `90 Day sales` | `market_facts.sold_90` |
+| `90 Day Avg Price` | `market_facts.avg_price` |
+| `90 Day Sell Through %` | `market_facts.sell_through_pct` exactly as supplied, in percentage points (45 = 45%, 0.45 = 0.45%); `sell_through_source = research` when non-null |
+| `mpn` | D1 key; aliases resolve as in the market import |
+| `description` | only for an MPN new to the MPN index |
+| `notes`, 7- and 30-day columns | accepted, not stored |
+| optional `researched_at` / `research_date` / `date` (not in the contract) | `researched_at`; without it, the import date |
+
+- The three 90-day values are one observation. A row that supplies any of them writes all three plus `researched_at` and `source = shared_research_csv`; a blank one is stored as null, never zero, and never filled from older facts. A row with none of them leaves `market_facts` alone, including `researched_at` and `avg_ship`.
+- The shared file has no shipping column, so a row with a 90-day observation also sets `avg_ship` to null (unknown) rather than keeping an older buyer-shipping value under the new research date. EbayDecisions' shared CSV import saves null shipping for the same row, and the A2 sold-facts refresh takes that null as the new observation's `avg_ship`, so importing directly and going through EbayDecisions then **Refresh market facts** leave the same PE-4 economics.
+- `active_qty`, free shipping, ship cost and qty on hand are never written by this import. Sell-through is never derived.
+- The ≤ 1 → fraction rule belongs to the older formats only (`sell_through_pct`, the workbook's `Mkt 90d Sell-Through`, …), never to the shared column. A CSV mixing shared and older market columns is rejected. The shared file imports as CSV only, because a workbook cell formatted as a percent holds 0.45 for 45%.
+- `sell_through_pct` is `numeric(6,2)`: values above 9,999.99 are rejected, although EbayDecisions accepts up to 100,000.
+- A later parts-list read still applies `least(new_price_min, supplier price)`. `new_price_min` has no provenance column.
+
+### Targeted research (A4, dormant)
+
+Provider: EbayDecisions A3 (merged at EbayDecisions `761393a`): `POST /api/integrations/parts/register` and `POST /api/integrations/research`, both `schemaVersion: 1`, same bearer key. The validated client stays in `src/lib/ebaydecisions.ts` (`registrationPayload`, `registerMpns`, `researchMpns`, `researchCounts`, with tests), and `mpnRowsFor` stays as its registration source, but no page or server action calls them: Parts Engine triggers no automated eBay research. Activation waits for official eBay API access and an explicit owner decision. The one-click orchestration that used them was removed from the action layer; it is at Parts Engine `a48dcf4`. It sent only `{ mpn, description }` to registration, needed a 300 s function budget, and wrote through the A2 `planMarketFacts` → `patchProviderMarketFacts` path.
 
 CSV import/export remains a fallback.
 
