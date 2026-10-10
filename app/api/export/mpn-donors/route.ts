@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnDetail } from "@/src/db/queries";
 import { toCsv } from "@/src/lib/csv";
+import { machineMatchesByStatus } from "@/src/lib/harvest-candidates";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
     : selected === "ELIGIBLE" || !selected ? "eligible" : selected;
   const detail = await mpnDetail(await getDb(), mpn, availability);
   if (!detail) return NextResponse.json({ error: "MPN not found." }, { status: 404 });
-  const matches = [...detail.harvest.harvestCandidates, ...detail.harvest.testFirst, ...detail.harvest.unavailable];
+  const matches = machineMatchesByStatus(detail.harvest);
   const csv = toCsv(
     ["MPN", "machine", "status", "candidate", "type", "brand", "model", "diagram", "possible_years", "part_state", "reason"],
     matches.map((m) => [detail.mpn.mpn_display, m.machine_no, m.availability, m.candidate, m.appliance_type,

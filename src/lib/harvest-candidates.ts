@@ -58,3 +58,9 @@ export function harvestCandidates(rows: MachineMatchRow[], partFamily: string, d
     }
   };
 }
+
+/** Table and CSV share the same status-first order. */
+export function machineMatchesByStatus(harvest: HarvestCandidates): MachineMatch[] {
+  return [...harvest.harvestCandidates, ...harvest.testFirst, ...harvest.unavailable]
+    .sort((a, b) => a.availability.localeCompare(b.availability) || a.machine_no.localeCompare(b.machine_no, undefined, { numeric: true }));
+}

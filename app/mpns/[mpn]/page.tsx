@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { mpnDetail } from "@/src/db/queries";
-import { HARVEST_LABEL, type HarvestStatus } from "@/src/lib/harvest-candidates";
+import { HARVEST_LABEL, machineMatchesByStatus, type HarvestStatus } from "@/src/lib/harvest-candidates";
 import { NoDatabase, PageTitle, pct, perSlotDay, QualificationPill, saleDay, usd, Years } from "@/src/components/ui";
 import { addAliasAction, saveMarketAction, saveMpnManualAction } from "../../actions";
 
@@ -186,7 +186,7 @@ export default async function MpnPage({ params, searchParams }: { params: Promis
         <table className="w-full text-sm">
           <thead><tr><th>Candidate</th><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Diagram</th><th>Possible years</th><th>Part state</th><th>Reason</th></tr></thead>
           <tbody>
-            {[...h.harvestCandidates, ...h.testFirst, ...h.unavailable].map((x) => (
+            {machineMatchesByStatus(h).map((x) => (
               <tr key={x.machine_no} className={x.candidate === "unavailable" ? "opacity-50" : ""}>
                 <td><span className={`pill ${CANDIDATE_PILL[x.candidate]}`}>{HARVEST_LABEL[x.candidate]}</span></td>
                 <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(x.machine_no)}`}>{x.machine_no}</Link></td>

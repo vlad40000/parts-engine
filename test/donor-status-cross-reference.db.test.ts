@@ -85,6 +85,7 @@ describe("donor status at lookup and in existing BOM cross-reference", () => {
     const rows = parseCsvRows(await res.text());
     expect(rows).toHaveLength(51);
     expect(new Set(rows.slice(1).map((x) => x[1])).size).toBe(50);
+    expect(rows.slice(1).map((x) => x[2])).toEqual([...Array(20).fill("NEEDS PARTS"), ...Array(30).fill("PARTS ONLY")]);
     expect(rows.slice(1).every((x) => x[3] === "harvest_candidate")).toBe(true);
   });
 
