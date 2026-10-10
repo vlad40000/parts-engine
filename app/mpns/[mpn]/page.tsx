@@ -14,8 +14,9 @@ export default async function MpnPage({ params, searchParams }: { params: Promis
   if (!hasDatabase()) return <NoDatabase />;
   const { mpn } = await params;
   const { availability: selected } = await searchParams;
-  const availability = selected?.trim().toUpperCase() === "ELIGIBLE" ? "eligible"
-    : selected?.trim().toUpperCase() === "ALL" ? "all" : selected?.trim().toUpperCase() || "eligible";
+  const choice = selected?.trim().toUpperCase();
+  const availability = choice === "ELIGIBLE" ? "eligible" : choice === "ALL" ? "all"
+    : choice === "INCLUDE_UNCHECKED" ? "include_unchecked" : choice || "eligible";
   const d = await mpnDetail(await getDb(), decodeURIComponent(mpn), availability);
   if (!d) notFound();
   const m = d.mpn;
@@ -160,8 +161,9 @@ export default async function MpnPage({ params, searchParams }: { params: Promis
           <label className="flex flex-col gap-1"><span className="text-xs text-muted">Machine status</span>
             <select name="availability" defaultValue={availability} className="input">
               <option value="eligible">Eligible checked donors</option>
+              <option value="include_unchecked">Checked + UNCHECKED</option>
               <option value="all">All model matches (audit)</option>
-              {[...new Set([...d.statusCounts.map((x) => x.availability), availability])].filter((s) => s !== "eligible" && s !== "all").sort().map((s) => (
+              {[...new Set([...d.statusCounts.map((x) => x.availability), availability])].filter((s) => s !== "eligible" && s !== "include_unchecked" && s !== "all").sort().map((s) => (
                 <option key={s} value={s}>{s} ({d.statusCounts.find((x) => x.availability === s)?.machines ?? 0})</option>
               ))}
             </select>

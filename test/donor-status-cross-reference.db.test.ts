@@ -49,9 +49,11 @@ describe("donor status at lookup and in existing BOM cross-reference", () => {
     expect(allowed).not.toEqual(expect.arrayContaining(["SOLD", "SCRAPED", "SCRAPPED"]));
     expect((await modelsNeedingBom(db, {}, allowed)).map((x) => x.model_key)).toEqual(["WTW1111", "WTW2222"]);
     expect((await modelsNeedingBom(db, { availability: "UNCHECKED" }, allowed)).map((x) => x.model_key)).toEqual(["WTW3333"]);
+    expect((await modelsNeedingBom(db, { availability: "include_unchecked" }, allowed)).map((x) => x.model_key)).toEqual(["WTW1111", "WTW2222", "WTW3333"]);
     expect(await modelsNeedingBom(db, { availability: "SOLD" }, allowed)).toEqual([]);
     expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", allowed)).toBe(false);
     expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", allowed, "UNCHECKED")).toBe(true);
+    expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW3333", allowed, "include_unchecked")).toBe(true);
     for (const status of ["SOLD", "SCRAPED", "SCRAPPED"]) {
       expect(await hasEligibleModelDonor(db, "WHIRLPOOL", "WTW4444", allowed, status)).toBe(false);
       const response = await runBom(new Request("http://local/api/bom/model", {
@@ -90,6 +92,9 @@ describe("donor status at lookup and in existing BOM cross-reference", () => {
     const unchecked = (await mpnDetail(db, MPN, "UNCHECKED"))!;
     expect(unchecked.machines.map((x) => x.machine_no)).toEqual(["3000"]);
     expect(unchecked.harvest.testFirst.map((x) => x.machine_no)).toEqual(["3000"]);
+    const combined = (await mpnDetail(db, MPN, "include_unchecked"))!;
+    expect(combined.machines).toHaveLength(51);
+    expect(combined.harvest.testFirst.map((x) => x.machine_no)).toEqual(["3000"]);
     for (const status of ["SOLD", "SCRAPED", "SCRAPPED"]) {
       const historical = (await mpnDetail(db, MPN, status))!;
       expect(historical.harvest.unavailable).toHaveLength(1);

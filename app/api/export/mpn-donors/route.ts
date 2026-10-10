@@ -17,7 +17,8 @@ export async function GET(request: Request) {
   const mpn = url.searchParams.get("mpn")?.trim();
   if (!mpn) return NextResponse.json({ error: "MPN is required." }, { status: 400 });
   const selected = url.searchParams.get("availability")?.trim().toUpperCase();
-  const availability = selected === "ALL" ? "all" : selected === "ELIGIBLE" || !selected ? "eligible" : selected;
+  const availability = selected === "ALL" ? "all" : selected === "INCLUDE_UNCHECKED" ? "include_unchecked"
+    : selected === "ELIGIBLE" || !selected ? "eligible" : selected;
   const detail = await mpnDetail(await getDb(), mpn, availability);
   if (!detail) return NextResponse.json({ error: "MPN not found." }, { status: 404 });
   const matches = [...detail.harvest.harvestCandidates, ...detail.harvest.testFirst, ...detail.harvest.unavailable];

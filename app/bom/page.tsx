@@ -16,7 +16,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
   const db = await getDb();
   const settings = await getSettings(db);
   const permitted = eligibleDonorStatuses(settings.donorAvailabilities);
-  const availability = sp.availability && permitted.includes(sp.availability) ? sp.availability : undefined;
+  const availability = sp.availability === "include_unchecked" || (sp.availability && permitted.includes(sp.availability)) ? sp.availability : undefined;
   const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability };
   const offset = Number(sp.offset ?? 0) || 0;
   const [queue, facets] = await Promise.all([
@@ -58,6 +58,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           <span className="text-xs text-muted">Donor machine status</span>
           <select name="availability" defaultValue={availability ?? ""} className="input">
             <option value="">All checked donor statuses</option>
+            {permitted.includes("UNCHECKED") ? <option value="include_unchecked">Checked + UNCHECKED</option> : null}
             {facets.availability.filter((s) => permitted.includes(s)).map((s) => (
               <option key={s} value={s}>{s}{s === "UNCHECKED" ? " (include for this run)" : ""}</option>
             ))}
@@ -75,7 +76,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           This is the grouped parts-list (BOM) queue, not the full <Link className="underline" href="/">Fleet</Link>: one row per Brand + Model,
           since one parts list covers every machine of that model. It counts only machines with a readable model whose status is a
           checked donor status in <Link className="underline" href="/settings">Settings</Link> ({defaultDonorStatuses(settings.donorAvailabilities).join(", ") || "none set"}).
-          UNCHECKED can be included by selecting it above; SOLD and SCRAPED/SCRAPPED cannot be donors.
+          UNCHECKED can be included with checked donors or selected alone above; SOLD and SCRAPED/SCRAPPED cannot be donors.
           {filter.band || filter.type || filter.brand ? " The selected age, type, and brand filters also apply." : ""} A model leaves the queue once its parts
           list is found or not found; failed lookups stay for retry.
         </p>

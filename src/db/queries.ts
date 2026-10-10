@@ -247,7 +247,8 @@ export const BOM_QUEUE_PAGE_SIZE = 300;
  * for retry. Page rows and totals both read this, so the totals cannot drift from the queue.
  */
 function pendingBomGroups(f: FleetFilter, donorSet: string[]) {
-  const allowed = f.availability === "UNCHECKED" ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
+  const allowed = f.availability === "UNCHECKED" || f.availability === "include_unchecked"
+    ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
   return sql`
     select f.brand_key, f.model_key, min(f.brand) brand, min(f.model_raw) model, count(*)::int machines,
       string_agg(distinct f.appliance_type, ', ') types, min(c.status) bom_status
@@ -256,7 +257,7 @@ function pendingBomGroups(f: FleetFilter, donorSet: string[]) {
     where f.identity_status = 'ok' and f.model_key <> ''
       and f.availability = any(${sql.raw(pgTextArray(allowed))})
       and (c.status is null or c.status = 'error')
-      and ${fleetWhere(f)}
+      and ${fleetWhere(f.availability === "include_unchecked" ? { ...f, availability: undefined } : f)}
     group by f.brand_key, f.model_key`;
 }
 
@@ -289,13 +290,14 @@ export async function bomQueue(db: Db, f: FleetFilter, donorSet: string[], limit
 
 /** Gate a direct or pasted BOM lookup against a real, currently eligible machine. */
 export async function hasEligibleModelDonor(db: Db, brand: string, model: string, donorSet: string[], availability?: string): Promise<boolean> {
-  const allowed = availability === "UNCHECKED" ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
-  if (availability && !allowed.includes(availability)) return false;
+  const allowed = availability === "UNCHECKED" || availability === "include_unchecked"
+    ? eligibleDonorStatuses(donorSet) : defaultDonorStatuses(donorSet);
+  if (availability && availability !== "include_unchecked" && !allowed.includes(availability)) return false;
   const [row] = await q<{ present: boolean }>(db, sql`
     select exists (
       select 1 from fleet_machines f where f.brand_key = ${brand} and f.model_key = ${model}
         and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(allowed))})
-        ${availability ? sql`and f.availability = ${availability}` : sql``}
+        ${availability && availability !== "include_unchecked" ? sql`and f.availability = ${availability}` : sql``}
     ) present`);
   return row.present;
 }
@@ -543,8 +545,8 @@ export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "
     join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
     where e.mpn_canonical = ${canonical}
     group by f.availability order by f.availability`);
-  const matchFilter = availability === "eligible"
-    ? sql`and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(defaultDonorStatuses(s.donorAvailabilities)))}) and s.state is null`
+  const matchFilter = availability === "eligible" || availability === "include_unchecked"
+    ? sql`and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(availability === "include_unchecked" ? eligibleDonorStatuses(s.donorAvailabilities) : defaultDonorStatuses(s.donorAvailabilities)))}) and s.state is null`
     : availability !== "all" ? sql`and f.availability = ${availability}` : sql``;
   const machines = await q<MachineMatchRow>(db, sql`
     select f.machine_no, f.availability, f.appliance_type, f.brand, f.brand_key, f.model_raw, f.model_key, e.diagram_id,
@@ -558,7 +560,7 @@ export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "
     select brand_key, model_key, description, new_price, source from model_part_edges where mpn_canonical = ${canonical} order by 1, 2`);
   const roadrunner = (await roadrunnerPerformance(db, [canonical])).get(canonical) ?? null;
   // Physical facts only; economic qualification never decides who is a candidate.
-  const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities, availability === "UNCHECKED");
+  const harvest = harvestCandidates(machines, row.part_family, s.donorAvailabilities, availability === "UNCHECKED" || availability === "include_unchecked");
   return { mpn: evaluated, aliases, machines, harvest, models, roadrunner, settings: s, statusCounts };
 }
 
