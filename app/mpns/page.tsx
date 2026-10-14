@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
-import { mpnIndex, researchQueueExports, type MpnFilter } from "@/src/db/queries";
+import { mpnIndex, researchQueueExport, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { ButtonForm, UploadForm } from "@/src/components/forms";
@@ -30,17 +30,16 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const offset = Number(sp.offset ?? 0) || 0;
   const db = await getDb();
   const { rows, total, settings, rulesSet } = await mpnIndex(db, { view, family: sp.family, q: sp.q }, 100, offset);
-  // What the next queue export holds and leaves out, shown next to its button.
-  let exportBatches: SharedResearchExport[] = [];
+  // Only serialize the first CSV for the page report. The full ZIP is built on demand by its endpoint.
+  let exportBatch: SharedResearchExport | null = null;
   let exportError: string | null = null;
   if (view === "queue") {
-    try { exportBatches = await researchQueueExports(db); }
+    try { exportBatch = await researchQueueExport(db); }
     catch (error) {
       if (!(error instanceof SharedResearchExportError)) throw error;
       exportError = error.message;
     }
   }
-  const exportBatch = exportBatches[0] ?? null;
   const base = { view, family: sp.family, q: sp.q };
 
   return (
@@ -99,15 +98,14 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
             <li>Research each MPN in eBay Product Research and fill in its row. Leave a cell blank when you have no value; blank stays unknown, never zero.</li>
             <li>Upload the completed file below with <b>Import market facts</b>, as is. The same file also imports into EbayDecisions (Settings → Shared research CSV).</li>
           </ol>
-          {exportBatches.length > 1 ? (
-            <div className="basis-full flex flex-wrap items-center gap-2 text-xs">
-              <span className="font-medium">Individual CSV batches:</span>
-              {exportBatches.map((batch, i) => (
-                <a key={i} className="underline" href={`/api/export/research-queue?batch=${i + 1}`}>
-                  {i + 1} ({batch.exported.toLocaleString("en-US")})
-                </a>
-              ))}
-            </div>
+          {!exportError && exportBatch?.later ? (
+            <form action="/api/export/research-queue" method="get" className="basis-full flex flex-wrap items-center gap-2 text-xs">
+              <label htmlFor="export-batch-number" className="font-medium">Download individual CSV batch:</label>
+              <input id="export-batch-number" type="number" name="batch" min="1" step="1"
+                defaultValue="2" required className="input w-20" />
+              <button type="submit" className="btn">Download CSV</button>
+              <span className="text-muted">Batch numbers begin at 1; choose Export all batches (ZIP) to retrieve every batch at once.</span>
+            </form>
           ) : null}
           {exportBatch ? <ExportReport batch={exportBatch} /> : null}
           <div className="basis-full">
