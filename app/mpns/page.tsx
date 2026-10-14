@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
-import { mpnIndex, researchQueueExport, type MpnFilter } from "@/src/db/queries";
+import { mpnIndex, researchQueueExports, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { ButtonForm, UploadForm } from "@/src/components/forms";
@@ -31,15 +31,16 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const db = await getDb();
   const { rows, total, settings, rulesSet } = await mpnIndex(db, { view, family: sp.family, q: sp.q }, 100, offset);
   // What the next queue export holds and leaves out, shown next to its button.
-  let exportBatch: SharedResearchExport | null = null;
+  let exportBatches: SharedResearchExport[] = [];
   let exportError: string | null = null;
   if (view === "queue") {
-    try { exportBatch = await researchQueueExport(db); }
+    try { exportBatches = await researchQueueExports(db); }
     catch (error) {
       if (!(error instanceof SharedResearchExportError)) throw error;
       exportError = error.message;
     }
   }
+  const exportBatch = exportBatches[0] ?? null;
   const base = { view, family: sp.family, q: sp.q };
 
   return (
@@ -85,14 +86,29 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
       {view === "queue" ? (
         <div className="card mb-4 flex flex-wrap items-center gap-3 p-3 text-sm">
           <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors.</span>
-          {exportError ? <span className="text-wait">{exportError}</span> : <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>}
+          {exportError ? <span className="text-wait">{exportError}</span> : (
+            <>
+              <a className="btn" href="/api/export/research-queue">Export first CSV</a>
+              <a className="btn btn-primary" href="/api/export/research-queue?all=1">Export all batches (ZIP)</a>
+            </>
+          )}
           <ol className="basis-full list-decimal pl-5 text-xs text-muted">
-            <li><b>Export queue CSV</b>: the shared research CSV, with New Price filled in where Parts Engine knows it and the research columns blank.
-              One file holds at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs and reserves space below the 2 MiB upload limit for filled research, in queue order. Researched MPNs leave the queue once
-              imported, so the next export holds the next batch.</li>
+            <li><b>Export all batches (ZIP)</b>: downloads the whole research queue at once as numbered shared research CSVs.
+              Each CSV contains at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs and reserves space below the 2 MiB import limit for filled research.
+              Export does not change any MPN status; the ZIP includes a README explaining any omitted keys or blank New Price values.</li>
             <li>Research each MPN in eBay Product Research and fill in its row. Leave a cell blank when you have no value; blank stays unknown, never zero.</li>
             <li>Upload the completed file below with <b>Import market facts</b>, as is. The same file also imports into EbayDecisions (Settings → Shared research CSV).</li>
           </ol>
+          {exportBatches.length > 1 ? (
+            <div className="basis-full flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-medium">Individual CSV batches:</span>
+              {exportBatches.map((batch, i) => (
+                <a key={i} className="underline" href={`/api/export/research-queue?batch=${i + 1}`}>
+                  {i + 1} ({batch.exported.toLocaleString("en-US")})
+                </a>
+              ))}
+            </div>
+          ) : null}
           {exportBatch ? <ExportReport batch={exportBatch} /> : null}
           <div className="basis-full">
             {isEbayDecisionsConfigured() ? (
@@ -197,8 +213,8 @@ function ExportReport({ batch }: { batch: SharedResearchExport }) {
   return (
     <ul className="basis-full list-disc pl-5 text-xs">
       <li className="text-muted">
-        The next export holds {batch.exported.toLocaleString("en-US")} MPN(s)
-        {batch.later ? `; ${batch.later.toLocaleString("en-US")} more come in later exports, after these are researched and imported.` : "."}
+        First CSV: {batch.exported.toLocaleString("en-US")} MPN(s)
+        {batch.later ? `; ${batch.later.toLocaleString("en-US")} more in the ZIP, without importing the first CSV.` : "."}
       </li>
       {batch.omittedMpns.length ? (
         <li className="text-wait">
