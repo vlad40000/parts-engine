@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
@@ -14,7 +15,7 @@ import { parseCsvRows, toCsv } from "@/src/lib/csv";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { mapMarketRows } from "@/src/lib/market-import";
 import {
-  buildSharedResearchCsv, buildSharedResearchExport, parseSharedResearchCsv, SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SHARED_RESEARCH_MAX_BYTES, SharedResearchExportError
+  buildAllSharedResearchExports, buildSharedResearchCsv, buildSharedResearchExport, parseSharedResearchCsv, SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SHARED_RESEARCH_MAX_BYTES, SharedResearchExportError
 } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import type { SupplierRow } from "@/src/sources/types";
@@ -61,7 +62,7 @@ const importFile = (name: string, content: BlobPart) => {
 /** A shared research CSV with the canonical header; cells by header, blank when absent. */
 const sharedCsv = (rows: Array<Partial<Record<Header, string>>>) =>
   toCsv([...SHARED_RESEARCH_CSV_HEADERS], rows.map((r) => SHARED_RESEARCH_CSV_HEADERS.map((h) => r[h] ?? "")));
-const exported = async () => (await exportQueue()).text();
+const exported = async () => (await exportQueue(new Request("http://localhost/api/export/research-queue"))).text();
 /** Every generated export must import as is: parses it with the import's own validator. */
 const importable = (text: string) => {
   const parsed = parseSharedResearchCsv(text);
@@ -140,6 +141,63 @@ describe("Export queue CSV: the shared research format", () => {
     expect(rows.slice(1, 4).map((r) => [r.mpnCanonical, r.newPrice])).toEqual([["BIG1", null], ["TOP1", 1_000_000], ["NEG1", null]]);
     expect(out.blankNewPrices).toEqual([{ mpnCanonical: "BIG1", newPrice: "1000000.01" }, { mpnCanonical: "NEG1", newPrice: -1 }]);
   });
+  it("exports all 12,003 MPNs across numbered batches without duplicates or skipped rows", () => {
+    const source = Array.from({ length: 12_003 }, (_, i) => ({
+      mpnCanonical: `M${String(i).padStart(6, "0")}`, mpnDisplay: `M${String(i).padStart(6, "0")}`,
+      description: "Motor", notes: "", newPrice: 22
+    }));
+    const batches = buildAllSharedResearchExports(source);
+    expect(batches.map((b) => b.exported)).toEqual([5000, 5000, 2003]);
+    expect(batches.map((b) => b.later)).toEqual([7003, 2003, 0]);
+    const all = batches.flatMap((b) => importable(b.csv).map((r) => r.mpnCanonical));
+    expect(all).toEqual(source.map((r) => r.mpnCanonical));
+    expect(new Set(all).size).toBe(source.length);
+    expect(batches.every((b) => Buffer.byteLength(b.csv, "utf8") <= SHARED_RESEARCH_MAX_BYTES)).toBe(true);
+    const second = buildSharedResearchExport(source, 5000);
+    expect(second.csv).toBe(batches[1].csv);
+  });
+
+  it("splits at the byte boundary as well as the row boundary without losing MPNs", () => {
+    const source = Array.from({ length: 5100 }, (_, i) => ({
+      mpnCanonical: `U${i}`, mpnDisplay: `U${i}`,
+      description: "é".repeat(450), notes: "🔧".repeat(150), newPrice: null
+    }));
+    const batches = buildAllSharedResearchExports(source);
+    expect(batches.length).toBeGreaterThan(2);
+    expect(batches.flatMap((b) => importable(b.csv).map((r) => r.mpnCanonical))).toEqual(source.map((r) => r.mpnCanonical));
+    for (const batch of batches) expect(Buffer.byteLength(batch.csv, "utf8")).toBeLessThanOrEqual(SHARED_RESEARCH_MAX_BYTES);
+  });
+
+  it("retains D1 omission warnings when all queue MPNs exceed the shared CSV key limit", () => {
+    const omitted = ["A".repeat(201), "B".repeat(202)];
+    const rows = omitted.map((mpnCanonical) => ({
+      mpnCanonical, mpnDisplay: mpnCanonical, description: "Unexportable key", notes: "", newPrice: null
+    }));
+    const batches = buildAllSharedResearchExports(rows);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({ exported: 0, later: 0, omittedMpns: omitted });
+    expect(parseCsvRows(batches[0].csv)).toEqual([[...SHARED_RESEARCH_CSV_HEADERS]]);
+    expect(buildSharedResearchExport(rows).omittedMpns).toEqual(omitted);
+  });
+
+  it("downloads an entire queue snapshot as a ZIP with importable numbered CSVs", async () => {
+    const res = await exportQueue(new Request("http://localhost/api/export/research-queue?all=1"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    const archive = await JSZip.loadAsync(await res.arrayBuffer());
+    const files = Object.keys(archive.files).filter((name) => name.endsWith(".csv"));
+    expect(files).toHaveLength(1);
+    expect(importable(await archive.files[files[0]].async("string"))).toHaveLength(5);
+    expect(await archive.files["README.txt"].async("string")).toContain("MPNs exported: 5");
+  });
+
+  it("rejects invalid and nonexistent batches instead of returning a duplicate", async () => {
+    const invalid = await exportQueue(new Request("http://localhost/api/export/research-queue?batch=foo"));
+    expect(invalid.status).toBe(400);
+    const invalidNumber = await exportQueue(new Request("http://localhost/api/export/research-queue?batch=2"));
+    expect(invalidNumber.status).toBe(422);
+  });
+
   it("prefixes formula-triggering supplier cells while preserving D1 identity and cross-app parsing", () => {
     const cases = [
       { mpnCanonical: "EQ1", mpnDisplay: "=EQ-1", description: "=HYPERLINK(1)", notes: "=1+1" },

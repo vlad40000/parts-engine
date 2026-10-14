@@ -237,7 +237,7 @@ export type SharedResearchExport = {
   csv: string;
   /** Rows in this file: at most SHARED_RESEARCH_MAX_ROWS, in the order given. */
   exported: number;
-  /** Exportable rows after this batch. A later export holds them once this batch leaves the queue. */
+  /** Exportable rows after this batch, reachable by batch number without importing earlier files. */
   later: number;
   /** D1 keys longer than the shared MPN limit. Never written and never truncated. */
   omittedMpns: string[];
@@ -252,7 +252,7 @@ export type SharedResearchExport = {
  * Nothing outside the shared contract is written. Apart from the existing 500-character description cap, no identity or price is shortened/clamped:
  * - a row whose D1 key is longer than the MPN limit is left out (truncating could merge distinct OEM parts);
  * - a New Price the import would reject (such as one over 1,000,000) is written blank, the row kept;
- * - then the first SHARED_RESEARCH_MAX_ROWS rows are written, in the order given.
+ * - then the next SHARED_RESEARCH_MAX_ROWS rows are written from the requested start, in the order given.
  */
 /** A literal leading apostrophe prevents Excel/Sheets from interpreting supplier text as a formula.
  * For MPNs, the extra punctuation does not change the D1 key; leave it in the CSV for safe re-opening.
@@ -263,17 +263,25 @@ const spreadsheetSafe = (value: string, maxLength?: number): string => {
   return maxLength == null ? safe : safe.slice(0, maxLength);
 };
 
-export function buildSharedResearchExport(rows: SharedResearchExportRow[]): SharedResearchExport {
+export function buildSharedResearchExport(rows: SharedResearchExportRow[], start = 0): SharedResearchExport {
+  if (!Number.isSafeInteger(start) || start < 0) throw new SharedResearchExportError("Invalid queue export starting row.");
   const omittedMpns = rows.filter((r) => r.mpnCanonical.length > MAX_MPN_LENGTH).map((r) => r.mpnCanonical);
   const exportable = rows.filter((r) => r.mpnCanonical.length <= MAX_MPN_LENGTH);
+  return buildSharedResearchBatch(exportable, omittedMpns, start);
+}
+
+/** Build one bounded CSV from already-classified rows, avoiding filtering/copying the entire queue for every batch. */
+function buildSharedResearchBatch(
+  exportable: SharedResearchExportRow[], omittedMpns: string[], start: number
+): SharedResearchExport {
   const headers = [...SHARED_RESEARCH_CSV_HEADERS];
   const headerCsv = toCsv(headers, []);
   let bytes = Buffer.byteLength(headerCsv, "utf8");
   const batch: unknown[][] = [];
   const blankNewPrices: SharedResearchExport["blankNewPrices"] = [];
 
-  for (const r of exportable) {
-    if (batch.length === SHARED_RESEARCH_MAX_ROWS) break;
+  for (let index = start; index < exportable.length && batch.length < SHARED_RESEARCH_MAX_ROWS; index++) {
+    const r = exportable[index];
     const display = r.mpnDisplay.trim();
     const chosenMpn = display.length <= MAX_MPN_LENGTH && canonicalizeMpn(display) === r.mpnCanonical
       ? display : r.mpnCanonical;
@@ -309,7 +317,24 @@ export function buildSharedResearchExport(rows: SharedResearchExportRow[]): Shar
   if (Buffer.byteLength(csv, "utf8") !== bytes || bytes > SHARED_RESEARCH_MAX_BYTES) {
     throw new SharedResearchExportError("Research export exceeds the shared 2 MiB CSV limit.");
   }
-  return { csv, exported: batch.length, later: exportable.length - batch.length, omittedMpns, blankNewPrices };
+  return { csv, exported: batch.length, later: exportable.length - start - batch.length, omittedMpns, blankNewPrices };
 }
 
 export const buildSharedResearchCsv = (rows: SharedResearchExportRow[]) => buildSharedResearchExport(rows).csv;
+
+/** All numbered CSVs from one ordered queue snapshot. No database mutations or reordering. */
+export function buildAllSharedResearchExports(rows: SharedResearchExportRow[]): SharedResearchExport[] {
+  const omittedMpns = rows.filter((r) => r.mpnCanonical.length > MAX_MPN_LENGTH).map((r) => r.mpnCanonical);
+  const exportable = rows.filter((r) => r.mpnCanonical.length <= MAX_MPN_LENGTH);
+  const batches: SharedResearchExport[] = [];
+  let start = 0;
+  // Retain one header-only CSV for an empty/all-omitted queue so the ZIP README still reports all omissions.
+  do {
+    const batch = buildSharedResearchBatch(exportable, omittedMpns, start);
+    batches.push(batch);
+    start += batch.exported;
+    if (batch.later === 0) break;
+    if (batch.exported === 0) throw new SharedResearchExportError("No progress exporting research queue.");
+  } while (true);
+  return batches;
+}

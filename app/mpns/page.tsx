@@ -30,7 +30,7 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const offset = Number(sp.offset ?? 0) || 0;
   const db = await getDb();
   const { rows, total, settings, rulesSet } = await mpnIndex(db, { view, family: sp.family, q: sp.q }, 100, offset);
-  // What the next queue export holds and leaves out, shown next to its button.
+  // Only serialize the first CSV for the page report. The full ZIP is built on demand by its endpoint.
   let exportBatch: SharedResearchExport | null = null;
   let exportError: string | null = null;
   if (view === "queue") {
@@ -85,14 +85,28 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
       {view === "queue" ? (
         <div className="card mb-4 flex flex-wrap items-center gap-3 p-3 text-sm">
           <span className="mr-auto text-muted">Not yet researched (or stale over {settings.marketStaleDays} days), with at least one donor, ordered by donors.</span>
-          {exportError ? <span className="text-wait">{exportError}</span> : <a className="btn btn-primary" href="/api/export/research-queue">Export queue CSV</a>}
+          {exportError ? <span className="text-wait">{exportError}</span> : (
+            <>
+              <a className="btn" href="/api/export/research-queue">Export first CSV</a>
+              <a className="btn btn-primary" href="/api/export/research-queue?all=1">Export all batches (ZIP)</a>
+            </>
+          )}
           <ol className="basis-full list-decimal pl-5 text-xs text-muted">
-            <li><b>Export queue CSV</b>: the shared research CSV, with New Price filled in where Parts Engine knows it and the research columns blank.
-              One file holds at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs and reserves space below the 2 MiB upload limit for filled research, in queue order. Researched MPNs leave the queue once
-              imported, so the next export holds the next batch.</li>
+            <li><b>Export all batches (ZIP)</b>: downloads the whole research queue at once as numbered shared research CSVs.
+              Each CSV contains at most {SHARED_RESEARCH_MAX_ROWS.toLocaleString("en-US")} MPNs and reserves space below the 2 MiB import limit for filled research.
+              Export does not change any MPN status; the ZIP includes a README explaining any omitted keys or blank New Price values.</li>
             <li>Research each MPN in eBay Product Research and fill in its row. Leave a cell blank when you have no value; blank stays unknown, never zero.</li>
             <li>Upload the completed file below with <b>Import market facts</b>, as is. The same file also imports into EbayDecisions (Settings → Shared research CSV).</li>
           </ol>
+          {!exportError && exportBatch?.later ? (
+            <form action="/api/export/research-queue" method="get" className="basis-full flex flex-wrap items-center gap-2 text-xs">
+              <label htmlFor="export-batch-number" className="font-medium">Download individual CSV batch:</label>
+              <input id="export-batch-number" type="number" name="batch" min="1" step="1"
+                defaultValue="2" required className="input w-20" />
+              <button type="submit" className="btn">Download CSV</button>
+              <span className="text-muted">Batch numbers begin at 1; choose Export all batches (ZIP) to retrieve every batch at once.</span>
+            </form>
+          ) : null}
           {exportBatch ? <ExportReport batch={exportBatch} /> : null}
           <div className="basis-full">
             {isEbayDecisionsConfigured() ? (
@@ -197,8 +211,8 @@ function ExportReport({ batch }: { batch: SharedResearchExport }) {
   return (
     <ul className="basis-full list-disc pl-5 text-xs">
       <li className="text-muted">
-        The next export holds {batch.exported.toLocaleString("en-US")} MPN(s)
-        {batch.later ? `; ${batch.later.toLocaleString("en-US")} more come in later exports, after these are researched and imported.` : "."}
+        First CSV: {batch.exported.toLocaleString("en-US")} MPN(s)
+        {batch.later ? `; ${batch.later.toLocaleString("en-US")} more in the ZIP, without importing the first CSV.` : "."}
       </li>
       {batch.omittedMpns.length ? (
         <li className="text-wait">
