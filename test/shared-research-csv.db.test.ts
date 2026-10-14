@@ -168,6 +168,18 @@ describe("Export queue CSV: the shared research format", () => {
     for (const batch of batches) expect(Buffer.byteLength(batch.csv, "utf8")).toBeLessThanOrEqual(SHARED_RESEARCH_MAX_BYTES);
   });
 
+  it("retains D1 omission warnings when all queue MPNs exceed the shared CSV key limit", () => {
+    const omitted = ["A".repeat(201), "B".repeat(202)];
+    const rows = omitted.map((mpnCanonical) => ({
+      mpnCanonical, mpnDisplay: mpnCanonical, description: "Unexportable key", notes: "", newPrice: null
+    }));
+    const batches = buildAllSharedResearchExports(rows);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({ exported: 0, later: 0, omittedMpns: omitted });
+    expect(parseCsvRows(batches[0].csv)).toEqual([[...SHARED_RESEARCH_CSV_HEADERS]]);
+    expect(buildSharedResearchExport(rows).omittedMpns).toEqual(omitted);
+  });
+
   it("downloads an entire queue snapshot as a ZIP with importable numbered CSVs", async () => {
     const res = await exportQueue(new Request("http://localhost/api/export/research-queue?all=1"));
     expect(res.status).toBe(200);
