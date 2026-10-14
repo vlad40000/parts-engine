@@ -267,14 +267,21 @@ export function buildSharedResearchExport(rows: SharedResearchExportRow[], start
   if (!Number.isSafeInteger(start) || start < 0) throw new SharedResearchExportError("Invalid queue export starting row.");
   const omittedMpns = rows.filter((r) => r.mpnCanonical.length > MAX_MPN_LENGTH).map((r) => r.mpnCanonical);
   const exportable = rows.filter((r) => r.mpnCanonical.length <= MAX_MPN_LENGTH);
+  return buildSharedResearchBatch(exportable, omittedMpns, start);
+}
+
+/** Build one bounded CSV from already-classified rows, avoiding filtering/copying the entire queue for every batch. */
+function buildSharedResearchBatch(
+  exportable: SharedResearchExportRow[], omittedMpns: string[], start: number
+): SharedResearchExport {
   const headers = [...SHARED_RESEARCH_CSV_HEADERS];
   const headerCsv = toCsv(headers, []);
   let bytes = Buffer.byteLength(headerCsv, "utf8");
   const batch: unknown[][] = [];
   const blankNewPrices: SharedResearchExport["blankNewPrices"] = [];
 
-  for (const r of exportable.slice(start)) {
-    if (batch.length === SHARED_RESEARCH_MAX_ROWS) break;
+  for (let index = start; index < exportable.length && batch.length < SHARED_RESEARCH_MAX_ROWS; index++) {
+    const r = exportable[index];
     const display = r.mpnDisplay.trim();
     const chosenMpn = display.length <= MAX_MPN_LENGTH && canonicalizeMpn(display) === r.mpnCanonical
       ? display : r.mpnCanonical;
@@ -317,14 +324,17 @@ export const buildSharedResearchCsv = (rows: SharedResearchExportRow[]) => build
 
 /** All numbered CSVs from one ordered queue snapshot. No database mutations or reordering. */
 export function buildAllSharedResearchExports(rows: SharedResearchExportRow[]): SharedResearchExport[] {
+  const omittedMpns = rows.filter((r) => r.mpnCanonical.length > MAX_MPN_LENGTH).map((r) => r.mpnCanonical);
+  const exportable = rows.filter((r) => r.mpnCanonical.length <= MAX_MPN_LENGTH);
   const batches: SharedResearchExport[] = [];
   let start = 0;
-  while (true) {
-    const batch = buildSharedResearchExport(rows, start);
-    if (batch.exported === 0) break;
+  // Retain one header-only CSV for an empty/all-omitted queue so the ZIP README still reports all omissions.
+  do {
+    const batch = buildSharedResearchBatch(exportable, omittedMpns, start);
     batches.push(batch);
     start += batch.exported;
     if (batch.later === 0) break;
-  }
+    if (batch.exported === 0) throw new SharedResearchExportError("No progress exporting research queue.");
+  } while (true);
   return batches;
 }
