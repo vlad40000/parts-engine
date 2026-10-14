@@ -173,7 +173,7 @@ describe("Research queue workflow: manual CSV first, no active research call", (
   it("the whole operator workflow (export → import the completed CSV → refresh) sends only the market-facts read", async () => {
     configure();
     const { calls, routes } = provider();
-    const [header, ...rows] = parseCsvRows(await (await exportQueue()).text());
+    const [header, ...rows] = parseCsvRows(await (await exportQueue(new Request("http://localhost/api/export/research-queue"))).text());
     expect(rows.length).toBeGreaterThan(EBAYDECISIONS_MAX_MPNS);
     const filled = rows.map((r) => r.map((cell, i) => (header[i] === "90 Day sales" ? "2" : cell)));
     const imported = await importMarketAction(null, upload("research-queue.csv", toCsv(header, filled)));
