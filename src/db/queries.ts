@@ -8,7 +8,7 @@ import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candi
 import { defaultDonorStatuses, donorStatusesForSelection, eligibleDonorStatuses, isOffLotDonorStatus, selectedDonorStatuses } from "@/src/lib/donor-status";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
-import { buildSharedResearchExport, type SharedResearchRow } from "@/src/lib/shared-research-csv";
+import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearchExportError, type SharedResearchRow } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import * as t from "./schema";
@@ -1072,22 +1072,43 @@ export async function setPartState(db: Db, machineNo: string, mpnCanonical: stri
 }
 
 export async function researchQueueCsvRows(db: Db) {
-  const { rows } = await mpnIndex(db, { view: "queue" }, 100000);
+  // mpnIndex retrieves the full ordered index internally; do not silently clip large exports.
+  const { total, rows } = await mpnIndex(db, { view: "queue" }, Number.MAX_SAFE_INTEGER);
+  if (total !== rows.length) throw new SharedResearchExportError("The research queue could not be read in full.");
   return rows;
 }
 
-/**
- * The research queue as one shared research CSV batch, in queue order (see buildSharedResearchExport):
- * the first SHARED_RESEARCH_MAX_ROWS exportable rows. Researched rows leave the queue once imported,
- * so the next export holds the next batch. Also reports what the file leaves out.
- */
-export async function researchQueueExport(db: Db) {
-  return buildSharedResearchExport((await researchQueueCsvRows(db)).map((r) => ({
+async function researchQueueExportRows(db: Db) {
+  return (await researchQueueCsvRows(db)).map((r) => ({
     mpnCanonical: r.mpn_canonical,
     mpnDisplay: r.mpn_display,
     description: r.description,
     notes: `Parts Engine: ${r.donors} donor machine(s) across ${r.models} model(s); family ${r.part_family}` +
       (r.market === "stale" ? "; research is stale" : ""),
     newPrice: r.new_price_min
-  })));
+  }));
+}
+
+/** Numbered batch, starting with 1. Each batch is capped by row count and editable-byte headroom. */
+export async function researchQueueExport(db: Db, batchNumber = 1) {
+  if (!Number.isSafeInteger(batchNumber) || batchNumber < 1) {
+    throw new SharedResearchExportError("Invalid research queue batch number.");
+  }
+  const rows = await researchQueueExportRows(db);
+  let start = 0;
+  let result = buildSharedResearchExport(rows);
+  for (let i = 1; i < batchNumber; i++) {
+    if (result.later === 0) throw new SharedResearchExportError("The requested research queue batch does not exist.");
+    start += result.exported;
+    result = buildSharedResearchExport(rows, start);
+  }
+  if (result.exported === 0 && batchNumber > 1) {
+    throw new SharedResearchExportError("The requested research queue batch does not exist.");
+  }
+  return result;
+}
+
+/** All batches use the same database snapshot and stable ordering; no import is necessary. */
+export async function researchQueueExports(db: Db) {
+  return buildAllSharedResearchExports(await researchQueueExportRows(db));
 }
