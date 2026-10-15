@@ -20,13 +20,14 @@ The workbook compatibility adapter operates on a temporary read copy. It handles
 - Research entries include comparability holds; a raw aggregate is not a verified exact-part comparable.
 - Raw summaries and audited comparable subsets are stored independently, including dates/windows when supplied. An earlier audited subset never replaces a later raw search summary.
 - Prices, buyer shipping and sell-through retain decimal source precision as strings. Conversion from a declared fraction to percentage points uses decimal string operations, without two-decimal rounding. A percent sign explicitly denotes percentage points; e.g. `0.45%` stays 0.45%.
+- Number syntax is field-specific, for raw and audited columns alike. Sold quantities are plain numbers. Item price and buyer shipping may have a leading `$`. Sell-through may have a trailing `%`. A `$` or `%` on any other field rejects the batch instead of being stripped. Comma grouping and zero fractions (`3.000`, `1,000,000.000`) are accepted. The 1,000,000 limit and whole-number sold check use the exact decimal text, so `3.0000000000000000001` units or `1000000.00000000000000000001` dollars are rejected rather than rounded.
 - Original observed dates, raw and audited windows, master incorporation dates, and import timestamps remain separate. The master's `eBay Research Date` is retained as incorporation context; missing original dates/windows stay unknown.
 - D1 identity is unchanged. The original display and input key are retained. Only an exact master key or a persisted, consistent WP identity can populate the separate resolved key. Supersession/variant relationships never merge evidence into the replacement key. Unknown identities remain visible without creating MPN master rows.
 - Differences from existing active facts are shown during preview and retained in the observation. Saving never overwrites those facts. Changes to the file, selected options or active facts invalidate the preview digest and require another preview.
 
 ## Storage, retry and archive
 
-Migration `0004_research_evidence_batches` adds only `research_evidence_batches` and `research_evidence_rows`, following PR #20's migration 0003. The feature branch and draft PR are stacked on PR #20 so migration history remains coherent. Neither production migration nor merging either PR is authorized by implementing this slice.
+Migration `0004_research_evidence_batches` adds only `research_evidence_batches` and `research_evidence_rows`, following migration 0003 from PR #20, which has merged to `main`. Draft PR #21 targets `main` directly. Implementing this slice does not authorize the production migration, merging PR #21, or deploying it.
 
 Preview performs SELECT queries only. Save reparses the original file and validates its current preview before issuing one atomic batch/observations CTE. If any observation insertion fails, the parent batch rolls back. The file SHA-256 is unique. Repeated and concurrent imports reuse the existing batch and never refresh original dates, replace values or restore an archived batch automatically.
 
@@ -34,8 +35,10 @@ Preview performs SELECT queries only. Save reparses the original file and valida
 
 If the evidence tables are missing, batch pages show a database-update message, while the existing MPNs and import workflows remain available. Apply the final migration before enabling evidence saves. Use a disposable migrated database for acceptance; production changes require separate authorization.
 
+Vercel Preview deployments use the same `DATABASE_URL` as Production. The server refuses evidence Save, Archive and Restore when `VERCEL_ENV` is `preview`, before reading the file or touching the database. Previewing a file and viewing batches remain available there. The guard relies on the project's "Automatically expose System Environment Variables" setting, which was on when this was written. Local runs (no `VERCEL_ENV`) and Production keep the full workflow. The guard covers only these evidence actions; the other import and edit actions are not guarded in Preview.
+
 ## Verification
 
-`npm run verify` is the repository gate. Focused tests cover source precision, fractional/percent units, blank versus zero, separate raw/audited windows, mixed validity, contact details, workbook compatibility and source-byte preservation, exact identity and alias collisions, zero-write preview, conflicts, stale previews, atomic failure, same-file and concurrent retry, archive/restore revision history, migration catalog consistency, and unchanged planning outputs for a qualified donor part.
+`npm run verify` is the repository gate. Focused tests cover source precision, field-specific `$`/`%` syntax, exact limit and whole-number checks, fractional/percent units, blank versus zero, separate raw/audited windows, mixed validity, contact details, workbook compatibility and source-byte preservation, exact identity and alias collisions, zero-write preview, conflicts, stale previews, atomic failure, same-file and concurrent retry, archive/restore revision history, Preview mutation refusal before database access, migration catalog consistency, and unchanged planning outputs for a qualified donor part.
 
 Real source workbooks and inventories must stay outside Git. Use disposable databases for actual 50-MPN acceptance and browser checks. Do not treat a successful local import as production integration.
