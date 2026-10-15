@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   numeric,
+  uuid,
   pgTable,
   primaryKey,
   text,
@@ -237,4 +238,27 @@ export const machinePartState = pgTable("machine_part_state", {
 }, (t) => [
   primaryKey({ columns: [t.machineNo, t.mpnCanonical] }),
   check("part_state_check", sql`${t.state} in ('pulled','failed','missing','skip')`)
+]);
+
+/** Shop-floor stopwatch observations. Completely separate from cost assumptions and inventory state. */
+export const harvestTimeSessions = pgTable("harvest_time_sessions", {
+  id: uuid("id").primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  observedOn: date("observed_on").notNull(),
+  sharedAccessMin: numeric("shared_access_min", { precision: 8, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  index("harvest_time_sessions_machine_idx").on(t.machineNo),
+  check("harvest_time_access_nonnegative", sql`${t.sharedAccessMin} >= 0 and ${t.sharedAccessMin} <= 1440`)
+]);
+export const harvestTimeParts = pgTable("harvest_time_parts", {
+  sessionId: uuid("session_id").notNull().references(() => harvestTimeSessions.id),
+  mpnCanonical: text("mpn_canonical").notNull(),
+  mpnDisplay: text("mpn_display").notNull(),
+  removalMin: numeric("removal_min", { precision: 8, scale: 2 }).notNull(),
+  testMin: numeric("test_min", { precision: 8, scale: 2 }).notNull().default("0")
+}, (t) => [
+  primaryKey({ columns: [t.sessionId, t.mpnCanonical] }),
+  index("harvest_time_parts_mpn_idx").on(t.mpnCanonical),
+  check("harvest_time_part_minutes_valid", sql`${t.removalMin} >= 0 and ${t.removalMin} <= 1440 and ${t.testMin} >= 0 and ${t.testMin} <= 1440`)
 ]);

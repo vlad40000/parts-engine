@@ -2,7 +2,10 @@ import { getDb, hasDatabase } from "@/src/db";
 import { getBaselines, getSettings, rulesSet } from "@/src/db/queries";
 import { knownComponents, LIBRARY_APPLIANCES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle } from "@/src/components/ui";
-import { saveBaselineAction, saveSettingsAction } from "../actions";
+import { RemovalReferenceView } from "@/src/components/removal-reference-view";
+import { harvestTimePanel } from "@/src/db/harvest-time";
+import { harvestTimeMessage } from "@/src/lib/harvest-time";
+import { recordHarvestTimeAction, saveBaselineAction, saveSettingsAction } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -25,10 +28,13 @@ function Fields({ title, note, fields }: { title: string; note?: string; fields:
   );
 }
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ timing?: string }> }) {
   if (!hasDatabase()) return <NoDatabase />;
   const db = await getDb();
-  const [s, baselines] = await Promise.all([getSettings(db), getBaselines(db)]);
+  const [s, baselines, panel] = await Promise.all([getSettings(db), getBaselines(db), harvestTimePanel(db)]);
+  const { timing } = await searchParams;
+  const { sessions } = panel;
+  const timingError = harvestTimeMessage(panel.issue ?? timing);
   const o = s.harvestOverhead;
   const have = new Map(baselines.map((b) => [`${b.appliance}|${b.component}`, b.minutes]));
 
@@ -122,6 +128,59 @@ export default async function SettingsPage() {
             </div>
           ))}
         </div>
+
+        <RemovalReferenceView />
+      </section>
+
+      <section className="card mt-6 p-4" id="harvest-time">
+        <details open={timing === "saved" || !!timingError}>
+          <summary className="cursor-pointer font-semibold">Advanced · Measure actual harvesting time (optional)</summary>
+          <p className="my-3 text-sm text-muted">
+            Record one donor-machine harvest session. Shared access minutes count ONCE;
+            list each exact MPN with incremental removal and optional inspection/testing minutes.
+            Measurements are historical only and NEVER change the configured removal baselines,
+            MPN overrides, qualification or break-even automatically.
+          </p>
+          {timing === "saved" ? <p className="mb-3 text-sm font-semibold">Session saved. Planning costs are unchanged.</p> : null}
+          {timingError ? <p role="alert" className="mb-3 text-sm font-semibold text-red-700">{timingError}</p> : null}
+          <form action={recordHarvestTimeAction} className="grid gap-3 text-sm sm:grid-cols-3">
+            <fieldset disabled={!!panel.issue} className="contents">
+            <label className="flex flex-col gap-1">Machine number (fleet ID)
+              <input name="machineNo" required className="input" placeholder="2508" />
+            </label>
+            <label className="flex flex-col gap-1">Date measured
+              <input type="date" name="observedOn" required className="input" defaultValue={new Date().toISOString().slice(0, 10)} />
+            </label>
+            <label className="flex flex-col gap-1">Shared access minutes (count once)
+              <input name="sharedAccessMin" required className="input num" type="number" min="0" max="1440" step="0.01" placeholder="15" />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-3">Actually removed components (one per line: exact MPN, incremental removal min, inspection/test min)
+              <textarea name="partLines" required rows={4} className="input font-mono" placeholder={"W10721967,4,2\nW10006384,3,1"} />
+            </label>
+            <div className="sm:col-span-3">
+              <button className="btn btn-primary">Record measured session</button>
+              <p className="mt-2 text-xs text-muted">
+                Up to 30 unique MPNs per session, verified against this machine's completed BOM.
+                Recording time does not change inventory/pulled status. Microwave high-voltage
+                parts must be handled only by properly trained technicians.
+              </p>
+            </div>
+            </fieldset>
+          </form>
+          <h3 className="mb-2 mt-6 font-semibold">Recent measured harvest sessions</h3>
+          <div className="max-h-80 overflow-auto text-sm">
+            {!panel.issue && !sessions.length ? <p className="text-muted">No recorded harvest measurements yet.</p> : null}
+            {sessions.map((session) => (
+              <div key={session.id} className="mb-3 border-b pb-3">
+                <p className="font-semibold">{String(session.observed_on).slice(0, 10)} · Machine {session.machine_no} · {session.brand} {session.model_raw}</p>
+                <p>Shared access {Number(session.shared_access_min)} min once · {session.part_count} components · illustrative equal allocation {session.allocated_access_min?.toFixed(2) ?? "—"} min/component</p>
+                <ul className="mt-1 text-xs text-muted">
+                  {session.parts.map((part) => <li key={part.mpn}>MPN {part.mpn_display}{part.mpn_display !== part.mpn ? ` (BOM identity ${part.mpn})` : ""} · removal {Number(part.removal_min)} min · inspection/test {Number(part.test_min)} min</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
       </section>
     </>
   );
