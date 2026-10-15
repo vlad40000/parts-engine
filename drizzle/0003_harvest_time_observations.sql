@@ -13,7 +13,7 @@ CREATE TABLE "harvest_time_parts" (
   "mpn_canonical" text NOT NULL,
   "removal_min" numeric(8,2) NOT NULL,
   "test_min" numeric(8,2) DEFAULT '0' NOT NULL,
-  CONSTRAINT "harvest_time_parts_pk" PRIMARY KEY ("session_id", "mpn_canonical"),
+  CONSTRAINT "harvest_time_parts_session_id_mpn_canonical_pk" PRIMARY KEY ("session_id", "mpn_canonical"),
   CONSTRAINT "harvest_time_part_minutes_valid" CHECK ("removal_min" >= 0 AND "removal_min" <= 1440 AND "test_min" >= 0 AND "test_min" <= 1440)
 );--> statement-breakpoint
 CREATE INDEX "harvest_time_parts_mpn_idx" ON "harvest_time_parts"("mpn_canonical");
