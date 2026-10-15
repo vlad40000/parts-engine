@@ -15,6 +15,8 @@ import {
   batchKeys, EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_SOURCE, EbayDecisionsError, ebayDecisionsConfig, fetchMarketFacts, planMarketFacts
 } from "@/src/lib/ebaydecisions";
 import { canonicalizeMpn } from "@/src/lib/mpn";
+import { parseHarvestSession } from "@/src/lib/harvest-time";
+import { recordHarvestSession } from "@/src/db/harvest-time";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
 import { parseSharedResearchTable, SHARED_RESEARCH_MAX_BYTES, SHARED_RESEARCH_SOURCE, sharedResearchHeaders } from "@/src/lib/shared-research-csv";
 import { readTable } from "@/src/lib/table-read";
@@ -325,4 +327,21 @@ export async function saveBaselineAction(form: FormData): Promise<void> {
   if (minutes == null || !appliance || !component) return;
   await upsertBaseline(await getDb(), { appliance, component, minutes });
   revalidatePath("/", "layout");
+}
+
+/** Record measurements only; no updates to removal baselines, MPN overrides or inventory. */
+export async function recordHarvestTimeAction(form: FormData): Promise<void> {
+  try {
+    const observation = parseHarvestSession({
+      machineNo: String(form.get("machineNo") ?? ""),
+      observedOn: String(form.get("observedOn") ?? ""),
+      sharedAccessMin: String(form.get("sharedAccessMin") ?? ""),
+      partLines: String(form.get("partLines") ?? "")
+    });
+    await recordHarvestSession(await getDb(), observation);
+  } catch {
+    redirect("/settings?timing=invalid#harvest-time");
+  }
+  revalidatePath("/settings");
+  redirect("/settings?timing=saved#harvest-time");
 }
