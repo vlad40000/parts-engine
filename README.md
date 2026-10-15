@@ -44,6 +44,8 @@ npm run dev                        # http://localhost:3001
 
 Local trial without Neon: `DATABASE_URL=pglite:./.pglite npm run db:migrate && DATABASE_URL=pglite:./.pglite npm run dev`.
 
+`db:migrate` applies all pending migrations in one transaction. `npm run db:migrate -- --plan` lists them without writing. Production migrations follow the pinned procedure in `docs/MIGRATIONS.md`.
+
 Verify: `npm run verify` (typecheck → tests → build).
 
 ## Suppliers
