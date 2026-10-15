@@ -39,6 +39,35 @@ describe("lossless research evidence parsing",()=>{
     [row({notes:"Contact synthetic.person@example.invalid"}),"contact"],
     [row({notes:"Call (555) 222-3333"}),"contact"]
   ])("rejects invalid or unsafe full-batch input %#",(r,message)=>{expect(()=>parse([row({mpn:"VALID100"}),r])).toThrow(String(message));});
+  it.each([
+    ["sold90","3%","Row 3 sold quantity must be a plain nonnegative number"],
+    ["avgItem","45%","Row 3 item price must be a nonnegative decimal, optionally with a leading $"],
+    ["sold90","3.0000000000000000001","Row 3 sold quantity must be a whole number"],
+    ["avgItem","1000000.00000000000000000001","Row 3 item price is over 1,000,000"],
+    ["auditedSold90","3%","Row 3 audited sold quantity must be a plain nonnegative number"],
+    ["auditedAvgItem","45%","Row 3 audited item price must be a nonnegative decimal, optionally with a leading $"],
+    ["auditedSold90","3.0000000000000000001","Row 3 audited sold quantity must be a whole number"],
+    ["auditedAvgItem","1000000.00000000000000000001","Row 3 audited item price is over 1,000,000"],
+    ["sold90","$3","Row 3 sold quantity must be a plain"],["auditedSold90","$3","Row 3 audited sold quantity must be a plain"],
+    ["sellThrough","$0.45","Row 3 sell-through must be a nonnegative decimal, optionally with a trailing %"],
+    ["auditedSellThrough","$0.45","Row 3 audited sell-through must be a nonnegative decimal, optionally with a trailing %"],
+    ["avgBuyerShipping","5%","Row 3 buyer shipping must be a nonnegative decimal, optionally with a leading $"],
+    ["auditedAvgBuyerShipping","5%","Row 3 audited buyer shipping must be a nonnegative decimal, optionally with a leading $"],
+    ["sold90","1000000.0000000000001","Row 3 sold quantity is over 1,000,000"],
+    ["avgBuyerShipping","$1,000,000.000000000000000000001","Row 3 buyer shipping is over 1,000,000"],
+    ["sellThrough","1000000.00000000000000000001%","Row 3 sell-through is over 1,000,000"]
+  ])("rejects the whole batch for invalid %s instead of stripping units or rounding (case %#)",(field,value,message)=>{
+    expect(()=>parse([row({mpn:"VALID100"}),row({[field]:value})])).toThrow(message);
+  });
+  it("accepts exact boundaries, zero fractions, grouping and field-appropriate units without losing precision",()=>{
+    const r=parse([row({sold90:"1,000,000.000",avgItem:"1000000.000",avgBuyerShipping:"$1,000,000.000",auditedSold90:"3.000",auditedAvgItem:"$12.50",auditedAvgBuyerShipping:"0.000"})]).rows[0];
+    expect(r.metrics).toMatchObject({sold90:1000000,avgItem:"1000000.000",avgBuyerShipping:"1000000.000"});
+    expect(r.audited).toMatchObject({sold90:3,avgItem:"12.50",avgBuyerShipping:"0.000"});
+    expect(r.raw).toMatchObject({sold:"1,000,000.000",price:"1000000.000",shipping:"$1,000,000.000",auditedSold:"3.000"});
+    expect(parse([row({sold90:1000000,avgItem:1000000})]).rows[0].metrics).toMatchObject({sold90:1000000,avgItem:"1000000"});
+    expect(parse([row({sellThrough:"0.45%"})]).rows[0].metrics.sellThrough).toEqual({value:"0.45",unit:"percent",percent:"0.45"});
+    expect(parse([row({auditedSellThrough:"45 %"})]).rows[0].audited.sellThrough).toEqual({value:"45",unit:"percent",percent:"45"});
+  });
   it("rejects D1 collisions and conflicting header aliases",()=>{
     expect(()=>parse([row({mpn:"SYNTH-100"}),row({mpn:"synth100"})])).toThrow("duplicates");
     expect(()=>parse([row({"90 day sold":"3"})])).toThrow("More than one");

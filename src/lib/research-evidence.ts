@@ -69,15 +69,29 @@ function plainNumber(n: number): string {
     : point >= digits.length ? digits + "0".repeat(point - digits.length)
       : `${digits.slice(0, point)}.${digits.slice(point)}`;
 }
-function decimal(value: unknown, label: string): string | null {
+type NumberKind = "quantity" | "money" | "ratio";
+const NUMBER_SYNTAX: Record<NumberKind, string> = {
+  quantity: "must be a plain nonnegative number without $ or %, or blank",
+  money: "must be a nonnegative decimal, optionally with a leading $, or blank",
+  ratio: "must be a nonnegative decimal, optionally with a trailing %, or blank"
+};
+/** Field-specific syntax: only prices/shipping may carry a leading $, only sell-through a
+ * trailing %. The limit and whole-number checks use the exact decimal text, never a rounded Number. */
+function decimal(value: unknown, label: string, kind: NumberKind): string | null {
   if (isBlank(value)) return null;
-  const raw = typeof value === "number" ? plainNumber(value) : String(value).trim();
-  const text = raw.replace(/^\$\s*/, "").replace(/%$/, "").trim();
+  let text = typeof value === "number" ? plainNumber(value) : String(value).trim();
+  if (kind === "money") text = text.replace(/^\$\s*/, "");
+  if (kind === "ratio") text = text.replace(/\s*%$/, "");
   if (text.length > 45 || !/^(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)$/.test(text)) {
-    throw new ResearchEvidenceError(`${label} must be a nonnegative decimal, or blank.`);
+    throw new ResearchEvidenceError(`${label} ${NUMBER_SYNTAX[kind]}.`);
   }
   const cleaned = text.replace(/,/g, "");
-  if (!Number.isFinite(Number(cleaned)) || Number(cleaned) > 1_000_000) throw new ResearchEvidenceError(`${label} is over 1,000,000.`);
+  const [whole, fraction = ""] = cleaned.split(".");
+  const integer = whole.replace(/^0+/, ""), significantFraction = fraction.replace(/0+$/, "");
+  if (integer.length > 7 || (integer.length === 7 && (integer !== "1000000" || significantFraction))) {
+    throw new ResearchEvidenceError(`${label} is over 1,000,000.`);
+  }
+  if (kind === "quantity" && significantFraction) throw new ResearchEvidenceError(`${label} must be a whole number.`);
   return cleaned.startsWith(".") ? `0${cleaned}` : cleaned;
 }
 function times100(s: string): string {
@@ -120,18 +134,19 @@ export function parseEvidenceTable(records: Record<string, unknown>[], metadata:
     if (seen.has(inputMpnKey)) throw new ResearchEvidenceError(`${at} duplicates an MPN. Keep one row per exact identity.`);
     seen.add(inputMpnKey);
     const metrics = (audited: boolean): EvidenceMetrics => {
-      const sold = decimal(get(audited ? "auditedSold" : "sold"), `${at} sold quantity`);
-      if (sold != null && !Number.isInteger(Number(sold))) throw new ResearchEvidenceError(`${at} sold quantity must be a whole number.`);
+      const scope = audited ? `${at} audited` : at;
+      // decimal() has already proved a whole number within 1,000,000, so Number() is exact.
+      const sold = decimal(get(audited ? "auditedSold" : "sold"), `${scope} sold quantity`, "quantity");
       const v = get(audited ? "auditedSellThrough" : "sellThrough");
-      const value = decimal(v, `${at} sell-through`);
+      const value = decimal(v, `${scope} sell-through`, "ratio");
       const unitInput = get(audited ? "auditedUnit" : "unit");
       const unit = typeof v === "string" && v.trim().endsWith("%") ? "percent"
         : isBlank(unitInput) ? metadata.options.sellThroughUnit : String(unitInput).trim().toLowerCase();
       if (unit !== "fraction" && unit !== "percent") throw new ResearchEvidenceError(`${at} sell-through unit must be fraction or percent.`);
       return {
         sold90: sold == null ? null : Number(sold),
-        avgItem: decimal(get(audited ? "auditedPrice" : "price"), `${at} item price`),
-        avgBuyerShipping: decimal(get(audited ? "auditedShipping" : "shipping"), `${at} buyer shipping`),
+        avgItem: decimal(get(audited ? "auditedPrice" : "price"), `${scope} item price`, "money"),
+        avgBuyerShipping: decimal(get(audited ? "auditedShipping" : "shipping"), `${scope} buyer shipping`, "money"),
         sellThrough: value == null ? null : {value, unit, percent: unit === "fraction" ? times100(value) : value}
       };
     };
