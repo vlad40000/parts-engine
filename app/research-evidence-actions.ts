@@ -9,11 +9,18 @@ import type { ActionResult } from "./actions";
 
 export type EvidenceActionResult = ActionResult & {preview?:EvidencePreview;batchId?:string;selectionKey?:string};
 
+// Vercel Preview deployments use the same DATABASE_URL as Production, so evidence mutations
+// are refused there on the server before any database access. Read-only previews still work.
+function refuseInVercelPreview(){
+  if(process.env.VERCEL_ENV==="preview")throw new ResearchEvidenceError("Preview deployments are read-only for research evidence. Save, archive and restore are available in production or a local disposable database.");
+}
+
 export async function researchEvidenceAction(_previous:EvidenceActionResult|null,form:FormData):Promise<EvidenceActionResult>{
   const selectionKey=String(form.get("selectionKey")??"").slice(0,30);
   try{
     const intent=String(form.get("intent")??"");
     if(intent!=="preview" && intent!=="save")throw new ResearchEvidenceError("Choose Preview before saving evidence.");
+    if(intent==="save")refuseInVercelPreview();
     const file=form.get("file");
     if(!(file instanceof File))throw new ResearchEvidenceError("Choose a CSV or XLSX research file.");
     const unit=String(form.get("sellThroughUnit")??"");
@@ -36,6 +43,7 @@ export async function researchEvidenceAction(_previous:EvidenceActionResult|null
 
 export async function archiveResearchEvidenceAction(_previous:ActionResult|null,form:FormData):Promise<ActionResult>{
   try{
+    refuseInVercelPreview();
     const intent=String(form.get("intent")??"");
     if(intent!=="archive" && intent!=="restore")throw new ResearchEvidenceError("Choose Archive or Restore.");
     const id=String(form.get("batchId")??"");

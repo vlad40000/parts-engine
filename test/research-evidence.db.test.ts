@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -155,5 +155,65 @@ describe("deliberate import actions",()=>{
     const result=await researchEvidenceAction(null,form("preview"));holder.db=original;
     expect(result).toMatchObject({ok:false});expect(result.message).not.toContain("secret");
     expect(evidenceDbMessage({cause:{code:"42P01",message:'relation "research_evidence_rows" does not exist'}})).toContain("pending database update");
+  });
+});
+
+describe("evidence mutation boundaries",()=>{
+  afterEach(()=>{vi.unstubAllEnvs();holder.db=db;});
+  // Records every database call and fails it, so a passing test proves the action stopped before any evidence DML.
+  const noDatabase=()=>{const calls:unknown[]=[];holder.db={execute:async(query:unknown)=>{calls.push(query);throw new Error("unexpected database access");}};return calls;};
+  const upload=(csv:string,intent:string,digest="")=>{
+    const f=new FormData();f.set("file",new File([csv],"research.csv"));f.set("intent",intent);
+    f.set("blankSoldIsSkip","on");f.set("sellThroughUnit","fraction");if(digest)f.set("previewDigest",digest);return f;
+  };
+  const lifecycle=(batchId:string,revision:number,intent:"archive"|"restore")=>{
+    const f=new FormData();f.set("batchId",batchId);f.set("revision",String(revision));f.set("intent",intent);return f;
+  };
+  const stored=async()=>({batches:await count("research_evidence_batches"),rows:await count("research_evidence_rows"),all:await evidenceBatches(db,true)});
+
+  it("rejects a mixed valid/invalid file before any database access, for preview and save",async()=>{
+    const before=await stored();
+    const calls=noDatabase();
+    for(const [csv,message] of [
+      ["mpn,sold90\nSYNTH201,3\nSYNTH202,3%\n","Row 3 sold quantity must be a plain"],
+      ["mpn,sold90,avgItem\nSYNTH201,3,10\nSYNTH202,3,45%\n","Row 3 item price must be"],
+      ["mpn,sold90\nSYNTH201,3\nSYNTH202,3.0000000000000000001\n","Row 3 sold quantity must be a whole number"],
+      ["mpn,sold90,avgItem\nSYNTH201,3,10\nSYNTH202,3,1000000.00000000000000000001\n","Row 3 item price is over 1,000,000"]
+    ]){
+      for(const intent of ["preview","save"]){
+        expect(await researchEvidenceAction(null,upload(csv,intent,"a".repeat(64)))).toMatchObject({ok:false,message:expect.stringContaining(message)});
+      }
+    }
+    expect(calls).toHaveLength(0);
+    holder.db=db;
+    expect(await stored()).toEqual(before);
+  });
+  it("Vercel Preview refuses save, archive and restore before database access; read-only preview still works",async()=>{
+    vi.stubEnv("VERCEL_ENV","preview");
+    const csv="mpn,sold90,avgItem\nSYNTH301,2,11.50\n";
+    const preview=await researchEvidenceAction(null,upload(csv,"preview"));
+    expect(preview).toMatchObject({ok:true,preview:{counts:{total:1}}});
+    const before=await stored(),batch=before.all[0];
+    expect(batch).toBeDefined();
+    const calls=noDatabase();
+    const results=[
+      await researchEvidenceAction(null,upload(csv,"save",preview.preview!.digest)),
+      await archiveResearchEvidenceAction(null,lifecycle(batch.id,batch.revision,"archive")),
+      await archiveResearchEvidenceAction(null,lifecycle(batch.id,batch.revision,"restore"))
+    ];
+    for(const result of results)expect(result).toMatchObject({ok:false,message:expect.stringContaining("Preview deployments are read-only")});
+    expect(calls).toHaveLength(0);
+    holder.db=db;
+    expect(await stored()).toEqual(before);
+  });
+  it.each([["production"],[undefined]])("VERCEL_ENV=%s keeps the save, archive and restore path",async(target)=>{
+    vi.stubEnv("VERCEL_ENV",target);
+    const csv=`mpn,sold90,avgItem\nSYNTH4${target ? 1 : 2}0,2,11.50\n`;
+    const preview=await researchEvidenceAction(null,upload(csv,"preview"));
+    const saved=await researchEvidenceAction(null,upload(csv,"save",preview.preview!.digest));
+    expect(saved).toMatchObject({ok:true,batchId:expect.any(String)});
+    expect(await archiveResearchEvidenceAction(null,lifecycle(saved.batchId!,0,"archive"))).toMatchObject({ok:true});
+    expect(await archiveResearchEvidenceAction(null,lifecycle(saved.batchId!,1,"restore"))).toMatchObject({ok:true});
+    expect((await evidenceBatch(db,saved.batchId!))?.batch).toMatchObject({archived_at:null,revision:2});
   });
 });
