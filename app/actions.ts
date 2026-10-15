@@ -15,7 +15,7 @@ import {
   batchKeys, EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_SOURCE, EbayDecisionsError, ebayDecisionsConfig, fetchMarketFacts, planMarketFacts
 } from "@/src/lib/ebaydecisions";
 import { canonicalizeMpn } from "@/src/lib/mpn";
-import { parseHarvestSession } from "@/src/lib/harvest-time";
+import { harvestTimeIssue, parseHarvestSession } from "@/src/lib/harvest-time";
 import { recordHarvestSession } from "@/src/db/harvest-time";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
 import { parseSharedResearchTable, SHARED_RESEARCH_MAX_BYTES, SHARED_RESEARCH_SOURCE, sharedResearchHeaders } from "@/src/lib/shared-research-csv";
@@ -339,8 +339,8 @@ export async function recordHarvestTimeAction(form: FormData): Promise<void> {
       partLines: String(form.get("partLines") ?? "")
     });
     await recordHarvestSession(await getDb(), observation);
-  } catch {
-    redirect("/settings?timing=invalid#harvest-time");
+  } catch (error) {
+    redirect(`/settings?timing=${harvestTimeIssue(error)}#harvest-time`);
   }
   revalidatePath("/settings");
   redirect("/settings?timing=saved#harvest-time");

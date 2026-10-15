@@ -3,7 +3,8 @@ import { getBaselines, getSettings, rulesSet } from "@/src/db/queries";
 import { knownComponents, LIBRARY_APPLIANCES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle } from "@/src/components/ui";
 import { RemovalReferenceView } from "@/src/components/removal-reference-view";
-import { recentHarvestSessions } from "@/src/db/harvest-time";
+import { harvestTimePanel } from "@/src/db/harvest-time";
+import { harvestTimeMessage } from "@/src/lib/harvest-time";
 import { recordHarvestTimeAction, saveBaselineAction, saveSettingsAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -30,8 +31,10 @@ function Fields({ title, note, fields }: { title: string; note?: string; fields:
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ timing?: string }> }) {
   if (!hasDatabase()) return <NoDatabase />;
   const db = await getDb();
-  const [s, baselines, sessions] = await Promise.all([getSettings(db), getBaselines(db), recentHarvestSessions(db)]);
+  const [s, baselines, panel] = await Promise.all([getSettings(db), getBaselines(db), harvestTimePanel(db)]);
   const { timing } = await searchParams;
+  const { sessions } = panel;
+  const timingError = harvestTimeMessage(panel.issue ?? timing);
   const o = s.harvestOverhead;
   const have = new Map(baselines.map((b) => [`${b.appliance}|${b.component}`, b.minutes]));
 
@@ -130,7 +133,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </section>
 
       <section className="card mt-6 p-4" id="harvest-time">
-        <details open={timing === "saved" || timing === "invalid"}>
+        <details open={timing === "saved" || !!timingError}>
           <summary className="cursor-pointer font-semibold">Advanced · Measure actual harvesting time (optional)</summary>
           <p className="my-3 text-sm text-muted">
             Record one donor-machine harvest session. Shared access minutes count ONCE;
@@ -139,8 +142,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             MPN overrides, qualification or break-even automatically.
           </p>
           {timing === "saved" ? <p className="mb-3 text-sm font-semibold">Session saved. Planning costs are unchanged.</p> : null}
-          {timing === "invalid" ? <p className="mb-3 text-sm font-semibold text-red-700">Not saved. Check the machine ID, date, measured times, and exact MPNs in the completed machine BOM.</p> : null}
+          {timingError ? <p role="alert" className="mb-3 text-sm font-semibold text-red-700">{timingError}</p> : null}
           <form action={recordHarvestTimeAction} className="grid gap-3 text-sm sm:grid-cols-3">
+            <fieldset disabled={!!panel.issue} className="contents">
             <label className="flex flex-col gap-1">Machine number (fleet ID)
               <input name="machineNo" required className="input" placeholder="2508" />
             </label>
@@ -161,16 +165,17 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 parts must be handled only by properly trained technicians.
               </p>
             </div>
+            </fieldset>
           </form>
           <h3 className="mb-2 mt-6 font-semibold">Recent measured harvest sessions</h3>
           <div className="max-h-80 overflow-auto text-sm">
-            {!sessions.length ? <p className="text-muted">No recorded harvest measurements yet.</p> : null}
+            {!panel.issue && !sessions.length ? <p className="text-muted">No recorded harvest measurements yet.</p> : null}
             {sessions.map((session) => (
               <div key={session.id} className="mb-3 border-b pb-3">
                 <p className="font-semibold">{String(session.observed_on).slice(0, 10)} · Machine {session.machine_no} · {session.brand} {session.model_raw}</p>
                 <p>Shared access {Number(session.shared_access_min)} min once · {session.part_count} components · illustrative equal allocation {session.allocated_access_min?.toFixed(2) ?? "—"} min/component</p>
                 <ul className="mt-1 text-xs text-muted">
-                  {session.parts.map((part) => <li key={part.mpn}>MPN {part.mpn} · removal {Number(part.removal_min)} min · inspection/test {Number(part.test_min)} min</li>)}
+                  {session.parts.map((part) => <li key={part.mpn}>MPN {part.mpn_display}{part.mpn_display !== part.mpn ? ` (BOM identity ${part.mpn})` : ""} · removal {Number(part.removal_min)} min · inspection/test {Number(part.test_min)} min</li>)}
                 </ul>
               </div>
             ))}

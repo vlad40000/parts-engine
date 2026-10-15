@@ -254,6 +254,7 @@ export const harvestTimeSessions = pgTable("harvest_time_sessions", {
 export const harvestTimeParts = pgTable("harvest_time_parts", {
   sessionId: uuid("session_id").notNull().references(() => harvestTimeSessions.id),
   mpnCanonical: text("mpn_canonical").notNull(),
+  mpnDisplay: text("mpn_display").notNull(),
   removalMin: numeric("removal_min", { precision: 8, scale: 2 }).notNull(),
   testMin: numeric("test_min", { precision: 8, scale: 2 }).notNull().default("0")
 }, (t) => [
