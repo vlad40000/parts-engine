@@ -262,3 +262,37 @@ export const harvestTimeParts = pgTable("harvest_time_parts", {
   index("harvest_time_parts_mpn_idx").on(t.mpnCanonical),
   check("harvest_time_part_minutes_valid", sql`${t.removalMin} >= 0 and ${t.removalMin} <= 1440 and ${t.testMin} >= 0 and ${t.testMin} <= 1440`)
 ]);
+
+/** Research history is separate from active market facts and physical inventory. */
+export const researchEvidenceBatches = pgTable("research_evidence_batches", {
+  id: uuid("id").primaryKey(),
+  sourceSha256: text("source_sha256").notNull().unique(),
+  source: text("source").notNull(),
+  parserVersion: integer("parser_version").notNull(),
+  metadata: jsonb("metadata").notNull(),
+  counts: jsonb("counts").notNull(),
+  createdAt: timestamp("created_at", {withTimezone:true}).defaultNow().notNull(),
+  archivedAt: timestamp("archived_at", {withTimezone:true}),
+  revision: integer("revision").default(0).notNull(),
+  lifecycleEvents: jsonb("lifecycle_events").default([]).notNull()
+}, (t) => [
+  check("research_evidence_hash_valid", sql`${t.sourceSha256} ~ '^[a-f0-9]{64}$'`),
+  check("research_evidence_revision_valid", sql`${t.revision} >= 0`)
+]);
+export const researchEvidenceRows = pgTable("research_evidence_rows", {
+  batchId: uuid("batch_id").notNull().references(() => researchEvidenceBatches.id),
+  inputMpnKey: text("input_mpn_key").notNull(),
+  mpnDisplay: text("mpn_display").notNull(),
+  resolvedMpnKey: text("resolved_mpn_key"),
+  sourceRow: integer("source_row").notNull(),
+  ownerDecision: text("owner_decision").notNull(),
+  comparability: text("comparability").notNull(),
+  observation: jsonb("observation").notNull()
+}, (t) => [
+  primaryKey({columns:[t.batchId,t.inputMpnKey]}),
+  index("research_evidence_input_idx").on(t.inputMpnKey),
+  index("research_evidence_resolved_idx").on(t.resolvedMpnKey),
+  check("research_evidence_decision_valid", sql`${t.ownerDecision} in ('researched','owner_skip','unreviewed')`),
+  check("research_evidence_comparability_valid", sql`${t.comparability} in ('unverified_aggregate','partial_exact_comparable','noncomparable','bundle_risk','unknown','owner_skip')`),
+  check("research_evidence_row_valid", sql`${t.sourceRow} > 0 and ${t.inputMpnKey} ~ '^[A-Z0-9]{1,200}$'`)
+]);
