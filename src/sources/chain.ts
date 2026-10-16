@@ -1,5 +1,8 @@
 import { lookupAppliancePartsPros } from "./appliancepartspros";
 import { lookupEncompass } from "./encompass";
+import { lookupPartsDr } from "./partsdr";
+import { lookupPartSelect } from "./partselect";
+import type { BomSource } from "./selection";
 import type { Fetcher, ModelQuery, SupplierResult } from "./types";
 
 /** A supplier result with fewer rows than this is treated as a miss (Ledger MIN_SPINE_THRESHOLD). */
@@ -16,15 +19,18 @@ const SUPPLIERS: Array<{ name: string; run: (q: ModelQuery, f: Fetcher) => Promi
   { name: "encompass", run: lookupEncompass },
   // 1 + 1 per section. Covers Frigidaire, which Encompass does not list in HTML.
   { name: "appliancepartspros", run: lookupAppliancePartsPros }
-  // PartSelect and PartsDr serve static HTML too (verified 2026-10-06) but need
-  // raw-HTML fixtures captured with `npm run capture` before parsers are written.
+];
+const ALTERNATIVES = [
+  { name: "partsdr", run: lookupPartsDr },
+  { name: "partselect", run: lookupPartSelect }
 ];
 
 /** HTML-only chain. No Gemini. First supplier with ≥ MIN_BOM_ROWS wins. */
-export async function lookupModelBom(q: ModelQuery, fetcher: Fetcher): Promise<ChainResult> {
+export async function lookupModelBom(q: ModelQuery, fetcher: Fetcher, source: BomSource = "auto"): Promise<ChainResult> {
   const attempts: ChainResult["attempts"] = [];
   let sawError = false;
-  for (const s of SUPPLIERS) {
+  const suppliers = source === "auto" ? SUPPLIERS : source === "alternatives" ? ALTERNATIVES : ALTERNATIVES.filter((s) => s.name === source);
+  for (const s of suppliers) {
     let result: SupplierResult;
     try {
       result = await s.run(q, fetcher);
@@ -42,5 +48,7 @@ export async function lookupModelBom(q: ModelQuery, fetcher: Fetcher): Promise<C
     }
     if (result.status === "found") meta.warnings.push(`Only ${rows.length} rows; below ${MIN_BOM_ROWS}, trying next supplier.`);
   }
-  return { status: sawError ? "error" : "not_found", winner: null, attempts };
+  // One website's miss does not exhaust the other suppliers or remove a model from Retries.
+  if (source !== "auto" && attempts.length) attempts.at(-1)!.warnings.push("No complete parts list verified by this selection; the model remains available for another retry source.");
+  return { status: sawError || source !== "auto" ? "error" : "not_found", winner: null, attempts };
 }

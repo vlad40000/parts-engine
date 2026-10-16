@@ -318,7 +318,7 @@ function pgTextArray(values: string[]): string {
 
 export async function saveModelBom(
   db: Db,
-  input: { brandKey: string; modelKey: string; brandDisplay: string; modelDisplay: string; result: ChainResult }
+  input: { brandKey: string; modelKey: string; brandDisplay: string; modelDisplay: string; result: ChainResult; preserveFoundOnFailure?: boolean }
 ): Promise<{ rows: number; newMpns: number }> {
   const { result } = input;
   const winner = result.winner;
@@ -339,7 +339,8 @@ export async function saveModelBom(
   };
   await db.insert(t.modelBomCache).values(cache).onConflictDoUpdate({
     target: [t.modelBomCache.brandKey, t.modelBomCache.modelKey],
-    set: { ...cache, attempts: sql`excluded.attempts`, warnings: sql`excluded.warnings` }
+    set: { ...cache, attempts: sql`excluded.attempts`, warnings: sql`excluded.warnings` },
+    setWhere: input.preserveFoundOnFailure && !winner ? sql`model_bom_cache.status <> 'found'` : undefined
   });
   if (!winner) return { rows: 0, newMpns: 0 };
 

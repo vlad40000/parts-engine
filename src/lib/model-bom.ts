@@ -8,6 +8,7 @@ import { brandKey, modelKey } from "@/src/lib/model-key";
 import { lookupModelBom, type ChainResult } from "@/src/sources/chain";
 import { createFetcher } from "@/src/sources/http";
 import type { Fetcher, ModelQuery } from "@/src/sources/types";
+import type { BomSource } from "@/src/sources/selection";
 
 // One fetcher per server instance so the per-supplier politeness gate is shared
 // by every model in a batch and by single-machine adds.
@@ -17,15 +18,17 @@ export const supplierFetcher = createFetcher({ concurrency: 2, minGapMs: 600, ti
 export async function readModelBom(
   db: Db,
   { brand, model }: ModelQuery,
-  fetcher: Fetcher = supplierFetcher
+  fetcher: Fetcher = supplierFetcher,
+  source: BomSource = "auto"
 ): Promise<{ result: ChainResult; saved: { rows: number; newMpns: number } }> {
-  const result = await lookupModelBom({ brand, model }, fetcher);
+  const result = await lookupModelBom({ brand, model }, fetcher, source);
   const saved = await saveModelBom(db, {
     brandKey: brandKey(brand),
     modelKey: modelKey(model),
     brandDisplay: brand,
     modelDisplay: model,
-    result
+    result,
+    preserveFoundOnFailure: source !== "auto"
   });
   return { result, saved };
 }

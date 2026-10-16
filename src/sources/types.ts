@@ -22,6 +22,10 @@ export type SupplierResult = {
   visited: string[];
   warnings: string[];
   elapsedMs: number;
+  /** Completeness of the captured supplier catalog, not universal fitment coverage. */
+  completeness?: "complete" | "partial" | "unknown";
+  catalogPages?: number;
+  catalogRows?: number;
 };
 
 export type ModelQuery = { brand: string; model: string };
