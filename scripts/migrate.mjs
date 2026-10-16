@@ -4,12 +4,22 @@
 //   --expect <tag>=<sha256>[,…]  apply only if the pending list is exactly this, in order
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { applyMigrations, inspectMigrations, neonExecutor, parseExpectation, pgliteExecutor, readMigrations } from "./migration-runner.mjs";
 
-const args = process.argv.slice(2);
-const plan = args.includes("--plan");
-const expectAt = args.findIndex((a) => a === "--expect" || a.startsWith("--expect="));
-const expectArg = expectAt < 0 ? null : args[expectAt].startsWith("--expect=") ? args[expectAt].slice("--expect=".length) : args[expectAt + 1] ?? "";
+let plan, expected;
+try {
+  const { values } = parseArgs({
+    options: { plan: { type: "boolean", default: false }, expect: { type: "string" } },
+    strict: true,
+    allowPositionals: false
+  });
+  plan = values.plan;
+  expected = values.expect === undefined ? undefined : parseExpectation(values.expect);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 const url = process.env.DATABASE_URL;
 if (!url) {
   console.error("Set DATABASE_URL first.");
@@ -36,7 +46,7 @@ try {
     console.log(`Latest recorded migration: ${latestCreatedAt === null ? "none" : `${latest?.tag ?? "unknown tag"} (created_at=${latestCreatedAt})`}`);
     console.log(pending.length ? `Pending migrations (${pending.length}):\n${pending.map(describe).join("\n")}` : "No pending migrations.");
   } else {
-    const applied = await applyMigrations(db, migrations, { expect: expectArg === null ? undefined : parseExpectation(expectArg) });
+    const applied = await applyMigrations(db, migrations, { expect: expected });
     console.log(applied.length ? `Applied in one transaction (${applied.length}):\n${applied.map(describe).join("\n")}` : "No pending migrations.");
   }
 } catch (error) {

@@ -8,6 +8,7 @@
 - **One transaction per run.** Every pending statement and history row is sent as a single transaction. On Neon this uses the driver's `transaction()`: one HTTP request that commits or rolls back as a unit. On PGlite it uses `PGlite.transaction()`. If any statement or history insert fails, no schema objects or history rows from the run remain, and a retry starts clean. Drizzle's `neon-http` migrator is not used: it auto-commits each statement and writes history last, so a failure partway leaves objects without history, and the retry fails with `42P07`.
 - **`--plan`** prints the latest recorded migration and each pending migration's tag, SHA-256, statement count and `when`. It is read-only and does not create the history schema or table.
 - **`--expect <tag>=<sha256>[,…]`** applies only if the pending list is exactly that list, in that order. Otherwise it exits with status 1 before writing anything.
+- Unknown options, positional arguments, and malformed `--expect` values are rejected before opening the database. A typo such as `--plna` cannot fall through to applying migrations.
 - Every statement must be valid inside a transaction. For example, `CREATE INDEX CONCURRENTLY` and `VACUUM` are not supported. Keep migrations small enough for a single Neon HTTP request.
 - History hashes are SHA-256 hashes of the file bytes as checked out. Apply production migrations from an LF checkout (`core.autocrlf=false`). Production rows 0000–0002 hold hashes of CRLF renderings. That is expected and does not affect selection, which uses `created_at` only.
 

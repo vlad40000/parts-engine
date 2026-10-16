@@ -173,6 +173,26 @@ describe("db:migrate command on a local PGlite directory", () => {
   const cli = (...args: string[]) => run(process.execPath, [path.join(__dirname, "..", "scripts", "migrate.mjs"), ...args], { env: { ...process.env, DATABASE_URL: `pglite:${dir}` } });
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  it.each([
+    ["misspelled plan", ["--plna"]],
+    ["misspelled expectation", ["--exepct", `${last.tag}=${last.hash}`]],
+    ["unsupported dry run", ["--dry-run"]],
+    ["unexpected positional argument", ["unexpected"]],
+    ["missing expectation", ["--expect"]],
+    ["empty expectation", ["--expect="]]
+  ])("rejects %s before opening the database", async (_label, args) => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pe-migrate-invalid-cli-"));
+    const databasePath = path.join(scratch, "db");
+    try {
+      await expect(run(process.execPath, [path.join(__dirname, "..", "scripts", "migrate.mjs"), ...args], {
+        env: { ...process.env, DATABASE_URL: `pglite:${databasePath}` }
+      })).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(/Unknown option|Unexpected argument|--expect/) });
+      expect(fs.existsSync(databasePath)).toBe(false);
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it("plans without writing, enforces --expect, applies once and reruns as a no-op", async () => {
     const all = migrations.map((m) => `${m.tag}=${m.hash}`).join(",");
     expect((await cli("--plan")).stdout).toContain(`Latest recorded migration: none\nPending migrations (${migrations.length}):\n  ${migrations[0].tag}  sha256=${migrations[0].hash}`);
