@@ -9,6 +9,8 @@ import { EBAYDECISIONS_MAX_MPNS, isEbayDecisionsConfigured } from "@/src/lib/eba
 import { SALES_HEADERS } from "@/src/lib/sales-import";
 import { SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SharedResearchExportError, type SharedResearchExport } from "@/src/lib/shared-research-csv";
 import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
+import { researchEvidenceAction } from "../research-evidence-actions";
+import { ResearchEvidenceUpload } from "@/src/components/research-evidence-upload";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -163,6 +165,13 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
         </table>
       </div>
       <Pager total={total} limit={100} offset={offset} href={(o) => qs(base, { offset: o })} />
+
+      <section className="card mt-6 p-4" id="research-evidence">
+        <h2 className="mb-1 font-semibold">Save research evidence</h2>
+        <p className="mb-3 text-xs text-muted">Preview owner research or the consolidated Research Order sheet before saving. Original summaries, audited subsets and Owner Skip decisions stay separate. Saving evidence leaves active market facts, qualification and inventory unchanged.</p>
+        <Link href="/mpns/research-evidence" className="mb-3 inline-block text-sm underline">View saved evidence batches</Link>
+        <ResearchEvidenceUpload action={researchEvidenceAction}/>
+      </section>
 
       <section className="card mt-6 p-4">
         <h2 className="mb-1 font-semibold">Import eBay market facts</h2>
