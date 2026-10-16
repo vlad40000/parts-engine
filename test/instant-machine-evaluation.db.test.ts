@@ -194,9 +194,10 @@ describe("Add one machine evaluates instantly from the model BOM", () => {
     expect(await edgesFor("WHIRLPOOL", model)).toEqual([]);
     expect(await db.$count(schema.mpnMaster)).toBe(mastersBefore);
     if (status === "error") {
-      // Errors stay in the Parts lists queue for retry.
+      // Errors move into the separate retry category, leaving new lookups clear.
       const s = await getSettings(db);
-      expect((await modelsNeedingBom(db, { availability: "PARTS ONLY" }, s.donorAvailabilities)).map((m) => [m.model_key, m.bom_status])).toContainEqual([model, "error"]);
+      expect((await modelsNeedingBom(db, { availability: "PARTS ONLY" }, s.donorAvailabilities)).map((m) => m.model_key)).not.toContain(model);
+      expect((await modelsNeedingBom(db, { availability: "PARTS ONLY", queue: "retry" }, s.donorAvailabilities)).map((m) => [m.model_key, m.bom_status])).toContainEqual([model, "error"]);
     }
   });
 

@@ -252,7 +252,7 @@ describe("parts-list status moves models out of the pending totals", () => {
   const save = (model: string, result: ChainResult) =>
     saveModelBom(db, { brandKey: "WHIRLPOOL", modelKey: model, brandDisplay: "Whirlpool", modelDisplay: model, result });
 
-  it("found and not_found leave the pending totals; error stays queued for retry", async () => {
+  it("found and not_found leave both categories; error moves from new lookups into retries", async () => {
     expect(await bomQueue(db, {}, donors)).toMatchObject(TOTAL);
 
     await save("WTWFOUND", found([part("W11165528", "Washer Electronic Control Board")]));
@@ -263,8 +263,11 @@ describe("parts-list status moves models out of the pending totals", () => {
 
     await save("WTWERR", miss("error"));
     const afterError = await bomQueue(db, {}, donors);
-    expect(afterError).toMatchObject({ totalModels: 326, totalMachines: 333 });
-    expect(afterError.rows.find((r) => r.model_key === "WTWERR")).toMatchObject({ machines: 2, bom_status: "error" });
+    expect(afterError).toMatchObject({ totalModels: 325, totalMachines: 331, categoryCounts: { new: 325, retry: 1 } });
+    expect(afterError.rows.find((r) => r.model_key === "WTWERR")).toBeUndefined();
+    const retries = await rawBomQueue(db, { ...checked(), queue: "retry" }, donors);
+    expect(retries).toMatchObject({ totalModels: 1, totalMachines: 2 });
+    expect(retries.rows[0]).toMatchObject({ model_key: "WTWERR", machines: 2, bom_status: "error" });
 
     const keys = (await wholeQueue()).map((r) => r.model_key);
     expect(keys).not.toContain("WTWFOUND");
