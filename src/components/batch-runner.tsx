@@ -27,7 +27,9 @@ export function selectionOnPage(selected: Set<string>, candidates: Candidate[]):
   return [...selected].every((k) => onPage.has(k)) ? selected : new Set([...selected].filter((k) => onPage.has(k)));
 }
 
-export function BatchRunner({ candidates, batchSize, availability }: { candidates: Candidate[]; batchSize: number; availability?: string }) {
+export function BatchRunner({ candidates, batchSize, availability, category = "new" }: {
+  candidates: Candidate[]; batchSize: number; availability?: string; category?: "new" | "retry";
+}) {
   const router = useRouter();
   const controllers = useRef(new Map<string, AbortController>());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -127,7 +129,7 @@ export function BatchRunner({ candidates, batchSize, availability }: { candidate
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <section className="card p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <h2 className="mr-auto font-semibold">Models without a parts list</h2>
+          <h2 className="mr-auto font-semibold">{category === "retry" ? "Models to retry" : "Models without a parts list"}</h2>
           <button className="btn" onClick={selectNext} type="button">Select next {batchSize}</button>
           <button className="btn btn-primary" onClick={runSelected} disabled={!selected.size && !paste.trim()} type="button">
             Run {selected.size || ""} {selected.size === 1 ? "model" : "models"}
@@ -152,7 +154,9 @@ export function BatchRunner({ candidates, batchSize, availability }: { candidate
                   </tr>
                 );
               })}
-              {!candidates.length ? <tr><td colSpan={5} className="py-6 text-center text-muted">Every donor model in this filter has a parts list.</td></tr> : null}
+              {!candidates.length ? <tr><td colSpan={5} className="py-6 text-center text-muted">
+                {category === "retry" ? "No models need a retry in this filter." : "No new models need a parts list in this filter. Check Retries for earlier failed lookups."}
+              </td></tr> : null}
             </tbody>
           </table>
         </div>

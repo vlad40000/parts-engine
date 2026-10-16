@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { hasDatabase, getDb } from "@/src/db";
-import { BOM_QUEUE_PAGE_SIZE, bomQueue, fleetFacets, getSettings } from "@/src/db/queries";
+import { BOM_QUEUE_PAGE_SIZE, bomQueue, fleetFacets, getSettings, type BomQueueCategory } from "@/src/db/queries";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { BatchRunner } from "@/src/components/batch-runner";
 import { isOffLotDonorStatus } from "@/src/lib/donor-status";
@@ -18,7 +18,8 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
   const selected = sp.availability?.trim().toUpperCase();
   const availability = selected && selected !== "ELIGIBLE" && selected !== "ALL" && !isOffLotDonorStatus(selected)
     ? selected === "INCLUDE_UNCHECKED" ? "include_unchecked" : selected : undefined;
-  const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability };
+  const category: BomQueueCategory = sp.queue === "retry" ? "retry" : "new";
+  const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability, queue: category === "retry" ? category : undefined };
   const offset = Number(sp.offset ?? 0) || 0;
   const [queue, facets] = await Promise.all([
     bomQueue(db, filter, settings.donorAvailabilities, BOM_QUEUE_PAGE_SIZE, offset),
@@ -33,6 +34,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
         sub="Pick an age band to research first, then run models in batches. A band only sets the order — every machine that shares a part is still matched later, whatever its age."
       />
       <form className="mb-4 flex flex-wrap items-end gap-2 text-sm">
+        {category === "retry" ? <input type="hidden" name="queue" value="retry" /> : null}
         <label className="flex flex-col gap-1">
           <span className="text-xs text-muted">Age band (any possible year)</span>
           <select name="band" defaultValue={sp.band ?? ""} className="input">
@@ -66,9 +68,15 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
         </label>
         <button className="btn">Filter</button>
       </form>
+      <nav aria-label="Lookup category" className="mb-4 flex flex-wrap gap-2 text-sm">
+        <Link className={`btn${category === "new" ? " btn-primary" : ""}`} aria-current={category === "new" ? "page" : undefined}
+          href={qs(filter, { queue: undefined, offset: undefined })}>New lookups ({queue.categoryCounts.new.toLocaleString()})</Link>
+        <Link className={`btn${category === "retry" ? " btn-primary" : ""}`} aria-current={category === "retry" ? "page" : undefined}
+          href={qs(filter, { queue: "retry", offset: undefined })}>Retries ({queue.categoryCounts.retry.toLocaleString()})</Link>
+      </nav>
       <section className="card mb-4 p-4 text-sm">
         <p className="text-base">
-          <b className="tabular-nums">{totalModels.toLocaleString()}</b> Brand + Model {totalModels === 1 ? "group needs" : "groups need"} a parts list
+          <b className="tabular-nums">{totalModels.toLocaleString()}</b> Brand + Model {totalModels === 1 ? "group needs" : "groups need"} {category === "retry" ? "a retry" : "a parts list"}
           {" · "}
           <b className="tabular-nums">{totalMachines.toLocaleString()}</b> donor {totalMachines === 1 ? "machine" : "machines"} in {totalModels === 1 ? "that group" : "those groups"}
         </p>
@@ -77,7 +85,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           since one parts list covers every machine of that model. Select a status imported with the machines before running a lookup.
           UNCHECKED is available for inspection-first research; SOLD and SCRAPED/SCRAPPED cannot be donors.
           {filter.band || filter.type || filter.brand ? " The selected age, type, and brand filters also apply." : ""} A model leaves the queue once its parts
-          list is found or not found; failed lookups stay for retry.
+          list is found or not found. Failed lookups appear only in Retries, keeping New lookups clear.
         </p>
         {totalModels > BOM_QUEUE_PAGE_SIZE ? (
           <Pager total={totalModels} limit={BOM_QUEUE_PAGE_SIZE} offset={queue.offset} href={(o) => qs(filter, { offset: o })} />
@@ -85,7 +93,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           <p className="mt-3 text-muted">All {totalModels.toLocaleString()} {totalModels === 1 ? "group is" : "groups are"} on this page.</p>
         ) : null}
       </section>
-      {availability ? <BatchRunner candidates={queue.rows} batchSize={settings.batchSize} availability={availability} />
+      {availability ? <BatchRunner candidates={queue.rows} batchSize={settings.batchSize} availability={availability} category={category} />
         : <div className="card p-5 text-sm text-muted">Choose a donor machine status above to see models and run parts-list searches.</div>}
     </>
   );
