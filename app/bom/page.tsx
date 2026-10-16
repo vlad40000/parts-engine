@@ -93,7 +93,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           <p className="mt-3 text-muted">All {totalModels.toLocaleString()} {totalModels === 1 ? "group is" : "groups are"} on this page.</p>
         ) : null}
       </section>
-      {availability ? <BatchRunner candidates={queue.rows} batchSize={settings.batchSize} availability={availability} category={category} />
+      {availability ? <BatchRunner candidates={queue.rows} batchSize={settings.batchSize} availability={availability} category={category} readOnly={process.env.VERCEL_ENV === "preview"} />
         : <div className="card p-5 text-sm text-muted">Choose a donor machine status above to see models and run parts-list searches.</div>}
     </>
   );

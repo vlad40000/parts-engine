@@ -10,7 +10,7 @@ Ledger, EbayDecisions or Image Finder databases. Files move between them as CSV.
 |---|---|---|
 | 1 Intake | **Intake** | Import the inventory workbook or numbered intake sheets (.xlsx/.csv), or add one machine. Machine IDs and model text are kept exactly. Purchaser columns are never read (allow-list import). |
 | 2 Age band | **Fleet** | Every serial is decoded to *all* its possible build years (App 1 rules, without the newest-year collapse). A machine belongs to every band any candidate year falls in. Bands set research order only, never exclusion. |
-| 3 Parts lists | **Parts lists** | Select a donor status from the imported machine statuses before running up to 10 models; age band/type further narrow the queue. New lookups is the default category; failed lookups appear separately in Retries. Each category has its own totals and pagination, and Select next uses only that category. No status is preselected. UNCHECKED can be selected for inspection-first research. SOLD, SCRAPED and SCRAPPED never qualify. Each model is read once and reused by every machine of that model. HTML only: Encompass → AppliancePartsPros. No AI. |
+| 3 Parts lists | **Parts lists** | Select a donor status from the imported machine statuses before running up to 10 models; age band/type further narrow the queue. New lookups is the default category; failed lookups appear separately in Retries. Each category has its own totals and pagination, and Select next uses only that category. No status is preselected. UNCHECKED can be selected for inspection-first research. SOLD, SCRAPED and SCRAPPED never qualify. Each model is read once and reused by every machine of that model. HTML only. New lookups use Encompass → AppliancePartsPros. Retries offer Parts Dr → PartSelect (default, skips Encompass), either alternate alone, or the original sources. No AI. |
 | 4 Research queue | **MPNs → Research queue** | Unique MPNs ordered by donor machines. Skipped before research: fasteners/hardware/literature and compressors (always scrap). There is no price prefilter: v7 has no general minimum part price. **Export queue CSV** writes the shared research CSV that EbayDecisions also imports and exports. |
 | 5 eBay evidence | **MPNs → Import market facts** | Import the completed shared research CSV as is, the older EbayDecisions export, the decision workbook (MPN Master), or a plain CSV. Or refresh stored facts from EbayDecisions, or type facts on an MPN page. |
 | 6 Qualification | **MPNs → Qualified** | Roadrunner Store Economics v7 (below). Results: `QUALIFIED`, `NOT QUALIFIED`, `NEEDS DATA`, `SET RULE`. All numbers live in **Settings**. |
@@ -54,11 +54,18 @@ Verify: `npm run verify` (typecheck → tests → build).
 |---|---|---|
 | Encompass PartStore | wired, first | Whole model on one page, OEM numbers direct. Brand prefix map from Ledger. Samsung/LG slash models use `BASE%7CSUFFIX/0001/`. Frigidaire model pages showed no parts list in HTML on 2026-10-06 → falls through. |
 | AppliancePartsPros | wired, second | Model page → every section page. OEM read from the part link; rows with no readable OEM are dropped and counted, never stored under the AP id. |
-| PartSelect, PartsDr | not wired | Serve static HTML (checked 2026-10-06). Capture fixtures first: `npm run capture -- partselect <model url>`, then write the parser against them. |
+| Parts Dr | wired for Retries, first alternate | Exact brand/model → full parts list → all advertised pages. Unavailable OEM parts remain in the BOM with a null price; temporary unavailability is not permanent NLA. |
+| PartSelect | wired for Retries, second alternate | Exact brand/model and manufacturing suffix → full parts list → all advertised pages. PS numbers stay supplier IDs; only OEM numbers become MPNs. An ambiguous revision is refused. |
 | Reliable Parts, PartAdvantage | blocked | 403. |
-| Sears PartsDirect | blocked | JavaScript-only. |
+| Sears PartsDirect | not wired | HTML catalog was reachable in the 2026-10-16 source audit; needs separate adapter and pagination acceptance. |
 
 Requests are rate-limited per supplier host (2 at once, 600 ms apart).
+
+Alternate adapters require the exact brand/model on every page, stable published totals, usable OEM numbers and reconciliation of every advertised row. They refuse missing, blocked, redirected, repeated or incomplete pages. Limits: 50 catalog pages, 5,000 advertised rows, 110 seconds per adapter before starting another page. A known PartSelect telephone contact placeholder is excluded and counted, never saved as a part. `complete` describes the captured supplier catalog, not universal compatibility or supersession coverage. Sanitized fixtures retain model headings, catalog cards and pagination only, with original-response hashes.
+
+An unsuccessful alternate lookup stays in Retries so another source can be tried. It cannot overwrite an existing verified BOM. Successful lookups use the existing OEM/provenance save path; economic rules, rankings, inventory state and research facts are not edited by the adapters.
+
+Preview cannot save parts lists (server-side POST guard and disabled Run controls). Preview still shares the production database, and other existing actions have their own behavior. For a read-only deployed-network check, GET `/api/bom/model?brand=GE&model=GSD3460G00SS&availability=UNCHECKED&source=partsdr` (or `partselect`) runs the chosen adapter and returns counts, OEM numbers and diagnostics without saving, initializing settings, or writing any table. It requires an eligible imported donor in the selected status. Normal UI runs use POST on production.
 
 ## Known gaps
 

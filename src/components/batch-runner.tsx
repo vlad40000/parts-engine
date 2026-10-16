@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { BOM_SOURCE_LABELS, type BomSource } from "@/src/sources/selection";
 
 export type Candidate = { brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null };
 
@@ -14,6 +15,7 @@ type Job = {
   machines: number | null;
   state: JobState;
   startedAt: number;
+  source: BomSource;
   finishedAt?: number;
   result?: { supplier: string | null; rows: number; newMpns: number; dropped: number; attempts: Array<{ supplier: string; status: string; warnings: string[] }> };
   message?: string;
@@ -27,8 +29,8 @@ export function selectionOnPage(selected: Set<string>, candidates: Candidate[]):
   return [...selected].every((k) => onPage.has(k)) ? selected : new Set([...selected].filter((k) => onPage.has(k)));
 }
 
-export function BatchRunner({ candidates, batchSize, availability, category = "new" }: {
-  candidates: Candidate[]; batchSize: number; availability?: string; category?: "new" | "retry";
+export function BatchRunner({ candidates, batchSize, availability, category = "new", readOnly = false }: {
+  candidates: Candidate[]; batchSize: number; availability?: string; category?: "new" | "retry"; readOnly?: boolean;
 }) {
   const router = useRouter();
   const controllers = useRef(new Map<string, AbortController>());
@@ -37,6 +39,8 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
   const [paste, setPaste] = useState("");
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [retrySource, setRetrySource] = useState<BomSource>("alternatives");
+  const source: BomSource = category === "retry" ? retrySource : "auto";
 
   const running = jobs.filter((j) => j.state === "running").length;
   const doneKeys = new Set(jobs.filter((j) => j.state !== "canceled" && j.state !== "error").map((j) => j.key));
@@ -74,16 +78,17 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
   }
 
   function start(brand: string, model: string, machines: number | null) {
+    if (readOnly) return;
     const key = keyOf(brand, model);
     controllers.current.get(key)?.abort();
     const controller = new AbortController();
     controllers.current.set(key, controller);
-    const job: Job = { key, brand, model, machines, state: "running", startedAt: Date.now() };
+    const job: Job = { key, brand, model, machines, source, state: "running", startedAt: Date.now() };
     setJobs((cur) => [job, ...cur.filter((j) => j.key !== key)]);
     fetch("/api/bom/model", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ brand, model, availability }),
+      body: JSON.stringify({ brand, model, availability, source }),
       signal: controller.signal
     })
       .then(async (res) => {
@@ -131,10 +136,17 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="mr-auto font-semibold">{category === "retry" ? "Models to retry" : "Models without a parts list"}</h2>
           <button className="btn" onClick={selectNext} type="button">Select next {batchSize}</button>
-          <button className="btn btn-primary" onClick={runSelected} disabled={!selected.size && !paste.trim()} type="button">
+          <button className="btn btn-primary" onClick={runSelected} disabled={readOnly || (!selected.size && !paste.trim())} type="button">
             Run {selected.size || ""} {selected.size === 1 ? "model" : "models"}
           </button>
         </div>
+        {category === "retry" ? <label className="mb-3 flex flex-col gap-1 text-sm">
+          <span>Retry using</span>
+          <select className="input" value={retrySource} onChange={(e) => setRetrySource(e.target.value as BomSource)}>
+            {["alternatives", "partsdr", "partselect", "auto"].map((id) => <option key={id} value={id}>{BOM_SOURCE_LABELS[id as BomSource]}</option>)}
+          </select>
+        </label> : null}
+        {readOnly ? <p className="mb-2 text-sm text-muted">Saving parts lists is disabled on Preview.</p> : null}
         <p className="mb-2 text-xs text-muted">{selected.size}/{batchSize} selected · most machines first, so one lookup covers the most units.</p>
         {error ? <p className="mb-2 text-sm text-stop">{error}</p> : null}
         <div className="max-h-[60vh] overflow-auto">
@@ -173,7 +185,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
         </div>
         <p className="mb-3 text-xs text-muted">
           {running ? `${running} running · ` : ""}{totals.rows.toLocaleString()} parts read · {totals.mpns.toLocaleString()} new MPNs this session.
-          {" "}Lookup order: Encompass → AppliancePartsPros. HTML only, no AI.
+          {" "}Lookup source: {source === "alternatives" ? "Parts Dr → PartSelect" : BOM_SOURCE_LABELS[source]}. HTML only, no AI.
         </p>
         <ul className="space-y-2">
           {jobs.map((j) => {
@@ -183,6 +195,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{j.brand}</span>
                   <span className="mono">{j.model}</span>
+                  {j.source !== "auto" ? <span className="text-xs text-muted">{BOM_SOURCE_LABELS[j.source]}</span> : null}
                   {j.machines ? <span className="text-xs text-muted">{j.machines} machines</span> : null}
                   <span className="ml-auto text-xs text-muted tabular-nums">{secs}s</span>
                   {j.state === "running" ? <span className="pill pill-wait">reading…</span> : null}
@@ -192,9 +205,9 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                   {j.state === "canceled" ? <span className="pill pill-mute">canceled</span> : null}
                   {j.state === "running"
                     ? <button className="btn" type="button" onClick={() => cancel(j.key)}>Cancel</button>
-                    : j.state !== "found" ? <button className="btn" type="button" onClick={() => start(j.brand, j.model, j.machines)}>Retry</button> : null}
+                    : j.state !== "found" ? <button className="btn" type="button" disabled={readOnly} title={`Retry using ${BOM_SOURCE_LABELS[source]}`} onClick={() => start(j.brand, j.model, j.machines)}>Retry</button> : null}
                 </div>
-                {j.result?.newMpns ? <div className="mt-1 text-xs text-muted">{j.result.newMpns} MPNs not seen before{j.result.dropped ? ` · ${j.result.dropped} rows had no OEM number` : ""}</div> : null}
+                {j.result && (j.result.newMpns || j.result.dropped) ? <div className="mt-1 text-xs text-muted">{j.result.newMpns} MPNs not seen before{j.result.dropped ? ` · ${j.result.dropped} listed rows had no usable OEM number` : ""}</div> : null}
                 {j.message ? <div className="mt-1 text-xs text-stop">{j.message}</div> : null}
                 {j.result && j.state !== "found" ? (
                   <ul className="mt-1 text-xs text-muted">

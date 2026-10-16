@@ -7,7 +7,7 @@ This file records decisions evidenced by the current source and the owner's curr
 - No cross-database foreign keys.
 - Batch model processing starts at 1-10 and can become configurable later.
 - Supplier parts lists are HTML/source-driven, not Gemini-generated.
-- Current supplier order: Encompass -> AppliancePartsPros. PartSelect/PartsDr require captured fixtures before parser work.
+- New lookups use Encompass -> AppliancePartsPros. Retries default to Parts Dr -> PartSelect, with either alternate or the original sources selectable. Explicit alternate choices never call Encompass.
 - D1 MPN key: uppercase and strip all non-`[A-Z0-9]` characters.
 - Preserve raw/display MPN.
 - Supersessions/replacements are relationships, not identity normalization.
@@ -41,8 +41,14 @@ The delivered baseline currently excludes compressors before eBay research. Leav
 - Purchased-new (non-harvested) economics are not modeled.
 - Live stock-on-hand integration from Ledger is not implemented.
 - External fitment edges are not yet stored separately in Parts Engine.
-- PartSelect and PartsDr parsers await raw fixtures.
+- Additional supplier coverage beyond Encompass, AppliancePartsPros, Parts Dr and PartSelect awaits adapter acceptance.
 - Dishwasher/microwave removal-minute baselines are incomplete.
 - Model-production/Wayback evidence does not yet narrow age candidates.
 - Automatic whole-machine vs harvest vs scrap disposition is not implemented.
 - App 1 source has not been integrated into this repository.
+
+## Alternate BOM suppliers (2026-10-16)
+- Parts Dr and PartSelect are HTML-only, exact-brand/model adapters backed by sanitized captured catalogs. Manufacturing suffixes are required when ambiguous; slash revisions and leading revision zeros stay distinct. No guessed URLs for full parts lists: follow the supplier's observed link.
+- Capture all advertised pages, reconcile the published raw row total, retain unavailable OEM parts, and refuse incomplete catalogs before saving. A contact placeholder is not an OEM identity. Completeness metadata is supplier-catalog scope only.
+- Selected-source failures remain retryable and atomically preserve an existing found cache; successful saves retain the existing MPN, alias and provenance behavior.
+- BOM writes are disabled on Preview. A donor-gated GET runs a source check without writes so deployment network access can be verified against the shared database safely.
