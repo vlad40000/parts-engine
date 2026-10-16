@@ -1,0 +1,2 @@
+# Migration hashes are SHA-256 of the checked-out bytes. Keep SQL as LF on every platform.
+*.sql text eol=lf
