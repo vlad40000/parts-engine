@@ -199,20 +199,21 @@ describe("supplier page identity", () => {
     expect(unnamed.warnings[0]).toMatch(/does not name its model; nothing was read from it\.$/);
   });
 
-  it("skips section links and section redirects that belong to another model", async () => {
+  it("rejects the whole catalog when a section link or section redirect belongs to another model", async () => {
     const otherSection = "https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw2.html";
-    // Only the redirected section carries parts: if it were read, the lookup would be found.
+    // The other five sections are this model's own pages with parts; the catalog is still refused.
     const redirected = appFetcher(MAYTAG_PAGE, model, (url) =>
-      url.includes("top-and-cabinet") ? { finalUrl: otherSection, html: section } : { finalUrl: url, html: "<html></html>" });
+      url.includes("top-and-cabinet") ? { finalUrl: otherSection, html: section } : { finalUrl: url, html: section });
     const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, redirected.fetcher);
-    expect(r.status).toBe("not_found");
-    expect(r.warnings).toContain(`Section https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw1.html redirected to ${otherSection}, another model; it was skipped.`);
+    expect(r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+    expect(r.warnings).toContain(`Section https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw1.html redirected to ${otherSection}, another model.`);
+    expect(r.warnings.at(-1)).toBe("1 of 6 sections could not be read for this model, so the catalog is incomplete; nothing was saved.");
 
     const linked = appFetcher(MAYTAG_PAGE, model.replace(/top-and-cabinet-parts-for-maytag-mvwx655dw1/g, "top-and-cabinet-parts-for-maytag-mvwx655dw2"));
     const s = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, linked.fetcher);
-    expect(s.warnings).toContain("1 section links were for another model and were skipped.");
-    expect(linked.calls.some((u) => u.includes("mvwx655dw2"))).toBe(false);
-    expect(linked.calls).toHaveLength(6);
+    expect(s).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+    expect(s.warnings).toEqual([`1 of 6 section links are for another model (${otherSection}); the catalog was rejected and nothing was read.`]);
+    expect(linked.calls).toHaveLength(1);
   });
 
   it("does not query suppliers for a model with unread nameplate characters", async () => {
@@ -235,5 +236,92 @@ describe("supplier page identity", () => {
     expect(moved.warnings[0]).toMatch(/^Encompass redirected https:\/\/partstore\.encompass\.com\/model\/WHIMEDC465HW0 to .*MAYMEDC465HW1, which is not Maytag MEDC465HW0/);
     const slash = await lookupEncompass({ brand: "Maytag", model: "MEDC465HW0" }, async (url) => ({ ok: true, status: 200, finalUrl: `${url}/`, html: page }));
     expect(slash.status).toBe("found");
+  });
+});
+
+describe("catalog completeness", () => {
+  const model = fx("app/MVWX655DW1-model.html");
+  const section = fx("app/MVWX655DW1-top.html");
+  const TOP = "https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw1.html";
+  const complete: Fetcher = async (url) =>
+    ({ ok: true, status: 200, finalUrl: url.includes("search.aspx") ? MAYTAG_PAGE : url, html: url.includes("search.aspx") ? model : section });
+  /** Every section loads except top-and-cabinet, which answers `status`. */
+  const oneSection = (status: number): Fetcher => async (url) =>
+    url === TOP ? { ok: false, status, finalUrl: url, html: "" } : complete(url);
+
+  it("rejects a parts list when any section is blocked, missing or fails", async () => {
+    for (const [status, kind] of [[403, "blocked"], [429, "blocked"], [404, "missing"], [500, "failed"], [0, "failed"]] as const) {
+      const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, oneSection(status));
+      expect(r).toMatchObject({ status: "error", rows: [], sourceUrl: null, droppedRows: 0 });
+      expect(r.warnings).toContain(`Section ${kind} (HTTP ${status}): ${TOP}`);
+      expect(r.visited).toHaveLength(7);
+    }
+  });
+
+  it("keeps an incomplete catalog in Retries instead of saving the sections that loaded", async () => {
+    const fetcher: Fetcher = async (url) =>
+      url.includes("encompass") ? { ok: true, status: 200, finalUrl: url, html: "does not exist in our database" } : oneSection(403)(url);
+    const r = await lookupModelBom({ brand: "Maytag", model: "MVWX655DW1" }, fetcher);
+    expect(r).toMatchObject({ status: "error", winner: null });
+    expect(r.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "error"]]);
+  });
+
+  it("rejects a catalog with more sections than one lookup reads, before fetching any", async () => {
+    const calls: string[] = [];
+    const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, async (url) => {
+      calls.push(url);
+      return complete(url);
+    }, { maxSections: 5 });
+    expect(r).toMatchObject({ status: "error", rows: [] });
+    expect(r.warnings).toEqual(["The catalog lists 6 sections, more than the 5 read per lookup; it was rejected as incomplete and nothing was read."]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reads a section that loads but lists no parts as empty, not missing", async () => {
+    // Cover sheets and wiring pages list no parts; ~580 verified production BOMs have such sections.
+    const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, async (url) => {
+      if (url.includes("cover-sheet")) return { ok: true, status: 200, finalUrl: url, html: "<html><h1>Maytag MVWX655DW1: Cover Sheet Parts</h1></html>" };
+      return complete(url);
+    });
+    expect(r.status).toBe("found");
+    expect(r.rows.length).toBeGreaterThan(5);
+  });
+
+  describe("Encompass pages", () => {
+    const page = fx("encompass/model-page.html");
+    const URL1 = "https://partstore.encompass.com/model/WHIMEDC465HW0";
+    const paged = (n: number) => page.replace("</body>", `${Array.from({ length: n - 1 }, (_, i) => `<a href="/model/WHIMEDC465HW0/_/${i + 2}">${i + 2}</a>`).join("")}</body>`);
+    const run = async (first: string, next: (url: string) => { ok: boolean; status: number; finalUrl: string }) => {
+      const calls: string[] = [];
+      const r = await lookupEncompass({ brand: "Maytag", model: "MEDC465HW0" }, async (url) => {
+        calls.push(url);
+        if (url === URL1) return { ok: true, status: 200, finalUrl: url, html: first };
+        if (url.startsWith(`${URL1}/_/`)) return { ...next(url), html: page };
+        return { ok: true, status: 200, finalUrl: url, html: "does not exist in our database" };
+      });
+      return { r, calls };
+    };
+
+    it("reads every listed page", async () => {
+      const { r, calls } = await run(paged(3), (url) => ({ ok: true, status: 200, finalUrl: url }));
+      expect(r.status).toBe("found");
+      expect(calls).toEqual([URL1, `${URL1}/_/2`, `${URL1}/_/3`]);
+    });
+
+    it("rejects the catalog when a later page fails or moves to another model", async () => {
+      const failed = await run(paged(3), (url) => ({ ok: !url.endsWith("/2"), status: url.endsWith("/2") ? 403 : 200, finalUrl: url }));
+      expect(failed.r).toMatchObject({ status: "error", rows: [], sourceUrl: null });
+      expect(failed.r.warnings).toContain(`Encompass page 2 of 3 failed (HTTP 403) for ${URL1}; the catalog is incomplete and nothing was saved.`);
+      const moved = await run(paged(3), (url) => ({ ok: true, status: 200, finalUrl: url.replace("WHIMEDC465HW0", "WHIMEDC465HW1") }));
+      expect(moved.r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+      expect(moved.r.warnings[0]).toMatch(/^Encompass page 2 of .*WHIMEDC465HW0 redirected to .*WHIMEDC465HW1\/_\/2, another model/);
+    });
+
+    it("rejects a catalog that lists more pages than one lookup reads, before fetching them", async () => {
+      const { r, calls } = await run(paged(21), (url) => ({ ok: true, status: 200, finalUrl: url }));
+      expect(r).toMatchObject({ status: "error", rows: [] });
+      expect(r.warnings).toContain(`Encompass lists 21 pages for ${URL1}, more than the 20 read per lookup; the catalog was rejected as incomplete.`);
+      expect(calls.some((u) => u.includes("/_/"))).toBe(false);
+    });
   });
 });

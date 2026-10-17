@@ -12,6 +12,8 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - slash models (Samsung/LG "DV45H7000EW/A2") try Encompass's "|" form
  *   - invalid-model page detected
  *   - a redirect to another model's page is never read
+ *   - a catalog with any page failed, moved to another model or beyond the page cap is
+ *     rejected whole, never saved partially
  */
 export const ENCOMPASS_HOST = "https://partstore.encompass.com";
 
@@ -230,20 +232,31 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
       warnings.push(`Encompass page had no parseable parts: ${url}`);
       continue;
     }
+    // Every listed page is required: a catalog missing any of them is never saved.
     const pages = encompassPageCount(first.html);
-    for (let page = 2; page <= pages; page += 1) {
+    const listed = encompassPageCount(first.html, Infinity);
+    if (listed > pages) {
+      sawError = true;
+      warnings.push(`Encompass lists ${listed} pages for ${url}, more than the ${pages} read per lookup; the catalog was rejected as incomplete.`);
+      continue;
+    }
+    let gap: "error" | "mismatch" | null = null;
+    for (let page = 2; page <= pages && !gap; page += 1) {
       const next = await fetcher(`${url.replace(/\/$/, "")}/_/${page}`);
       visited.push(next.finalUrl);
       if (!next.ok) {
-        warnings.push(`Encompass page ${page} failed (HTTP ${next.status}); later pages skipped.`);
-        break;
+        gap = "error";
+        warnings.push(`Encompass page ${page} of ${pages} failed (HTTP ${next.status}) for ${url}; the catalog is incomplete and nothing was saved.`);
+      } else if (encompassModelCode(next.finalUrl) !== encompassModelCode(url)) {
+        gap = "mismatch";
+        warnings.push(`Encompass page ${page} of ${url} redirected to ${next.finalUrl}, another model; the catalog was rejected and nothing was saved.`);
+      } else {
+        rows.push(...parseEncompassPage(next.html));
       }
-      if (encompassModelCode(next.finalUrl) !== encompassModelCode(url)) {
-        warnings.push(`Encompass page ${page} redirected to ${next.finalUrl}, another model; later pages skipped.`);
-        break;
-      }
-      rows.push(...parseEncompassPage(next.html));
     }
+    if (gap === "mismatch") sawMismatch = true;
+    if (gap === "error") sawError = true;
+    if (gap) continue;
     return done("found", dedupe(rows), first.finalUrl);
   }
   return done(sawMismatch ? "mismatch" : sawError ? "error" : "not_found");

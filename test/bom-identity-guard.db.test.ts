@@ -47,7 +47,8 @@ beforeAll(async () => {
   donors = (await getSettings(db)).donorAvailabilities;
   await upsertFleet(db, mapFleetRows([
     { ID: 1, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load", Brand: "Frigidaire", ModelNumber: "FFTW4120SW1", SerialNumber: "" },
-    { ID: 2, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" }
+    { ID: 2, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" },
+    { ID: 3, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load", Brand: "Whirlpool", ModelNumber: "MVWX655DW1", SerialNumber: "" }
   ]).rows);
 });
 
@@ -69,14 +70,28 @@ describe("a supplier page for another model is never saved", () => {
     const retry = await bomQueue(db, { ...filter, queue: "retry" }, donors);
     expect(retry.rows).toEqual([expect.objectContaining({ model_key: "FFTW4120SW1", bom_status: "error", identity_refusal: REFUSAL.replace("appliancepartspros: ", "") })]);
     const fresh = await bomQueue(db, filter, donors);
-    expect(fresh.rows.map((r) => r.model_key)).toEqual(["MVWX655DW1"]);
-    expect(fresh.rows[0].identity_refusal).toBeNull();
+    expect(fresh.rows.map((r) => [r.brand_key, r.model_key])).toEqual([["MAYTAG", "MVWX655DW1"], ["WHIRLPOOL", "MVWX655DW1"]]);
+    expect(fresh.rows.every((r) => r.identity_refusal === null)).toBe(true);
 
     const $ = load(renderToStaticMarkup(await BomPage({ searchParams: Promise.resolve({ ...filter, queue: "retry" }) })));
     const cell = $("tbody tr").first().find("td").eq(2);
     expect(cell.find(".pill").text()).toBe("identity mismatch");
     expect(cell.text()).toContain(`AppliancePartsPros returned ${MAYTAG_PAGE}, which is not Frigidaire FFTW4120SW1`);
     expect(cell.text()).toContain("Check the nameplate");
+  });
+
+  it("saves nothing from an incomplete catalog and keeps the model in Retries", async () => {
+    // Whirlpool files this Maytag page (same manufacturer), but one section is blocked.
+    const blocked: Fetcher = async (url) =>
+      url.includes("top-and-cabinet") ? { ok: false, status: 403, finalUrl: url, html: "" } : redirecting(url);
+    const { result, saved } = await readModelBom(db, { brand: "Whirlpool", model: "MVWX655DW1" }, blocked);
+    expect(result).toMatchObject({ status: "error", winner: null });
+    expect(saved).toEqual({ rows: 0, newMpns: 0 });
+    expect(await cacheRow("WHIRLPOOL", "MVWX655DW1")).toMatchObject({ status: "error", source: null, rowCount: 0 });
+    expect(await edgeCount("WHIRLPOOL", "MVWX655DW1")).toBe(0);
+    expect(await db.$count(schema.mpnMaster)).toBe(0);
+    const retry = await bomQueue(db, { ...filter, queue: "retry" }, donors);
+    expect(retry.rows.find((r) => r.brand_key === "WHIRLPOOL")).toMatchObject({ bom_status: "error", identity_refusal: null });
   });
 
   it("still saves the page's own model", async () => {
