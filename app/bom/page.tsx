@@ -85,7 +85,8 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           since one parts list covers every machine of that model. Select a status imported with the machines before running a lookup.
           UNCHECKED is available for inspection-first research; SOLD and SCRAPED/SCRAPPED cannot be donors.
           {filter.band || filter.type || filter.brand ? " The selected age, type, and brand filters also apply." : ""} A model leaves the queue once its parts
-          list is found or not found. Failed lookups appear only in Retries, keeping New lookups clear.
+          list is found or not found. Failed lookups, and supplier pages refused because they name another brand or model,
+          appear only in Retries, keeping New lookups clear.
         </p>
         {totalModels > BOM_QUEUE_PAGE_SIZE ? (
           <Pager total={totalModels} limit={BOM_QUEUE_PAGE_SIZE} offset={queue.offset} href={(o) => qs(filter, { offset: o })} />

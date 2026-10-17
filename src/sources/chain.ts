@@ -20,7 +20,11 @@ const SUPPLIERS: Array<{ name: string; run: (q: ModelQuery, f: Fetcher) => Promi
   // raw-HTML fixtures captured with `npm run capture` before parsers are written.
 ];
 
-/** HTML-only chain. No Gemini. First supplier with ≥ MIN_BOM_ROWS wins. */
+/**
+ * HTML-only chain. No Gemini. First supplier with ≥ MIN_BOM_ROWS wins. Without a winner, a refused
+ * identity counts as an error, not a miss: the supplier has a page, just not provably this model's,
+ * so the model stays in Retries with the refusal instead of leaving the queue as not found.
+ */
 export async function lookupModelBom(q: ModelQuery, fetcher: Fetcher): Promise<ChainResult> {
   const attempts: ChainResult["attempts"] = [];
   let sawError = false;
@@ -36,7 +40,7 @@ export async function lookupModelBom(q: ModelQuery, fetcher: Fetcher): Promise<C
     }
     const { rows, ...meta } = result;
     attempts.push(meta);
-    if (result.status === "error") sawError = true;
+    if (result.status === "error" || result.status === "mismatch") sawError = true;
     if (result.status === "found" && rows.length >= MIN_BOM_ROWS) {
       return { status: "found", winner: result, attempts };
     }

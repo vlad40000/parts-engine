@@ -2,6 +2,7 @@ import { load } from "cheerio";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { priceNumber } from "./http";
 import { dedupe } from "./encompass";
+import { appPageIdentity, appSectionBelongs, hasPlaceholder } from "./identity";
 import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
 
 /**
@@ -10,6 +11,10 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - every section is fetched (Ledger caps at 12)
  *   - OEM is read from the part link slug, including hyphenated Samsung numbers
  *   - rows with no OEM are dropped and counted, never stored under the AP id
+ *   - the search is by model only and follows redirects, so the landing page and every
+ *     section page must name this exact brand + model before anything is read
+ *   - a catalog with any section blocked, missing, failed or for another model is rejected
+ *     whole, never saved partially
  */
 export const appSearchUrl = (model: string) =>
   `https://www.appliancepartspros.com/search.aspx?model=${encodeURIComponent(model.trim())}`;
@@ -94,33 +99,75 @@ export async function lookupAppliancePartsPros(
     supplier: "appliancepartspros", status, rows, droppedRows: dropped, sourceUrl, visited, warnings, elapsedMs: Date.now() - started
   });
 
+  if (hasPlaceholder(q.model)) {
+    warnings.push(`Model "${q.model}" has unread characters; read the nameplate before a lookup.`);
+    return done("mismatch");
+  }
   const model = await fetcher(appSearchUrl(q.model));
   visited.push(model.finalUrl);
   if (!model.ok) {
     warnings.push(`AppliancePartsPros HTTP ${model.status}`);
     return done(model.status === 404 ? "not_found" : "error");
   }
-  const sections = extractSectionLinks(model.html, model.finalUrl);
-  if (!sections.length) {
+  const identity = appPageIdentity(q, model.finalUrl, model.html);
+  if (identity.status === "mismatch") {
+    warnings.push(`AppliancePartsPros returned ${identity.page}, which is not ${q.brand} ${q.model}; nothing was read from it.`);
+    return done("mismatch");
+  }
+  const links = extractSectionLinks(model.html, model.finalUrl);
+  if (!links.length) {
     warnings.push("AppliancePartsPros model page had no section links (model not found or page changed).");
     return done("not_found");
   }
+  if (identity.status === "unknown") {
+    warnings.push(`AppliancePartsPros page ${model.finalUrl} does not name its model; nothing was read from it.`);
+    return done("mismatch");
+  }
+  // Every section the model page lists is required: a parts list missing any of them is never saved.
+  const foreign = links.filter((url) => !appSectionBelongs(url, identity.slugs));
+  if (foreign.length) {
+    warnings.push(`${foreign.length} of ${links.length} section links are for another model (${foreign[0]}); the catalog was rejected and nothing was read.`);
+    return done("mismatch");
+  }
   const max = opts.maxSections ?? 40;
-  if (sections.length > max) warnings.push(`Only the first ${max} of ${sections.length} sections were read.`);
+  if (links.length > max) {
+    warnings.push(`The catalog lists ${links.length} sections, more than the ${max} read per lookup; it was rejected as incomplete and nothing was read.`);
+    return done("error");
+  }
 
   const results = await Promise.all(
-    sections.slice(0, max).map(async (url) => {
+    links.map(async (url) => {
       const page = await fetcher(url);
       visited.push(page.finalUrl);
       if (!page.ok) {
-        warnings.push(`Section HTTP ${page.status}: ${url}`);
-        return { rows: [], dropped: 0 };
+        warnings.push(`Section ${sectionGap(page.status)} (HTTP ${page.status}): ${url}`);
+        return { gap: "unread" as const, rows: [], dropped: 0 };
       }
-      return parseSectionPage(page.html);
+      if (!appSectionBelongs(page.finalUrl, identity.slugs)) {
+        warnings.push(`Section ${url} redirected to ${page.finalUrl}, another model.`);
+        return { gap: "mismatched" as const, rows: [], dropped: 0 };
+      }
+      return { gap: null, ...parseSectionPage(page.html) };
     })
   );
+  const gaps = results.filter((r) => r.gap);
+  if (gaps.length) {
+    warnings.push(`${gaps.length} of ${links.length} sections could not be read for this model, so the catalog is incomplete; nothing was saved.`);
+    return done(gaps.some((r) => r.gap === "mismatched") ? "mismatch" : "error");
+  }
   const rows = dedupe(results.flatMap((r) => r.rows));
   const dropped = results.reduce((n, r) => n + r.dropped, 0);
   if (dropped) warnings.push(`${dropped} listed parts had no readable OEM number and were left out.`);
   return done(rows.length ? "found" : "not_found", rows, dropped, model.finalUrl);
+}
+
+/**
+ * Why a section page was not read. A section that loads but lists no parts (a cover sheet, a
+ * wiring page) is read and empty, not missing: the audit found such sections in about 580
+ * verified production BOMs.
+ */
+function sectionGap(status: number): "blocked" | "missing" | "failed" {
+  if (status === 401 || status === 403 || status === 429) return "blocked";
+  if (status === 404 || status === 410) return "missing";
+  return "failed";
 }
