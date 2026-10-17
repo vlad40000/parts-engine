@@ -33,6 +33,7 @@ export async function POST(request: Request) {
     rows: saved.rows,
     newMpns: saved.newMpns,
     dropped: result.winner?.droppedRows ?? 0,
+    kept: saved.kept ? { rows: saved.kept.rowCount, fetchedAt: saved.kept.fetchedAt.toISOString() } : null,
     attempts: result.attempts.map((a) => ({ supplier: a.supplier, status: a.status, warnings: a.warnings, ms: a.elapsedMs })),
     elapsedMs: Date.now() - started
   });

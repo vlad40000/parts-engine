@@ -18,7 +18,10 @@ type Job = {
   state: JobState;
   startedAt: number;
   finishedAt?: number;
-  result?: { supplier: string | null; rows: number; newMpns: number; dropped: number; attempts: Array<{ supplier: string; status: string; warnings: string[] }> };
+  result?: {
+    supplier: string | null; rows: number; newMpns: number; dropped: number; kept?: { rows: number; fetchedAt: string } | null;
+    attempts: Array<{ supplier: string; status: string; warnings: string[] }>;
+  };
   message?: string;
 };
 
@@ -208,6 +211,11 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                 </div>
                 {j.result?.newMpns ? <div className="mt-1 text-xs text-muted">{j.result.newMpns} MPNs not seen before{j.result.dropped ? ` · ${j.result.dropped} rows had no OEM number` : ""}</div> : null}
                 {j.message ? <div className="mt-1 text-xs text-stop">{j.message}</div> : null}
+                {j.result?.kept ? (
+                  <div className="mt-1 text-xs text-muted">
+                    The verified parts list ({j.result.kept.rows} parts, read {new Date(j.result.kept.fetchedAt).toLocaleDateString()}) was kept unchanged.
+                  </div>
+                ) : null}
                 {j.result && j.state !== "found" ? (
                   <ul className="mt-1 text-xs text-muted">
                     {j.result.attempts.map((a) => <li key={a.supplier}>{a.supplier}: {a.status}{a.warnings.length ? ` — ${a.warnings.slice(0, 2).join(" ")}` : ""}</li>)}
