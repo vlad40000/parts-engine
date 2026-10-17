@@ -4,9 +4,11 @@ import path from "node:path";
 import { encompassModelUrls, encompassPageCount, isInvalidModelPage, lookupEncompass, parseEncompassPage } from "@/src/sources/encompass";
 import { extractSectionLinks, lookupAppliancePartsPros, oemFromSlug, parseSectionPage } from "@/src/sources/appliancepartspros";
 import { lookupModelBom } from "@/src/sources/chain";
+import { appSlugMatches, brandsCompatible, encompassModelCode } from "@/src/sources/identity";
 import type { Fetcher } from "@/src/sources/types";
 
 const fx = (p: string) => readFileSync(path.join(__dirname, "fixtures", p), "utf8");
+const MAYTAG_PAGE = "https://www.appliancepartspros.com/parts-for-maytag-mvwx655dw1.html";
 
 describe("Encompass", () => {
   it("builds brand-prefixed URLs, including the Samsung pipe form", () => {
@@ -86,15 +88,139 @@ describe("chain", () => {
       if (url.includes("encompass")) return { ok: true, status: 200, finalUrl: url, html: "does not exist in our database" };
       return { ok: true, status: 200, finalUrl: url, html: url.includes("search.aspx") ? model : section };
     };
-    const r = await lookupModelBom({ brand: "Frigidaire", model: "FFTW4120SW1" }, fetcher);
+    const r = await lookupModelBom({ brand: "Maytag", model: "MVWX655DW1" }, fetcher);
     expect(r.status).toBe("found");
     expect(r.winner?.supplier).toBe("appliancepartspros");
     expect(r.attempts.map((a) => a.supplier)).toEqual(["encompass", "appliancepartspros"]);
+  });
+
+  it("never takes another model's parts through the fallback", async () => {
+    // Before the identity check this Maytag MVWX655DW1 page was saved as the Frigidaire FFTW4120SW1 BOM.
+    const fetcher: Fetcher = async (url) => {
+      if (url.includes("encompass")) return { ok: true, status: 200, finalUrl: url, html: "does not exist in our database" };
+      if (url.includes("search.aspx")) return { ok: true, status: 200, finalUrl: MAYTAG_PAGE, html: fx("app/MVWX655DW1-model.html") };
+      return { ok: true, status: 200, finalUrl: url, html: fx("app/MVWX655DW1-top.html") };
+    };
+    const r = await lookupModelBom({ brand: "Frigidaire", model: "FFTW4120SW1" }, fetcher);
+    expect(r).toMatchObject({ status: "not_found", winner: null });
+    expect(r.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "not_found"]]);
   });
 
   it("reports error when every supplier fails on HTTP", async () => {
     const fetcher: Fetcher = async (url) => ({ ok: false, status: 403, finalUrl: url, html: "" });
     const r = await lookupModelBom({ brand: "GE", model: "GDT535PSJ2SS" }, fetcher);
     expect(r.status).toBe("error");
+  });
+});
+
+describe("supplier page identity", () => {
+  const model = fx("app/MVWX655DW1-model.html");
+  const section = fx("app/MVWX655DW1-top.html");
+  /** The search lands on `landing` (a redirect when it differs from the search URL). */
+  const appFetcher = (landing: string | null, html = model, sectionPage = (url: string) => ({ finalUrl: url, html: section })) => {
+    const calls: string[] = [];
+    const fetcher: Fetcher = async (url) => {
+      calls.push(url);
+      if (url.includes("search.aspx")) return { ok: true, status: 200, finalUrl: landing ?? url, html };
+      return { ok: true, status: 200, ...sectionPage(url) };
+    };
+    return { fetcher, calls };
+  };
+
+  it("matches brands by spelling and manufacturer, never across makers", () => {
+    expect(brandsCompatible("GE", "general-electric")).toBe(true);
+    expect(brandsCompatible("Hotpoint", "hot-point")).toBe(true);
+    expect(brandsCompatible("GE", "hp")).toBe(true);
+    expect(brandsCompatible("KitchenAid", "whirlpool")).toBe(true);
+    expect(brandsCompatible("Admiral", "maytag")).toBe(true);
+    expect(brandsCompatible("Frigidaire", "electrolux")).toBe(true);
+    expect(brandsCompatible("Speed Queen", "alliance")).toBe(true);
+    // Audit 2026-10-17: a model-only search filed these under another maker.
+    expect(brandsCompatible("Samsung", "general-electric")).toBe(false);
+    expect(brandsCompatible("Whirlpool", "frigidaire")).toBe(false);
+    expect(brandsCompatible("Kenmore", "frigidaire")).toBe(false);
+    expect(brandsCompatible("", "maytag")).toBe(false);
+  });
+
+  it("matches the exact model, never a longer revision or an unread character", () => {
+    expect(appSlugMatches({ brand: "Maytag", model: "MVWX655DW1" }, "maytag-mvwx655dw1")).toBe(true);
+    expect(appSlugMatches({ brand: "Samsung", model: "DVE45R6100P/A3" }, "samsung-dve45r6100p-a3")).toBe(true);
+    expect(appSlugMatches({ brand: "Kenmore", model: "110.25132411" }, "kenmore-11025132411")).toBe(true);
+    expect(appSlugMatches({ brand: "GE", model: "HTDX100ED3WW" }, "hot-point-htdx100ed3ww")).toBe(true);
+    expect(appSlugMatches({ brand: "Whirlpool", model: "GR440LXLP" }, "whirlpool-gr440lxlp0")).toBe(false);
+    expect(appSlugMatches({ brand: "Samsung", model: "DVE45R6100P/A3" }, "samsung-dve45r6100p-a3-00")).toBe(false);
+    expect(appSlugMatches({ brand: "Whirlpool", model: "WCD5090JW?" }, "whirlpool-wcd5090jw0")).toBe(false);
+    expect(appSlugMatches({ brand: "Whirlpool", model: "WCD5090JW?" }, "whirlpool-wcd5090jw")).toBe(false);
+    expect(appSlugMatches({ brand: "Samsung", model: "GTW860SSJ1WS" }, "general-electric-gtw860ssj1ws")).toBe(false);
+  });
+
+  it("reads nothing from an AppliancePartsPros search that lands on another model", async () => {
+    const { fetcher, calls } = appFetcher(MAYTAG_PAGE);
+    const r = await lookupAppliancePartsPros({ brand: "Frigidaire", model: "FFTW4120SW1" }, fetcher);
+    expect(r).toMatchObject({ status: "not_found", rows: [], sourceUrl: null, visited: [MAYTAG_PAGE] });
+    expect(r.warnings).toEqual([`AppliancePartsPros returned ${MAYTAG_PAGE}, which is not Frigidaire FFTW4120SW1; nothing was read from it.`]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rejects a longer revision and the same number under an unrelated brand", async () => {
+    for (const q of [{ brand: "Maytag", model: "MVWX655DW" }, { brand: "Samsung", model: "MVWX655DW1" }]) {
+      const r = await lookupAppliancePartsPros(q, appFetcher(MAYTAG_PAGE).fetcher);
+      expect(r.status).toBe("not_found");
+      expect(r.rows).toEqual([]);
+    }
+  });
+
+  it("accepts a same-manufacturer filing", async () => {
+    const r = await lookupAppliancePartsPros({ brand: "Whirlpool", model: "MVWX655DW1" }, appFetcher(MAYTAG_PAGE).fetcher);
+    expect(r.status).toBe("found");
+    expect(r.sourceUrl).toBe(MAYTAG_PAGE);
+  });
+
+  it("checks the canonical link when the search is not redirected, and reads no page that names no model", async () => {
+    const other = await lookupAppliancePartsPros({ brand: "Frigidaire", model: "FFTW4120SW1" }, appFetcher(null).fetcher);
+    expect(other.status).toBe("not_found");
+    expect(other.warnings[0]).toContain(`returned ${MAYTAG_PAGE}, which is not Frigidaire FFTW4120SW1`);
+    const unnamed = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" },
+      appFetcher(null, model.replace(/<link rel="canonical"[^>]*>/i, "")).fetcher);
+    expect(unnamed.status).toBe("not_found");
+    expect(unnamed.warnings[0]).toMatch(/does not name its model; nothing was read from it\.$/);
+  });
+
+  it("skips section links and section redirects that belong to another model", async () => {
+    const otherSection = "https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw2.html";
+    // Only the redirected section carries parts: if it were read, the lookup would be found.
+    const redirected = appFetcher(MAYTAG_PAGE, model, (url) =>
+      url.includes("top-and-cabinet") ? { finalUrl: otherSection, html: section } : { finalUrl: url, html: "<html></html>" });
+    const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, redirected.fetcher);
+    expect(r.status).toBe("not_found");
+    expect(r.warnings).toContain(`Section https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw1.html redirected to ${otherSection}, another model; it was skipped.`);
+
+    const linked = appFetcher(MAYTAG_PAGE, model.replace(/top-and-cabinet-parts-for-maytag-mvwx655dw1/g, "top-and-cabinet-parts-for-maytag-mvwx655dw2"));
+    const s = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, linked.fetcher);
+    expect(s.warnings).toContain("1 section links were for another model and were skipped.");
+    expect(linked.calls.some((u) => u.includes("mvwx655dw2"))).toBe(false);
+    expect(linked.calls).toHaveLength(6);
+  });
+
+  it("does not query suppliers for a model with unread nameplate characters", async () => {
+    const { fetcher, calls } = appFetcher(null);
+    for (const r of [await lookupAppliancePartsPros({ brand: "Whirlpool", model: "WCD5090JW?" }, fetcher),
+      await lookupEncompass({ brand: "Whirlpool", model: "TEF3***WD" }, fetcher)]) {
+      expect(r.status).toBe("not_found");
+      expect(r.warnings[0]).toMatch(/has unread characters; read the nameplate before a lookup\.$/);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("reads nothing from an Encompass redirect to another model, but keeps the same model's own path variants", async () => {
+    expect(encompassModelCode("https://partstore.encompass.com/model/SMGDV45H7000EW%7CA2/0001/")).toBe("SMGDV45H7000EWA2");
+    const page = fx("encompass/model-page.html");
+    const moved = await lookupEncompass({ brand: "Maytag", model: "MEDC465HW0" },
+      async () => ({ ok: true, status: 200, finalUrl: "https://partstore.encompass.com/model/MAYMEDC465HW1", html: page }));
+    expect(moved).toMatchObject({ status: "not_found", rows: [], sourceUrl: null });
+    expect(moved.warnings).toHaveLength(2);
+    expect(moved.warnings[0]).toMatch(/^Encompass redirected https:\/\/partstore\.encompass\.com\/model\/WHIMEDC465HW0 to .*MAYMEDC465HW1, which is not Maytag MEDC465HW0/);
+    const slash = await lookupEncompass({ brand: "Maytag", model: "MEDC465HW0" }, async (url) => ({ ok: true, status: 200, finalUrl: `${url}/`, html: page }));
+    expect(slash.status).toBe("found");
   });
 });

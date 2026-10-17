@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 import { canonicalizeMpn, displayMpn } from "@/src/lib/mpn";
 import { priceNumber } from "./http";
+import { encompassModelCode, hasPlaceholder } from "./identity";
 import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
 
 /**
@@ -10,6 +11,7 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - pagination reads real "/_/N" links instead of any number on the page
  *   - slash models (Samsung/LG "DV45H7000EW/A2") try Encompass's "|" form
  *   - invalid-model page detected
+ *   - a redirect to another model's page is never read
  */
 export const ENCOMPASS_HOST = "https://partstore.encompass.com";
 
@@ -203,6 +205,10 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
     warnings.push(`No Encompass brand prefix for "${q.brand}".`);
     return done("not_found");
   }
+  if (hasPlaceholder(q.model)) {
+    warnings.push(`Model "${q.model}" has unread characters; read the nameplate before a lookup.`);
+    return done("not_found");
+  }
   let sawError = false;
   for (const url of urls) {
     const first = await fetcher(url);
@@ -213,6 +219,10 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
       continue;
     }
     if (isInvalidModelPage(first.html) || /Invalid-Model/i.test(first.finalUrl)) continue;
+    if (encompassModelCode(first.finalUrl) !== encompassModelCode(url)) {
+      warnings.push(`Encompass redirected ${url} to ${first.finalUrl}, which is not ${q.brand} ${q.model}; nothing was read from it.`);
+      continue;
+    }
     const rows = parseEncompassPage(first.html);
     if (!rows.length) {
       warnings.push(`Encompass page had no parseable parts: ${url}`);
@@ -224,6 +234,10 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
       visited.push(next.finalUrl);
       if (!next.ok) {
         warnings.push(`Encompass page ${page} failed (HTTP ${next.status}); later pages skipped.`);
+        break;
+      }
+      if (encompassModelCode(next.finalUrl) !== encompassModelCode(url)) {
+        warnings.push(`Encompass page ${page} redirected to ${next.finalUrl}, another model; later pages skipped.`);
         break;
       }
       rows.push(...parseEncompassPage(next.html));

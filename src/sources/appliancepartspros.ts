@@ -2,6 +2,7 @@ import { load } from "cheerio";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { priceNumber } from "./http";
 import { dedupe } from "./encompass";
+import { appPageIdentity, appSectionBelongs, hasPlaceholder } from "./identity";
 import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
 
 /**
@@ -10,6 +11,8 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - every section is fetched (Ledger caps at 12)
  *   - OEM is read from the part link slug, including hyphenated Samsung numbers
  *   - rows with no OEM are dropped and counted, never stored under the AP id
+ *   - the search is by model only and follows redirects, so the landing page and every
+ *     section page must name this exact brand + model before anything is read
  */
 export const appSearchUrl = (model: string) =>
   `https://www.appliancepartspros.com/search.aspx?model=${encodeURIComponent(model.trim())}`;
@@ -94,17 +97,32 @@ export async function lookupAppliancePartsPros(
     supplier: "appliancepartspros", status, rows, droppedRows: dropped, sourceUrl, visited, warnings, elapsedMs: Date.now() - started
   });
 
+  if (hasPlaceholder(q.model)) {
+    warnings.push(`Model "${q.model}" has unread characters; read the nameplate before a lookup.`);
+    return done("not_found");
+  }
   const model = await fetcher(appSearchUrl(q.model));
   visited.push(model.finalUrl);
   if (!model.ok) {
     warnings.push(`AppliancePartsPros HTTP ${model.status}`);
     return done(model.status === 404 ? "not_found" : "error");
   }
-  const sections = extractSectionLinks(model.html, model.finalUrl);
-  if (!sections.length) {
+  const identity = appPageIdentity(q, model.finalUrl, model.html);
+  if (identity.status === "mismatch") {
+    warnings.push(`AppliancePartsPros returned ${identity.page}, which is not ${q.brand} ${q.model}; nothing was read from it.`);
+    return done("not_found");
+  }
+  const links = extractSectionLinks(model.html, model.finalUrl);
+  if (!links.length) {
     warnings.push("AppliancePartsPros model page had no section links (model not found or page changed).");
     return done("not_found");
   }
+  if (identity.status === "unknown") {
+    warnings.push(`AppliancePartsPros page ${model.finalUrl} does not name its model; nothing was read from it.`);
+    return done("not_found");
+  }
+  const sections = links.filter((url) => appSectionBelongs(url, identity.slugs));
+  if (sections.length < links.length) warnings.push(`${links.length - sections.length} section links were for another model and were skipped.`);
   const max = opts.maxSections ?? 40;
   if (sections.length > max) warnings.push(`Only the first ${max} of ${sections.length} sections were read.`);
 
@@ -114,6 +132,10 @@ export async function lookupAppliancePartsPros(
       visited.push(page.finalUrl);
       if (!page.ok) {
         warnings.push(`Section HTTP ${page.status}: ${url}`);
+        return { rows: [], dropped: 0 };
+      }
+      if (!appSectionBelongs(page.finalUrl, identity.slugs)) {
+        warnings.push(`Section ${url} redirected to ${page.finalUrl}, another model; it was skipped.`);
         return { rows: [], dropped: 0 };
       }
       return parseSectionPage(page.html);
