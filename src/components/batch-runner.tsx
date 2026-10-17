@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-export type Candidate = { brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null };
+export type Candidate = {
+  brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
+  identity_refusal?: string | null;
+};
 
 type JobState = "running" | "found" | "not_found" | "error" | "canceled";
 type Job = {
@@ -148,7 +151,16 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                   <tr key={k} className={done ? "opacity-40" : ""}>
                     <td><input type="checkbox" checked={selected.has(k)} disabled={done || (!selected.has(k) && selected.size >= batchSize)} onChange={() => toggle(k)} /></td>
                     <td>{c.brand}</td>
-                    <td className="mono">{c.model}{c.bom_status === "error" ? <span className="pill pill-stop ml-2">retry</span> : null}</td>
+                    <td className="mono">
+                      {c.model}
+                      {c.identity_refusal ? <span className="pill pill-stop ml-2">identity mismatch</span>
+                        : c.bom_status === "error" ? <span className="pill pill-stop ml-2">retry</span> : null}
+                      {c.identity_refusal ? (
+                        <p className="mt-1 max-w-md font-sans text-xs text-muted">
+                          {c.identity_refusal} Check the nameplate and correct the brand or model where the machine was recorded; a retry alone returns the same page.
+                        </p>
+                      ) : null}
+                    </td>
                     <td className="num">{c.machines}</td>
                     <td className="text-xs text-muted">{c.types}</td>
                   </tr>

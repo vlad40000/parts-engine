@@ -236,6 +236,8 @@ export async function fleetFacets(db: Db) {
 // ---------------------------------------------------------------------------
 export type ModelCandidate = {
   brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
+  /** Warnings of the supplier attempts that refused a page for identity, so Retries can say why. */
+  identity_refusal: string | null;
 };
 
 /** Parts lists page size. */
@@ -265,7 +267,14 @@ function pendingBomGroups(f: FleetFilter, donorSet: string[], category: BomQueue
 /** Unique models still needing a parts list, most machines first (best BOM reuse). */
 export async function modelsNeedingBom(db: Db, f: BomQueueFilter, donorSet: string[], limit = 200, offset = 0): Promise<ModelCandidate[]> {
   return q<ModelCandidate>(db, sql`
-    select * from (${pendingBomGroups(f, donorSet, f.queue ?? "new")}) g
+    select g.*, (
+      select string_agg(w.value, ' ' order by a.n, w.n)
+      from jsonb_array_elements(c.attempts) with ordinality a(attempt, n)
+      cross join jsonb_array_elements_text(a.attempt->'warnings') with ordinality w(value, n)
+      where a.attempt->>'status' = 'mismatch'
+    ) identity_refusal
+    from (${pendingBomGroups(f, donorSet, f.queue ?? "new")}) g
+    left join model_bom_cache c on c.brand_key = g.brand_key and c.model_key = g.model_key
     order by g.machines desc, g.brand_key, g.model_key
     limit ${limit} offset ${offset}`);
 }

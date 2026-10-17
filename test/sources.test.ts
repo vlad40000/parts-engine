@@ -94,7 +94,7 @@ describe("chain", () => {
     expect(r.attempts.map((a) => a.supplier)).toEqual(["encompass", "appliancepartspros"]);
   });
 
-  it("never takes another model's parts through the fallback", async () => {
+  it("never takes another model's parts through the fallback, and keeps the refusal retryable", async () => {
     // Before the identity check this Maytag MVWX655DW1 page was saved as the Frigidaire FFTW4120SW1 BOM.
     const fetcher: Fetcher = async (url) => {
       if (url.includes("encompass")) return { ok: true, status: 200, finalUrl: url, html: "does not exist in our database" };
@@ -102,8 +102,21 @@ describe("chain", () => {
       return { ok: true, status: 200, finalUrl: url, html: fx("app/MVWX655DW1-top.html") };
     };
     const r = await lookupModelBom({ brand: "Frigidaire", model: "FFTW4120SW1" }, fetcher);
-    expect(r).toMatchObject({ status: "not_found", winner: null });
-    expect(r.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "not_found"]]);
+    // Every other supplier answered "no page", yet the result is error (Retries), never not_found.
+    expect(r).toMatchObject({ status: "error", winner: null });
+    expect(r.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "mismatch"]]);
+  });
+
+  it("keeps an identity refusal retryable for a brand Encompass does not list", async () => {
+    // All 75 production not_found rows (audit 2026-10-17) had no Encompass brand prefix; a refusal
+    // there would have closed the model as not found with no supplier error to keep it in Retries.
+    const fetcher: Fetcher = async (url) => ({ ok: true, status: 200, finalUrl: url.includes("search.aspx") ? MAYTAG_PAGE : url,
+      html: url.includes("search.aspx") ? fx("app/MVWX655DW1-model.html") : fx("app/MVWX655DW1-top.html") });
+    const r = await lookupModelBom({ brand: "Crosley", model: "MVWX655DW1" }, fetcher);
+    expect(r).toMatchObject({ status: "error", winner: null });
+    expect(r.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "mismatch"]]);
+    const placeholder = await lookupModelBom({ brand: "Crosley", model: "CDE7500?" }, fetcher);
+    expect(placeholder.status).toBe("error");
   });
 
   it("reports error when every supplier fails on HTTP", async () => {
@@ -157,7 +170,7 @@ describe("supplier page identity", () => {
   it("reads nothing from an AppliancePartsPros search that lands on another model", async () => {
     const { fetcher, calls } = appFetcher(MAYTAG_PAGE);
     const r = await lookupAppliancePartsPros({ brand: "Frigidaire", model: "FFTW4120SW1" }, fetcher);
-    expect(r).toMatchObject({ status: "not_found", rows: [], sourceUrl: null, visited: [MAYTAG_PAGE] });
+    expect(r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null, visited: [MAYTAG_PAGE] });
     expect(r.warnings).toEqual([`AppliancePartsPros returned ${MAYTAG_PAGE}, which is not Frigidaire FFTW4120SW1; nothing was read from it.`]);
     expect(calls).toHaveLength(1);
   });
@@ -165,7 +178,7 @@ describe("supplier page identity", () => {
   it("rejects a longer revision and the same number under an unrelated brand", async () => {
     for (const q of [{ brand: "Maytag", model: "MVWX655DW" }, { brand: "Samsung", model: "MVWX655DW1" }]) {
       const r = await lookupAppliancePartsPros(q, appFetcher(MAYTAG_PAGE).fetcher);
-      expect(r.status).toBe("not_found");
+      expect(r.status).toBe("mismatch");
       expect(r.rows).toEqual([]);
     }
   });
@@ -178,11 +191,11 @@ describe("supplier page identity", () => {
 
   it("checks the canonical link when the search is not redirected, and reads no page that names no model", async () => {
     const other = await lookupAppliancePartsPros({ brand: "Frigidaire", model: "FFTW4120SW1" }, appFetcher(null).fetcher);
-    expect(other.status).toBe("not_found");
+    expect(other.status).toBe("mismatch");
     expect(other.warnings[0]).toContain(`returned ${MAYTAG_PAGE}, which is not Frigidaire FFTW4120SW1`);
     const unnamed = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" },
       appFetcher(null, model.replace(/<link rel="canonical"[^>]*>/i, "")).fetcher);
-    expect(unnamed.status).toBe("not_found");
+    expect(unnamed.status).toBe("mismatch");
     expect(unnamed.warnings[0]).toMatch(/does not name its model; nothing was read from it\.$/);
   });
 
@@ -206,7 +219,7 @@ describe("supplier page identity", () => {
     const { fetcher, calls } = appFetcher(null);
     for (const r of [await lookupAppliancePartsPros({ brand: "Whirlpool", model: "WCD5090JW?" }, fetcher),
       await lookupEncompass({ brand: "Whirlpool", model: "TEF3***WD" }, fetcher)]) {
-      expect(r.status).toBe("not_found");
+      expect(r.status).toBe("mismatch");
       expect(r.warnings[0]).toMatch(/has unread characters; read the nameplate before a lookup\.$/);
     }
     expect(calls).toEqual([]);
@@ -217,7 +230,7 @@ describe("supplier page identity", () => {
     const page = fx("encompass/model-page.html");
     const moved = await lookupEncompass({ brand: "Maytag", model: "MEDC465HW0" },
       async () => ({ ok: true, status: 200, finalUrl: "https://partstore.encompass.com/model/MAYMEDC465HW1", html: page }));
-    expect(moved).toMatchObject({ status: "not_found", rows: [], sourceUrl: null });
+    expect(moved).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
     expect(moved.warnings).toHaveLength(2);
     expect(moved.warnings[0]).toMatch(/^Encompass redirected https:\/\/partstore\.encompass\.com\/model\/WHIMEDC465HW0 to .*MAYMEDC465HW1, which is not Maytag MEDC465HW0/);
     const slash = await lookupEncompass({ brand: "Maytag", model: "MEDC465HW0" }, async (url) => ({ ok: true, status: 200, finalUrl: `${url}/`, html: page }));

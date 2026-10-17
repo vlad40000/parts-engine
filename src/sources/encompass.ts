@@ -207,9 +207,10 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
   }
   if (hasPlaceholder(q.model)) {
     warnings.push(`Model "${q.model}" has unread characters; read the nameplate before a lookup.`);
-    return done("not_found");
+    return done("mismatch");
   }
   let sawError = false;
+  let sawMismatch = false;
   for (const url of urls) {
     const first = await fetcher(url);
     visited.push(first.finalUrl);
@@ -220,6 +221,7 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
     }
     if (isInvalidModelPage(first.html) || /Invalid-Model/i.test(first.finalUrl)) continue;
     if (encompassModelCode(first.finalUrl) !== encompassModelCode(url)) {
+      sawMismatch = true;
       warnings.push(`Encompass redirected ${url} to ${first.finalUrl}, which is not ${q.brand} ${q.model}; nothing was read from it.`);
       continue;
     }
@@ -244,7 +246,7 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
     }
     return done("found", dedupe(rows), first.finalUrl);
   }
-  return done(sawError ? "error" : "not_found");
+  return done(sawMismatch ? "mismatch" : sawError ? "error" : "not_found");
 }
 
 export function dedupe(rows: SupplierRow[]): SupplierRow[] {

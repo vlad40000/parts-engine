@@ -99,7 +99,7 @@ export async function lookupAppliancePartsPros(
 
   if (hasPlaceholder(q.model)) {
     warnings.push(`Model "${q.model}" has unread characters; read the nameplate before a lookup.`);
-    return done("not_found");
+    return done("mismatch");
   }
   const model = await fetcher(appSearchUrl(q.model));
   visited.push(model.finalUrl);
@@ -110,7 +110,7 @@ export async function lookupAppliancePartsPros(
   const identity = appPageIdentity(q, model.finalUrl, model.html);
   if (identity.status === "mismatch") {
     warnings.push(`AppliancePartsPros returned ${identity.page}, which is not ${q.brand} ${q.model}; nothing was read from it.`);
-    return done("not_found");
+    return done("mismatch");
   }
   const links = extractSectionLinks(model.html, model.finalUrl);
   if (!links.length) {
@@ -119,7 +119,7 @@ export async function lookupAppliancePartsPros(
   }
   if (identity.status === "unknown") {
     warnings.push(`AppliancePartsPros page ${model.finalUrl} does not name its model; nothing was read from it.`);
-    return done("not_found");
+    return done("mismatch");
   }
   const sections = links.filter((url) => appSectionBelongs(url, identity.slugs));
   if (sections.length < links.length) warnings.push(`${links.length - sections.length} section links were for another model and were skipped.`);
