@@ -14,7 +14,14 @@ export type SupplierRow = {
 
 export type SupplierResult = {
   supplier: string;
-  status: "found" | "not_found" | "error";
+  /**
+   * found: these rows are the requested model's parts. not_found: the supplier says it has no parts
+   * list for it (no page, or its own page for this model lists none). mismatch: the supplier offered a
+   * page that is not provably this brand + model (a redirect to another model or maker, a catalog page
+   * that names no model, a model with unread characters); nothing from it is read. error: the lookup
+   * could not be completed, including an answer that cannot be identified as either.
+   */
+  status: "found" | "not_found" | "mismatch" | "error";
   rows: SupplierRow[];
   /** Rows the supplier listed but without a usable OEM number (never guessed). */
   droppedRows: number;

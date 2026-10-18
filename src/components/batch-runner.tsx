@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-export type Candidate = { brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null };
+export type Candidate = {
+  brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
+  identity_refusal?: string | null;
+};
 
 type JobState = "running" | "found" | "not_found" | "error" | "canceled";
 type Job = {
@@ -15,7 +18,10 @@ type Job = {
   state: JobState;
   startedAt: number;
   finishedAt?: number;
-  result?: { supplier: string | null; rows: number; newMpns: number; dropped: number; attempts: Array<{ supplier: string; status: string; warnings: string[] }> };
+  result?: {
+    supplier: string | null; rows: number; newMpns: number; dropped: number; kept?: { rows: number; fetchedAt: string } | null;
+    attempts: Array<{ supplier: string; status: string; warnings: string[] }>;
+  };
   message?: string;
 };
 
@@ -148,7 +154,16 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                   <tr key={k} className={done ? "opacity-40" : ""}>
                     <td><input type="checkbox" checked={selected.has(k)} disabled={done || (!selected.has(k) && selected.size >= batchSize)} onChange={() => toggle(k)} /></td>
                     <td>{c.brand}</td>
-                    <td className="mono">{c.model}{c.bom_status === "error" ? <span className="pill pill-stop ml-2">retry</span> : null}</td>
+                    <td className="mono">
+                      {c.model}
+                      {c.identity_refusal ? <span className="pill pill-stop ml-2">identity mismatch</span>
+                        : c.bom_status === "error" ? <span className="pill pill-stop ml-2">retry</span> : null}
+                      {c.identity_refusal ? (
+                        <p className="mt-1 max-w-md font-sans text-xs text-muted">
+                          {c.identity_refusal} Check the nameplate and correct the brand or model where the machine was recorded; a retry alone returns the same page.
+                        </p>
+                      ) : null}
+                    </td>
                     <td className="num">{c.machines}</td>
                     <td className="text-xs text-muted">{c.types}</td>
                   </tr>
@@ -196,6 +211,11 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                 </div>
                 {j.result?.newMpns ? <div className="mt-1 text-xs text-muted">{j.result.newMpns} MPNs not seen before{j.result.dropped ? ` · ${j.result.dropped} rows had no OEM number` : ""}</div> : null}
                 {j.message ? <div className="mt-1 text-xs text-stop">{j.message}</div> : null}
+                {j.result?.kept ? (
+                  <div className="mt-1 text-xs text-muted">
+                    The verified parts list ({j.result.kept.rows} parts, read {new Date(j.result.kept.fetchedAt).toLocaleDateString()}) was kept unchanged.
+                  </div>
+                ) : null}
                 {j.result && j.state !== "found" ? (
                   <ul className="mt-1 text-xs text-muted">
                     {j.result.attempts.map((a) => <li key={a.supplier}>{a.supplier}: {a.status}{a.warnings.length ? ` — ${a.warnings.slice(0, 2).join(" ")}` : ""}</li>)}

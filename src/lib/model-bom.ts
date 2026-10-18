@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { getSettings, saveModelBom } from "@/src/db/queries";
+import { getSettings, saveModelBom, type SavedModelBom } from "@/src/db/queries";
 import * as t from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
 import type { FleetRow } from "@/src/lib/fleet-import";
@@ -18,7 +18,7 @@ export async function readModelBom(
   db: Db,
   { brand, model }: ModelQuery,
   fetcher: Fetcher = supplierFetcher
-): Promise<{ result: ChainResult; saved: { rows: number; newMpns: number } }> {
+): Promise<{ result: ChainResult; saved: SavedModelBom }> {
   const result = await lookupModelBom({ brand, model }, fetcher);
   const saved = await saveModelBom(db, {
     brandKey: brandKey(brand),

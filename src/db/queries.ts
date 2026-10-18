@@ -236,6 +236,8 @@ export async function fleetFacets(db: Db) {
 // ---------------------------------------------------------------------------
 export type ModelCandidate = {
   brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
+  /** Warnings of the supplier attempts that refused a page for identity, so Retries can say why. */
+  identity_refusal: string | null;
 };
 
 /** Parts lists page size. */
@@ -265,7 +267,14 @@ function pendingBomGroups(f: FleetFilter, donorSet: string[], category: BomQueue
 /** Unique models still needing a parts list, most machines first (best BOM reuse). */
 export async function modelsNeedingBom(db: Db, f: BomQueueFilter, donorSet: string[], limit = 200, offset = 0): Promise<ModelCandidate[]> {
   return q<ModelCandidate>(db, sql`
-    select * from (${pendingBomGroups(f, donorSet, f.queue ?? "new")}) g
+    select g.*, (
+      select string_agg(w.value, ' ' order by a.n, w.n)
+      from jsonb_array_elements(c.attempts) with ordinality a(attempt, n)
+      cross join jsonb_array_elements_text(a.attempt->'warnings') with ordinality w(value, n)
+      where a.attempt->>'status' = 'mismatch'
+    ) identity_refusal
+    from (${pendingBomGroups(f, donorSet, f.queue ?? "new")}) g
+    left join model_bom_cache c on c.brand_key = g.brand_key and c.model_key = g.model_key
     order by g.machines desc, g.brand_key, g.model_key
     limit ${limit} offset ${offset}`);
 }
@@ -316,10 +325,22 @@ function pgTextArray(values: string[]): string {
   return `array[${values.map((v) => `'${v.replace(/'/g, "''")}'`).join(",")}]::text[]`;
 }
 
+export type SavedModelBom = {
+  rows: number;
+  newMpns: number;
+  /** Set when a lookup without a winner left an earlier verified parts list in place. */
+  kept?: { rowCount: number; fetchedAt: Date };
+};
+
+/**
+ * Persist one chain result. Only a winner replaces a found parts list. A failed, refused or
+ * incomplete lookup of a found model changes nothing: its status, source, evidence, edges and MPNs
+ * stay as they were (audit 2026-10-17, R3), and the caller is told the verified list was kept.
+ */
 export async function saveModelBom(
   db: Db,
   input: { brandKey: string; modelKey: string; brandDisplay: string; modelDisplay: string; result: ChainResult }
-): Promise<{ rows: number; newMpns: number }> {
+): Promise<SavedModelBom> {
   const { result } = input;
   const winner = result.winner;
   const warnings = result.attempts.flatMap((a) => a.warnings.map((w) => `${a.supplier}: ${w}`));
@@ -337,11 +358,20 @@ export async function saveModelBom(
     warnings,
     fetchedAt: new Date()
   };
-  await db.insert(t.modelBomCache).values(cache).onConflictDoUpdate({
+  const written = await db.insert(t.modelBomCache).values(cache).onConflictDoUpdate({
     target: [t.modelBomCache.brandKey, t.modelBomCache.modelKey],
-    set: { ...cache, attempts: sql`excluded.attempts`, warnings: sql`excluded.warnings` }
-  });
-  if (!winner) return { rows: 0, newMpns: 0 };
+    set: { ...cache, attempts: sql`excluded.attempts`, warnings: sql`excluded.warnings` },
+    // Checked against the stored row in the same statement, so a concurrent success is never undone.
+    ...(winner ? {} : { setWhere: sql`${t.modelBomCache.status} <> 'found'` })
+  }).returning({ status: t.modelBomCache.status });
+  if (!winner) {
+    if (written.length) return { rows: 0, newMpns: 0 };
+    const [kept] = await db.select({ rowCount: t.modelBomCache.rowCount, fetchedAt: t.modelBomCache.fetchedAt }).from(t.modelBomCache)
+      .where(and(eq(t.modelBomCache.brandKey, input.brandKey), eq(t.modelBomCache.modelKey, input.modelKey)));
+    console.warn(`Parts list lookup for ${input.brandDisplay} ${input.modelDisplay} ended ${result.status}; `
+      + `the verified list from ${kept.fetchedAt.toISOString()} (${kept.rowCount} parts) was kept unchanged.`);
+    return { rows: 0, newMpns: 0, kept };
+  }
 
   // Resolve WP prefix aliases before writing (D1: aliases, not normalization).
   const aliasRows: Array<typeof t.mpnAlias.$inferInsert> = [];
