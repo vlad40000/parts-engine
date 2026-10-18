@@ -54,12 +54,16 @@ export function brandsCompatible(requested: string, page: string): boolean {
 // ---------------------------------------------------------------------------
 const APP_HOST = "www.appliancepartspros.com";
 
-/** The "{brand}-{model}" slug of an AppliancePartsPros model page URL, lower case. */
+/**
+ * The "{brand}-{model}" slug of an AppliancePartsPros model page URL, lower case. "/parts-for-model-…"
+ * is another page type (104 production searches, audit 2026-10-17, none listing parts sections) that no
+ * fixture shows, so it names no model this check can confirm or refuse.
+ */
 export function appModelSlug(url: string): string | null {
   try {
     const u = new URL(url);
     if (u.host !== APP_HOST) return null;
-    return u.pathname.match(/^\/parts-for-(.+)\.html$/i)?.[1].toLowerCase() ?? null;
+    return u.pathname.match(/^\/parts-for-(?!model-)(.+)\.html$/i)?.[1].toLowerCase() ?? null;
   } catch {
     return null;
   }

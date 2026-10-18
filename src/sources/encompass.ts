@@ -12,7 +12,8 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - slash models (Samsung/LG "DV45H7000EW/A2") try Encompass's "|" form
  *   - invalid-model page detected
  *   - a redirect to another model's page is never read
- *   - a catalog with any page failed, moved to another model or beyond the page cap is
+ *   - a catalog with any page failed, invalid, unparseable, not the page asked for, moved to
+ *     another model, holding only the visible slice of its list or beyond the page cap is
  *     rejected whole, never saved partially
  */
 export const ENCOMPASS_HOST = "https://partstore.encompass.com";
@@ -103,7 +104,10 @@ function toRow(partNumber: string, description: string, diagramId: string, price
   };
 }
 
-function parseEmbedded(html: string): SupplierRow[] {
+/** Rows read from one source of a page, and how many entries that source held before any was dropped. */
+type PageRows = { rows: SupplierRow[]; entries: number };
+
+function parseEmbedded(html: string): PageRows {
   const $ = load(html);
   const payloads: string[] = [];
   $("script").each((_, el) => {
@@ -124,21 +128,24 @@ function parseEmbedded(html: string): SupplierRow[] {
     if (!json) continue;
     try {
       const parts = JSON.parse(json) as EncompassPart[];
-      return parts.flatMap((p) => {
-        const row = toRow(p.partNumber ?? "", p.partDescription ?? "", p.location ?? "", p.reportPartPrice ?? p.partPrice ?? "", p.allowPurchase === "N");
-        return row ? [row] : [];
-      });
+      return {
+        entries: parts.length,
+        rows: parts.flatMap((p) => {
+          const row = toRow(p.partNumber ?? "", p.partDescription ?? "", p.location ?? "", p.reportPartPrice ?? p.partPrice ?? "", p.allowPurchase === "N");
+          return row ? [row] : [];
+        })
+      };
     } catch {
       /* try next payload */
     }
   }
-  return [];
+  return { rows: [], entries: 0 };
 }
 
-function parseTable(html: string): SupplierRow[] {
+function parseTable(html: string): PageRows {
   const $ = load(html);
   const table = $("table").filter((_, el) => /Part Number/i.test($(el).text())).first();
-  if (!table.length) return [];
+  if (!table.length) return { rows: [], entries: 0 };
   const headers = new Map<string, number>();
   table.find("tr").first().find("th,td").each((i, cell) => {
     const name = $(cell).text().replace(/\s+/g, " ").trim().toLowerCase();
@@ -148,12 +155,14 @@ function parseTable(html: string): SupplierRow[] {
   const title = headers.get("part title") ?? headers.get("description");
   const price = headers.get("price");
   const avail = headers.get("availability");
-  if (pn === undefined || title === undefined) return [];
+  if (pn === undefined || title === undefined) return { rows: [], entries: 0 };
 
   const rows: SupplierRow[] = [];
+  let entries = 0;
   table.find("tr").slice(1).each((_, tr) => {
     const cells = $(tr).find("td,th").toArray();
     if (cells.length <= Math.max(pn, title)) return;
+    entries += 1;
     const partNumber = $(cells[pn]).find("b").first().text().trim() || $(cells[pn]).text().trim();
     const lines = ($(cells[title]).html() ?? "")
       .split(/<br\s*\/?>/i)
@@ -179,13 +188,37 @@ function parseTable(html: string): SupplierRow[] {
     const row = toRow(partNumber, desc.join(" "), diagramId, priceText, nla);
     if (row) rows.push(row);
   });
-  return rows;
+  return { rows, entries };
+}
+
+export type EncompassPage = {
+  rows: SupplierRow[];
+  /** Why these rows are only the visible slice of the page's list, or null when they are all of it. */
+  slice: string | null;
+};
+
+/**
+ * One page's rows. Its HTML table holds only the rows on screen, and its pager says how long the list
+ * is: fixture model-page shows 10 rows over 13 "Go to page" buttons and carries all 124 parts in its
+ * embedded data; fixture MVWX655DW1-live shows "Showing 1 to 10 of 106 entries" and carries no other
+ * copy. Rows that fit in the pages before the last one, or fewer than the page declares, are a slice.
+ */
+export function readEncompassPage(html: string): EncompassPage {
+  const table = parseTable(html);
+  const embedded = parseEmbedded(html);
+  const best = embedded.rows.length > table.rows.length ? embedded : table;
+  const declared = Number(html.match(/Showing\s+[\d,]+\s+to\s+[\d,]+\s+of\s+([\d,]+)\s+entries/i)?.[1].replace(/,/g, ""));
+  if (declared > best.entries) return { rows: best.rows, slice: `it declares ${declared} entries and carries ${best.entries}` };
+  let pages = 1;
+  for (const m of html.matchAll(/aria-label="Go to page (\d+)"|data-dt-idx="(\d+)"/g)) pages = Math.max(pages, m[1] ? Number(m[1]) : Number(m[2]) + 1);
+  if (pages > 1 && best.entries <= (pages - 1) * table.entries) {
+    return { rows: best.rows, slice: `it pages ${table.entries} rows at a time over ${pages} pages and carries ${best.entries}` };
+  }
+  return { rows: best.rows, slice: null };
 }
 
 export function parseEncompassPage(html: string): SupplierRow[] {
-  const table = parseTable(html);
-  const embedded = parseEmbedded(html);
-  return embedded.length > table.length ? embedded : table;
+  return readEncompassPage(html).rows;
 }
 
 /** Highest "/_/N" page link on the page, capped. */
@@ -193,6 +226,15 @@ export function encompassPageCount(html: string, cap = 20): number {
   let max = 1;
   for (const m of html.matchAll(/\/_\/(\d{1,3})\b/g)) max = Math.max(max, Number(m[1]));
   return Math.min(max, cap);
+}
+
+/** The "/_/N" page an Encompass URL names: 1 for the model page itself, 0 for no URL. */
+export function encompassPageNumber(url: string): number {
+  try {
+    return Number(new URL(url).pathname.match(/\/_\/(\d+)\/?$/)?.[1] ?? 1);
+  } catch {
+    return 0;
+  }
 }
 
 export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<SupplierResult> {
@@ -227,9 +269,14 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
       warnings.push(`Encompass redirected ${url} to ${first.finalUrl}, which is not ${q.brand} ${q.model}; nothing was read from it.`);
       continue;
     }
-    const rows = parseEncompassPage(first.html);
+    const { rows, slice } = readEncompassPage(first.html);
     if (!rows.length) {
       warnings.push(`Encompass page had no parseable parts: ${url}`);
+      continue;
+    }
+    if (slice) {
+      sawError = true;
+      warnings.push(`Encompass page ${url} holds only the visible part of its parts list (${slice}); the catalog was rejected as incomplete.`);
       continue;
     }
     // Every listed page is required: a catalog missing any of them is never saved.
@@ -244,14 +291,26 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
     for (let page = 2; page <= pages && !gap; page += 1) {
       const next = await fetcher(`${url.replace(/\/$/, "")}/_/${page}`);
       visited.push(next.finalUrl);
+      // A listed page that loads but cannot be shown to be this model's page N is a gap, never zero rows.
+      let missing: string | null = null;
       if (!next.ok) {
-        gap = "error";
-        warnings.push(`Encompass page ${page} of ${pages} failed (HTTP ${next.status}) for ${url}; the catalog is incomplete and nothing was saved.`);
+        missing = `failed (HTTP ${next.status})`;
+      } else if (isInvalidModelPage(next.html) || /Invalid-Model/i.test(next.finalUrl)) {
+        missing = "answered that the model does not exist";
       } else if (encompassModelCode(next.finalUrl) !== encompassModelCode(url)) {
         gap = "mismatch";
         warnings.push(`Encompass page ${page} of ${url} redirected to ${next.finalUrl}, another model; the catalog was rejected and nothing was saved.`);
+      } else if (encompassPageNumber(next.finalUrl) !== page) {
+        missing = `landed on ${next.finalUrl}, not page ${page}`;
       } else {
-        rows.push(...parseEncompassPage(next.html));
+        const read = readEncompassPage(next.html);
+        if (!read.rows.length) missing = "had no parseable parts";
+        else if (read.slice) missing = `holds only the visible part of its list (${read.slice})`;
+        else rows.push(...read.rows);
+      }
+      if (missing) {
+        gap = "error";
+        warnings.push(`Encompass page ${page} of ${pages} ${missing} for ${url}; the catalog is incomplete and nothing was saved.`);
       }
     }
     if (gap === "mismatch") sawMismatch = true;

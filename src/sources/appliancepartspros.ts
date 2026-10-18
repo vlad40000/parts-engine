@@ -15,6 +15,7 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *     section page must name this exact brand + model before anything is read
  *   - a catalog with any section blocked, missing, failed or for another model is rejected
  *     whole, never saved partially
+ *   - a page that neither confirms the model nor lists sections is unresolved, never not found
  */
 export const appSearchUrl = (model: string) =>
   `https://www.appliancepartspros.com/search.aspx?model=${encodeURIComponent(model.trim())}`;
@@ -115,13 +116,21 @@ export async function lookupAppliancePartsPros(
     return done("mismatch");
   }
   const links = extractSectionLinks(model.html, model.finalUrl);
-  if (!links.length) {
-    warnings.push("AppliancePartsPros model page had no section links (model not found or page changed).");
-    return done("not_found");
-  }
   if (identity.status === "unknown") {
+    if (!links.length) {
+      // A no-results page, a list of other models and a changed layout look alike here (838 production
+      // searches, audit 2026-10-17), so none of them is evidence that the supplier lacks this model.
+      warnings.push(`AppliancePartsPros answered with ${model.finalUrl}, which neither confirms ${q.brand} ${q.model} nor lists parts sections; `
+        + "an unidentifiable page is not evidence the model is missing, so it was not recorded as not found.");
+      return done("error");
+    }
     warnings.push(`AppliancePartsPros page ${model.finalUrl} does not name its model; nothing was read from it.`);
     return done("mismatch");
+  }
+  if (!links.length) {
+    // Not found only when the supplier says so: HTTP 404 above, or this model's own confirmed page listing no sections.
+    warnings.push(`AppliancePartsPros lists ${q.brand} ${q.model} at ${model.finalUrl} but no parts sections; recorded as not found.`);
+    return done("not_found");
   }
   // Every section the model page lists is required: a parts list missing any of them is never saved.
   const foreign = links.filter((url) => !appSectionBelongs(url, identity.slugs));
