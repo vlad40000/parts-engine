@@ -6,7 +6,9 @@ import {
 } from "@/src/sources/encompass";
 import { extractSectionLinks, lookupAppliancePartsPros, oemFromSlug, parseSectionPage } from "@/src/sources/appliancepartspros";
 import { lookupModelBom } from "@/src/sources/chain";
-import { appModelSlug, appSlugMatches, brandsCompatible, encompassModelCode } from "@/src/sources/identity";
+import {
+  appModelSlug, appSectionIdentity, appSlugMatches, brandsCompatible, encompassModelCode, encompassPageIdentity
+} from "@/src/sources/identity";
 import type { Fetcher } from "@/src/sources/types";
 
 const fx = (p: string) => readFileSync(path.join(__dirname, "fixtures", p), "utf8");
@@ -337,11 +339,45 @@ describe("catalog completeness", () => {
     expect(r.rows.length).toBeGreaterThan(5);
   });
 
+  it("rejects a parts list when a section loads, at its own URL, a page that does not name this model", async () => {
+    // HTTP 200 maintenance or challenge pages list no parts and name no model; reading them as empty saved the rest.
+    for (const html of ["<html><body><h1>We'll be right back</h1></body></html>", "<html><head><title>Just a moment...</title></head><body></body></html>"]) {
+      const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, async (url) =>
+        url === TOP ? { ok: true, status: 200, finalUrl: url, html } : complete(url));
+      expect(r).toMatchObject({ status: "error", rows: [], sourceUrl: null });
+      expect(r.warnings).toContain(`Section ${TOP} loaded a page that does not name Maytag MVWX655DW1 (a maintenance, challenge or changed page); it was not read.`);
+      expect(r.warnings.at(-1)).toBe("1 of 6 sections could not be read for this model, so the catalog is incomplete; nothing was saved.");
+    }
+    // Another model's section page served at this model's section URL, without a redirect.
+    const foreign = section.replace(/-parts-for-maytag-mvwx655dw1\.html/g, "-parts-for-maytag-mvwx655dw2.html");
+    const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, async (url) =>
+      url === TOP ? { ok: true, status: 200, finalUrl: url, html: foreign } : complete(url));
+    expect(r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+    expect(r.warnings).toContain(`Section ${TOP} loaded a page whose canonical link is another model's.`);
+  });
+
+  it("reads a section only when its page names this model by its canonical link or heading", () => {
+    const backsplash = fx("app/HTDX100ED3WW-backsplash.html");
+    const url = "https://www.appliancepartspros.com/backsplash-blower-drive-parts-for-hot-point-htdx100ed3ww.html";
+    const GE = { brand: "GE", model: "HTDX100ED3WW" };
+    expect(appSectionIdentity(GE, url, backsplash, ["hot-point-htdx100ed3ww"])).toBe("ok");
+    expect(appSectionIdentity(GE, url, backsplash, ["hot-point-htdx100ed3w"])).toBe("mismatch");
+    // Without a canonical link the heading decides: "Parts for Hot Point HTDX100ED3WW: Backsplash, ..." names the model.
+    const headed = backsplash.replace(/<link rel="canonical"[^>]*>/i, "");
+    expect(appSectionIdentity(GE, url, headed, ["hot-point-htdx100ed3ww"])).toBe("ok");
+    expect(appSectionIdentity({ brand: "GE", model: "HTDX100ED3W" }, url, headed, ["hot-point-htdx100ed3w"])).toBe("unknown");
+    expect(appSectionIdentity(GE, url, "<html><h1>Maytag MVWX655DW1: Cover Sheet Parts</h1></html>", ["hot-point-htdx100ed3ww"])).toBe("unknown");
+  });
+
   describe("Encompass pages", () => {
     const page = fx("encompass/model-page.html");
-    /** The same page without its embedded data: only the 10 rows on screen, under 13 "Go to page" buttons. */
-    const tableOnly = page.replace(/<script>self\.__next_f\.push\([\s\S]*?<\/script>/g, "");
     const URL1 = "https://partstore.encompass.com/model/WHIMEDC465HW0";
+    /**
+     * The same page without its embedded data: only the 10 rows on screen, under 13 "Go to page" buttons, named
+     * by a canonical link as the live page is.
+     */
+    const tableOnly = page.replace(/<script>self\.__next_f\.push\([\s\S]*?<\/script>/g, "")
+      .replace("</head>", `<link rel="canonical" href="${URL1}"></head>`);
     const paged = (n: number) => page.replace("</body>", `${Array.from({ length: n - 1 }, (_, i) => `<a href="/model/WHIMEDC465HW0/_/${i + 2}">${i + 2}</a>`).join("")}</body>`);
     const run = async (first: string, next: (url: string) => { ok: boolean; status: number; finalUrl: string; html?: string }) => {
       const calls: string[] = [];
@@ -376,6 +412,34 @@ describe("catalog completeness", () => {
       const live = await lookupEncompass({ brand: "Maytag", model: "MVWX655DW1" }, async (url) =>
         ({ ok: true, status: 200, finalUrl: url, html: url.includes("/WHI") ? fx("encompass/MVWX655DW1-live.html") : "does not exist in our database" }));
       expect(live).toMatchObject({ status: "error", rows: [], sourceUrl: null });
+    });
+
+    it("reads nothing from a page served at this model's URL whose HTML names another model or none", async () => {
+      // No redirect: the URL is this model's, the page is not.
+      const other = page.replace('modelNumber\\":\\"MEDC465HW0', 'modelNumber\\":\\"MEDC465HW1');
+      const otherCanonical = page.replace("</head>", '<link rel="canonical" href="https://partstore.encompass.com/model/WHIMEDC465HW1"></head>');
+      const unnamed = tableOnly.replace(/<link rel="canonical"[^>]*>/, "");
+      for (const [html, warning] of [
+        [other, `Encompass page ${URL1} names model MEDC465HW1, which is not Maytag MEDC465HW0; nothing was read from it.`],
+        [otherCanonical, `Encompass page ${URL1} names https://partstore.encompass.com/model/WHIMEDC465HW1, which is not Maytag MEDC465HW0; nothing was read from it.`],
+        [unnamed, `Encompass page ${URL1} does not name its model; nothing was read from it.`]
+      ]) {
+        const { r, calls } = await run(html, ok);
+        expect(r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+        expect(r.warnings[0]).toBe(warning);
+        expect(calls.some((u) => u.includes("/_/"))).toBe(false);
+      }
+      // Both captured pages name their own model: model-page by its model record, the live page by its canonical link.
+      expect(encompassPageIdentity({ brand: "Maytag", model: "MEDC465HW0" }, URL1, page)).toEqual({ status: "ok" });
+      expect(encompassPageIdentity({ brand: "Maytag", model: "MVWX655DW1" }, "https://partstore.encompass.com/model/WHIMVWX655DW1",
+        fx("encompass/MVWX655DW1-live.html"))).toEqual({ status: "ok" });
+      // A later page that names another model, or none, rejects the whole catalog.
+      const later = await run(paged(3), (url) => ({ ...ok(url), html: url.endsWith("/2") ? other : page }));
+      expect(later.r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+      expect(later.r.warnings[0]).toBe(`Encompass page 2 of ${URL1} names model MEDC465HW1, another model; the catalog was rejected and nothing was saved.`);
+      const silent = await run(paged(3), (url) => ({ ...ok(url), html: url.endsWith("/2") ? unnamed : page }));
+      expect(silent.r).toMatchObject({ status: "error", rows: [] });
+      expect(silent.r.warnings[0]).toBe(`Encompass page 2 of 3 does not name its model for ${URL1}; the catalog is incomplete and nothing was saved.`);
     });
 
     it("rejects the catalog when a later page answers HTTP 200 that the model does not exist", async () => {

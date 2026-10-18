@@ -14,9 +14,10 @@ import type { Fetcher, FetchResult } from "@/src/sources/types";
 
 const fx = (p: string) => readFileSync(path.join(__dirname, "fixtures", p), "utf8");
 const PAGE = fx("encompass/model-page.html");
-/** The same page without its embedded data: only the 10 rows on screen, under 13 "Go to page" buttons. */
-const TABLE_ONLY = PAGE.replace(/<script>self\.__next_f\.push\([\s\S]*?<\/script>/g, "");
 const MAY = "https://partstore.encompass.com/model/MAYMEDC465HW0";
+/** The same page without its embedded data: only the 10 rows on screen, under 13 "Go to page" buttons, named by a canonical link. */
+const TABLE_ONLY = PAGE.replace(/<script>self\.__next_f\.push\([\s\S]*?<\/script>/g, "")
+  .replace("</head>", `<link rel="canonical" href="${MAY}"></head>`);
 /** Encompass files this model under MAY and lists three pages for it. */
 const PAGED = PAGE.replace("</body>", '<a href="/model/MAYMEDC465HW0/_/2">2</a><a href="/model/MAYMEDC465HW0/_/3">3</a></body>');
 const ok = (url: string, html: string, finalUrl = url): FetchResult => ({ ok: true, status: 200, finalUrl, html });
@@ -30,8 +31,24 @@ const encompass = (first: string, later: (url: string) => FetchResult): Fetcher 
 };
 const complete = encompass(PAGED, (url) => ok(url, PAGE));
 
-/** Every way a listed Encompass page can fail to be this model's page N, and the warning it leaves. */
-const INCOMPLETE: Record<string, { fetcher: Fetcher; warning: string }> = {
+/** The same page naming another model in its model record, served at this model's URL without a redirect. */
+const OTHER_MODEL = PAGE.replace('modelNumber\\":\\"MEDC465HW0', 'modelNumber\\":\\"MEDC465HW1');
+
+/**
+ * Every way an Encompass page can fail to be this model's page N, the warning it leaves, and the supplier status
+ * (error unless the page names another model).
+ */
+const INCOMPLETE: Record<string, { fetcher: Fetcher; warning: string; encompass?: "mismatch" }> = {
+  "the first page names another model": {
+    fetcher: encompass(OTHER_MODEL, (url) => ok(url, PAGE)),
+    warning: `encompass: Encompass page ${MAY} names model MEDC465HW1, which is not Maytag MEDC465HW0; nothing was read from it.`,
+    encompass: "mismatch"
+  },
+  "page 2 names another model": {
+    fetcher: encompass(PAGED, (url) => ok(url, url.endsWith("/2") ? OTHER_MODEL : PAGE)),
+    warning: `encompass: Encompass page 2 of ${MAY} names model MEDC465HW1, another model; the catalog was rejected and nothing was saved.`,
+    encompass: "mismatch"
+  },
   "page 2 answers HTTP 200 that the model does not exist": {
     fetcher: encompass(PAGED, (url) => ok(url, url.endsWith("/2") ? "Oops! This part or model# does not exist in our database." : PAGE)),
     warning: `encompass: Encompass page 2 of 3 answered that the model does not exist for ${MAY}; the catalog is incomplete and nothing was saved.`
@@ -65,8 +82,9 @@ const snapshot = async () => ({
   mpns: await db.select().from(schema.mpnMaster).orderBy(asc(schema.mpnMaster.mpnCanonical)),
   aliases: await db.select().from(schema.mpnAlias).orderBy(asc(schema.mpnAlias.aliasCanonical))
 });
-const queued = async (queue?: "retry") =>
-  (await bomQueue(db, { ...filter, queue }, donors)).rows.map((r) => `${r.brand_key} ${r.model_key} ${r.bom_status}`);
+/** Where one model stands in the New (default) or Retries queue. */
+const queued = async (queue?: "retry", model = "MEDC465HW0") =>
+  (await bomQueue(db, { ...filter, queue }, donors)).rows.filter((r) => r.model_key === model).map((r) => `${r.brand_key} ${r.model_key} ${r.bom_status}`);
 
 beforeAll(async () => {
   const client = new PGlite();
@@ -74,18 +92,19 @@ beforeAll(async () => {
   await migrate(drizzle(client), { migrationsFolder: path.join(__dirname, "..", "drizzle") });
   donors = (await getSettings(db)).donorAvailabilities;
   await upsertFleet(db, mapFleetRows([
-    { ID: 1, Availability: "PARTS ONLY", ApplianceType: "Dryer - Electric", Brand: "Maytag", ModelNumber: "MEDC465HW0", SerialNumber: "" }
+    { ID: 1, Availability: "PARTS ONLY", ApplianceType: "Dryer - Electric", Brand: "Maytag", ModelNumber: "MEDC465HW0", SerialNumber: "" },
+    { ID: 2, Availability: "PARTS ONLY", ApplianceType: "Washer - Top Load", Brand: "Maytag", ModelNumber: "MVWX655DW1", SerialNumber: "" }
   ]).rows);
 });
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("an incomplete Encompass catalog is never saved", () => {
-  for (const [scenario, { fetcher, warning }] of Object.entries(INCOMPLETE)) {
+  for (const [scenario, { fetcher, warning, encompass: status = "error" }] of Object.entries(INCOMPLETE)) {
     it(`writes no parts, MPNs or success and keeps a new model in Retries when ${scenario}`, async () => {
       const { result, saved } = await readModelBom(db, MODEL, fetcher);
       expect(result).toMatchObject({ status: "error", winner: null });
-      expect(result.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "error"], ["appliancepartspros", "not_found"]]);
+      expect(result.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", status], ["appliancepartspros", "not_found"]]);
       expect(saved).toEqual({ rows: 0, newMpns: 0 });
       const after = await snapshot();
       expect(after.cache).toEqual([expect.objectContaining({ status: "error", source: null, sourceUrl: null, rowCount: 0 })]);
@@ -124,4 +143,51 @@ describe("an incomplete Encompass catalog is never saved", () => {
       expect(await queued()).toEqual([]);
     });
   }
+});
+
+describe("an AppliancePartsPros section that loads a page naming no model is never read as empty", () => {
+  const MAYTAG_PAGE = "https://www.appliancepartspros.com/parts-for-maytag-mvwx655dw1.html";
+  const TOP = "https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw1.html";
+  const WASHER = { brand: "Maytag", model: "MVWX655DW1" };
+  const catalog = (top?: string): Fetcher => async (url) => {
+    if (url.includes("encompass")) return ok(url, "Oops! This part or model# does not exist in our database.");
+    if (url.includes("search.aspx")) return ok(url, fx("app/MVWX655DW1-model.html"), MAYTAG_PAGE);
+    return ok(url, url === TOP && top !== undefined ? top : fx("app/MVWX655DW1-top.html"));
+  };
+  const maintenance = catalog("<html><body><h1>We'll be right back</h1></body></html>");
+  const washer = async () => ({
+    cache: await db.select().from(schema.modelBomCache)
+      .where(and(eq(schema.modelBomCache.brandKey, "MAYTAG"), eq(schema.modelBomCache.modelKey, "MVWX655DW1"))),
+    edges: await db.$count(schema.modelPartEdges, and(eq(schema.modelPartEdges.brandKey, "MAYTAG"), eq(schema.modelPartEdges.modelKey, "MVWX655DW1"))),
+    all: await snapshot()
+  });
+
+  it("writes no parts, MPNs or success for a new model and keeps it in Retries", async () => {
+    const before = await snapshot();
+    const { result, saved } = await readModelBom(db, WASHER, maintenance);
+    expect(result).toMatchObject({ status: "error", winner: null });
+    expect(result.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "error"]]);
+    expect(saved).toEqual({ rows: 0, newMpns: 0 });
+    const after = await washer();
+    expect(after.cache).toEqual([expect.objectContaining({ status: "error", source: null, sourceUrl: null, rowCount: 0 })]);
+    expect(after.cache[0].warnings).toContain(`appliancepartspros: Section ${TOP} loaded a page that does not name Maytag MVWX655DW1 (a maintenance, challenge or changed page); it was not read.`);
+    expect(after.edges).toBe(0);
+    expect({ edges: after.all.edges, mpns: after.all.mpns, aliases: after.all.aliases }).toEqual({ edges: before.edges, mpns: before.mpns, aliases: before.aliases });
+    expect(await queued("retry", "MVWX655DW1")).toEqual(["MAYTAG MVWX655DW1 error"]);
+    expect(await queued(undefined, "MVWX655DW1")).toEqual([]);
+  });
+
+  it("keeps the verified list unchanged when a later lookup meets the same page", async () => {
+    const found = await readModelBom(db, WASHER, catalog());
+    expect(found.result.status).toBe("found");
+    const before = await washer();
+    expect(before.cache[0]).toMatchObject({ status: "found", source: "appliancepartspros" });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { result, saved } = await readModelBom(db, WASHER, maintenance);
+    expect(result).toMatchObject({ status: "error", winner: null });
+    expect(saved.kept).toEqual({ rowCount: before.cache[0].rowCount, fetchedAt: before.cache[0].fetchedAt });
+    expect(await washer()).toEqual(before);
+    expect(await queued("retry", "MVWX655DW1")).toEqual([]);
+    expect(await queued(undefined, "MVWX655DW1")).toEqual([]);
+  });
 });

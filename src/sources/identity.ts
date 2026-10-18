@@ -117,6 +117,28 @@ export function appSectionBelongs(url: string, slugs: string[]): boolean {
   }
 }
 
+/**
+ * What a section page's own HTML says it is. Every captured section page has a canonical link to itself and a
+ * heading naming its model ("Parts for Hot Point HTDX100ED3WW: Backsplash, Blower & Drive Assembly Parts"). A
+ * maintenance, challenge or changed page served at the section URL names neither, and lists no parts either, so
+ * an empty section counts as read only when its page names this model.
+ */
+export function appSectionIdentity(q: ModelQuery, finalUrl: string, html: string, slugs: string[]): "ok" | "mismatch" | "unknown" {
+  const $ = load(html);
+  const href = $('link[rel="canonical"]').attr("href");
+  if (href) {
+    try {
+      return appSectionBelongs(new URL(href, finalUrl).toString(), slugs) ? "ok" : "mismatch";
+    } catch {
+      return "unknown";
+    }
+  }
+  const h1 = $("h1").first().text();
+  const heading = h1.includes(": ") ? h1.slice(0, h1.indexOf(": ")) : h1;
+  const model = identityToken(q.model);
+  return model && heading.split(/\s+/).some((word) => identityToken(word) === model) ? "ok" : "unknown";
+}
+
 // ---------------------------------------------------------------------------
 // Encompass: "/model/{prefix}{model}", optionally "/0001/" or "/_/N" after it.
 // ---------------------------------------------------------------------------
@@ -128,4 +150,33 @@ export function encompassModelCode(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+export type EncompassPageIdentity = { status: "ok" } | { status: "mismatch"; named: string } | { status: "unknown" };
+
+/**
+ * What an Encompass page's HTML says it is, whatever URL served it: its canonical link (fixture MVWX655DW1-live)
+ * and the modelNumber of its embedded model record (fixture model-page). Every name present must be this model;
+ * a page with neither cannot be confirmed.
+ */
+export function encompassPageIdentity(q: ModelQuery, url: string, html: string): EncompassPageIdentity {
+  const named: Array<{ name: string; ok: boolean }> = [];
+  const href = load(html)('link[rel="canonical"]').attr("href");
+  if (href) {
+    let canonical: string | null = null;
+    try {
+      canonical = new URL(href, url).toString();
+    } catch {
+      canonical = null;
+    }
+    named.push({ name: canonical ?? href, ok: !!canonical && encompassModelCode(canonical) === encompassModelCode(url) });
+  }
+  const model = identityToken(q.model);
+  // The model record sits in the escaped Next.js payload (\"modelNumber\":\"MEDC465HW0\") or in plain JSON.
+  for (const m of html.matchAll(/\\?"modelNumber\\?"\s*:\s*\\?"([^"\\]*)/g)) {
+    if (identityToken(m[1])) named.push({ name: `model ${m[1]}`, ok: identityToken(m[1]) === model });
+  }
+  if (!named.length) return { status: "unknown" };
+  const wrong = named.find((n) => !n.ok);
+  return wrong ? { status: "mismatch", named: wrong.name } : { status: "ok" };
 }

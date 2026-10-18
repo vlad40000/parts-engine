@@ -2,7 +2,7 @@ import { load } from "cheerio";
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { priceNumber } from "./http";
 import { dedupe } from "./encompass";
-import { appPageIdentity, appSectionBelongs, hasPlaceholder } from "./identity";
+import { appPageIdentity, appSectionBelongs, appSectionIdentity, hasPlaceholder } from "./identity";
 import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
 
 /**
@@ -12,7 +12,8 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - OEM is read from the part link slug, including hyphenated Samsung numbers
  *   - rows with no OEM are dropped and counted, never stored under the AP id
  *   - the search is by model only and follows redirects, so the landing page and every
- *     section page must name this exact brand + model before anything is read
+ *     section page (its URL, and its canonical link or heading) must name this exact
+ *     brand + model before anything is read
  *   - a catalog with any section blocked, missing, failed or for another model is rejected
  *     whole, never saved partially
  *   - a page that neither confirms the model nor lists sections is unresolved, never not found
@@ -156,6 +157,15 @@ export async function lookupAppliancePartsPros(
         warnings.push(`Section ${url} redirected to ${page.finalUrl}, another model.`);
         return { gap: "mismatched" as const, rows: [], dropped: 0 };
       }
+      const named = appSectionIdentity(q, page.finalUrl, page.html, identity.slugs);
+      if (named === "mismatch") {
+        warnings.push(`Section ${url} loaded a page whose canonical link is another model's.`);
+        return { gap: "mismatched" as const, rows: [], dropped: 0 };
+      }
+      if (named === "unknown") {
+        warnings.push(`Section ${url} loaded a page that does not name ${q.brand} ${q.model} (a maintenance, challenge or changed page); it was not read.`);
+        return { gap: "unread" as const, rows: [], dropped: 0 };
+      }
       return { gap: null, ...parseSectionPage(page.html) };
     })
   );
@@ -171,9 +181,9 @@ export async function lookupAppliancePartsPros(
 }
 
 /**
- * Why a section page was not read. A section that loads but lists no parts (a cover sheet, a
- * wiring page) is read and empty, not missing: the audit found such sections in about 580
- * verified production BOMs.
+ * Why a section page was not read. A section that loads, names this model and lists no parts (a
+ * cover sheet, a wiring page) is read and empty, not missing: the audit found such sections in
+ * about 580 verified production BOMs.
  */
 function sectionGap(status: number): "blocked" | "missing" | "failed" {
   if (status === 401 || status === 403 || status === 429) return "blocked";

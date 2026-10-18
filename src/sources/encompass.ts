@@ -1,7 +1,7 @@
 import { load } from "cheerio";
 import { canonicalizeMpn, displayMpn } from "@/src/lib/mpn";
 import { priceNumber } from "./http";
-import { encompassModelCode, hasPlaceholder } from "./identity";
+import { encompassModelCode, encompassPageIdentity, hasPlaceholder } from "./identity";
 import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
 
 /**
@@ -11,7 +11,8 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - pagination reads real "/_/N" links instead of any number on the page
  *   - slash models (Samsung/LG "DV45H7000EW/A2") try Encompass's "|" form
  *   - invalid-model page detected
- *   - a redirect to another model's page is never read
+ *   - a redirect to another model's page is never read, nor a page whose HTML names another
+ *     model or no model at all
  *   - a catalog with any page failed, invalid, unparseable, not the page asked for, moved to
  *     another model, holding only the visible slice of its list or beyond the page cap is
  *     rejected whole, never saved partially
@@ -274,6 +275,15 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
       warnings.push(`Encompass page had no parseable parts: ${url}`);
       continue;
     }
+    // The URL is not enough: a page served at it without a redirect must name this model itself.
+    const named = encompassPageIdentity(q, url, first.html);
+    if (named.status !== "ok") {
+      sawMismatch = true;
+      warnings.push(named.status === "mismatch"
+        ? `Encompass page ${url} names ${named.named}, which is not ${q.brand} ${q.model}; nothing was read from it.`
+        : `Encompass page ${url} does not name its model; nothing was read from it.`);
+      continue;
+    }
     if (slice) {
       sawError = true;
       warnings.push(`Encompass page ${url} holds only the visible part of its parts list (${slice}); the catalog was rejected as incomplete.`);
@@ -304,7 +314,12 @@ export async function lookupEncompass(q: ModelQuery, fetcher: Fetcher): Promise<
         missing = `landed on ${next.finalUrl}, not page ${page}`;
       } else {
         const read = readEncompassPage(next.html);
+        const named = read.rows.length ? encompassPageIdentity(q, url, next.html) : null;
         if (!read.rows.length) missing = "had no parseable parts";
+        else if (named?.status === "mismatch") {
+          gap = "mismatch";
+          warnings.push(`Encompass page ${page} of ${url} names ${named.named}, another model; the catalog was rejected and nothing was saved.`);
+        } else if (named?.status === "unknown") missing = "does not name its model";
         else if (read.slice) missing = `holds only the visible part of its list (${read.slice})`;
         else rows.push(...read.rows);
       }
