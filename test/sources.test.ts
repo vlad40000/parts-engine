@@ -353,20 +353,95 @@ describe("catalog completeness", () => {
     const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, async (url) =>
       url === TOP ? { ok: true, status: 200, finalUrl: url, html: foreign } : complete(url));
     expect(r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
-    expect(r.warnings).toContain(`Section ${TOP} loaded a page whose canonical link is another model's.`);
+    expect(r.warnings).toContain(`Section ${TOP} loaded a page that names https://www.appliancepartspros.com/top-and-cabinet-parts-for-maytag-mvwx655dw2.html, `
+      + "which is not Maytag MVWX655DW1; it was not read.");
   });
 
   it("reads a section only when its page names this model by its canonical link or heading", () => {
     const backsplash = fx("app/HTDX100ED3WW-backsplash.html");
     const url = "https://www.appliancepartspros.com/backsplash-blower-drive-parts-for-hot-point-htdx100ed3ww.html";
     const GE = { brand: "GE", model: "HTDX100ED3WW" };
-    expect(appSectionIdentity(GE, url, backsplash, ["hot-point-htdx100ed3ww"])).toBe("ok");
-    expect(appSectionIdentity(GE, url, backsplash, ["hot-point-htdx100ed3w"])).toBe("mismatch");
+    expect(appSectionIdentity(GE, url, backsplash, ["hot-point-htdx100ed3ww"])).toEqual({ status: "ok" });
+    expect(appSectionIdentity(GE, url, backsplash, ["hot-point-htdx100ed3w"])).toEqual({ status: "mismatch", named: url });
     // Without a canonical link the heading decides: "Parts for Hot Point HTDX100ED3WW: Backsplash, ..." names the model.
     const headed = backsplash.replace(/<link rel="canonical"[^>]*>/i, "");
-    expect(appSectionIdentity(GE, url, headed, ["hot-point-htdx100ed3ww"])).toBe("ok");
-    expect(appSectionIdentity({ brand: "GE", model: "HTDX100ED3W" }, url, headed, ["hot-point-htdx100ed3w"])).toBe("unknown");
-    expect(appSectionIdentity(GE, url, "<html><h1>Maytag MVWX655DW1: Cover Sheet Parts</h1></html>", ["hot-point-htdx100ed3ww"])).toBe("unknown");
+    expect(appSectionIdentity(GE, url, headed, ["hot-point-htdx100ed3ww"])).toEqual({ status: "ok" });
+    // A section heading naming a longer revision is that model's page.
+    expect(appSectionIdentity({ brand: "GE", model: "HTDX100ED3W" }, url, headed, ["hot-point-htdx100ed3w"]))
+      .toEqual({ status: "mismatch", named: "Hot Point HTDX100ED3WW" });
+    expect(appSectionIdentity(GE, url, "<html><h1>Maytag MVWX655DW1: Cover Sheet Parts</h1></html>", ["hot-point-htdx100ed3ww"])).toEqual({ status: "unknown" });
+    for (const notice of ["We'll be right back", "Error 503: Service Unavailable"]) {
+      expect(appSectionIdentity(GE, url, `<html><body><h1>${notice}</h1></body></html>`, ["hot-point-htdx100ed3ww"])).toEqual({ status: "unknown" });
+    }
+  });
+
+  it("refuses a section whose canonical link and heading disagree, and checks the heading's maker as well as its model", () => {
+    const backsplash = fx("app/HTDX100ED3WW-backsplash.html");
+    const url = "https://www.appliancepartspros.com/backsplash-blower-drive-parts-for-hot-point-htdx100ed3ww.html";
+    const slugs = ["hot-point-htdx100ed3ww"];
+    const GE = { brand: "GE", model: "HTDX100ED3WW" };
+    const headed = (name: string) => backsplash.replace("<h1>Parts for Hot Point HTDX100ED3WW:", `<h1>Parts for ${name}:`);
+    const unlinked = (html: string) => html.replace(/<link rel="canonical"[^>]*>/i, "");
+    // The canonical link is this model's; the heading names another model, or this model number under an unrelated maker.
+    for (const name of ["Hot Point HTDX100ED3W", "Hot Point HTDX100ED3WW1", "Samsung HTDX100ED3WW", "Kenmore HTDX100ED3WW"]) {
+      expect(appSectionIdentity(GE, url, headed(name), slugs)).toEqual({ status: "mismatch", named: name });
+      // With the heading alone, the maker is checked as well as the model.
+      expect(appSectionIdentity(GE, url, unlinked(headed(name)), slugs)).toEqual({ status: "mismatch", named: name });
+    }
+    expect(appSectionIdentity(GE, url, unlinked(headed("HTDX100ED3WW")), slugs)).toEqual({ status: "mismatch", named: "HTDX100ED3WW" });
+    // Sister brands and spellings of one manufacturer name the same model, with or without the canonical link.
+    for (const name of ["Hot Point HTDX100ED3WW", "Hotpoint HTDX100ED3WW", "GE HTDX100ED3WW", "General Electric HTDX100ED3WW"]) {
+      expect(appSectionIdentity(GE, url, headed(name), slugs)).toEqual({ status: "ok" });
+      expect(appSectionIdentity(GE, url, unlinked(headed(name)), slugs)).toEqual({ status: "ok" });
+    }
+    expect(appSectionIdentity({ brand: "Hotpoint", model: "HTDX100ED3WW" }, url, backsplash, slugs)).toEqual({ status: "ok" });
+  });
+
+  it("rejects a parts list when a section's heading names another model or maker, even under this model's canonical link", async () => {
+    const headed = (name: string) => section.replace("<h1>Parts for Maytag MVWX655DW1:", `<h1>Parts for ${name}:`);
+    const cases: Array<[string, string]> = [
+      [headed("Maytag MVWX655DW2"), "Maytag MVWX655DW2"],
+      [headed("Samsung MVWX655DW1"), "Samsung MVWX655DW1"],
+      // No canonical link: the same model number under an unrelated maker.
+      [headed("Samsung MVWX655DW1").replace(/<link rel="canonical"[^>]*>/i, ""), "Samsung MVWX655DW1"],
+      // An empty cover sheet is read only when it names this model.
+      ["<html><h1>Parts for Samsung MVWX655DW1: Cover Sheet Parts</h1></html>", "Samsung MVWX655DW1"]
+    ];
+    for (const [html, named] of cases) {
+      const r = await lookupAppliancePartsPros({ brand: "Maytag", model: "MVWX655DW1" }, async (url) =>
+        url === TOP ? { ok: true, status: 200, finalUrl: url, html } : complete(url));
+      expect(r).toMatchObject({ status: "mismatch", rows: [], sourceUrl: null });
+      expect(r.warnings).toContain(`Section ${TOP} loaded a page that names ${named}, which is not Maytag MVWX655DW1; it was not read.`);
+      expect(r.warnings.at(-1)).toBe("1 of 6 sections could not be read for this model, so the catalog is incomplete; nothing was saved.");
+    }
+    // The refusal keeps the model in Retries.
+    const chained = await lookupModelBom({ brand: "Maytag", model: "MVWX655DW1" }, async (url) => {
+      if (url.includes("encompass")) return { ok: true, status: 200, finalUrl: url, html: "does not exist in our database" };
+      return url === TOP ? { ok: true, status: 200, finalUrl: url, html: headed("Samsung MVWX655DW1") } : complete(url);
+    });
+    expect(chained).toMatchObject({ status: "error", winner: null });
+    expect(chained.attempts.map((a) => [a.supplier, a.status])).toEqual([["encompass", "not_found"], ["appliancepartspros", "mismatch"]]);
+  });
+
+  it("reads a sister brand's sections, including empty ones that name the model", async () => {
+    // Whirlpool asked; the supplier files the washer under Maytag, the same manufacturer, in every URL, canonical link and heading.
+    const COVER = "https://www.appliancepartspros.com/cover-sheet-parts-for-maytag-mvwx655dw1.html";
+    const OPTIONAL = "https://www.appliancepartspros.com/optional-parts-not-parts-for-maytag-mvwx655dw1.html";
+    const empty: Record<string, string> = {
+      [COVER]: `<html><head><link rel="canonical" href="${COVER}"></head><body><h1>Parts for Maytag MVWX655DW1: Cover Sheet Parts</h1></body></html>`,
+      [OPTIONAL]: "<html><h1>Parts for Maytag MVWX655DW1: Optional Parts</h1></html>"
+    };
+    const whirlpool = await lookupAppliancePartsPros({ brand: "Whirlpool", model: "MVWX655DW1" }, async (url) =>
+      empty[url] ? { ok: true, status: 200, finalUrl: url, html: empty[url] } : complete(url));
+    expect(whirlpool).toMatchObject({ status: "found", sourceUrl: MAYTAG_PAGE });
+    expect(whirlpool.rows.length).toBeGreaterThan(5);
+    // GE asked; the supplier files the dryer under Hot Point.
+    const HOTPOINT = "https://www.appliancepartspros.com/parts-for-hot-point-htdx100ed3ww.html";
+    const ge = await lookupAppliancePartsPros({ brand: "GE", model: "HTDX100ED3WW" }, async (url) => url.includes("search.aspx")
+      ? { ok: true, status: 200, finalUrl: HOTPOINT, html: fx("app/HTDX100ED3WW-model.html") }
+      : { ok: true, status: 200, finalUrl: url, html: fx("app/HTDX100ED3WW-backsplash.html") });
+    expect(ge).toMatchObject({ status: "found", sourceUrl: HOTPOINT });
+    expect(ge.visited).toHaveLength(5);
   });
 
   describe("Encompass pages", () => {

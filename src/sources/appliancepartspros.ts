@@ -12,7 +12,7 @@ import type { Fetcher, ModelQuery, SupplierResult, SupplierRow } from "./types";
  *   - OEM is read from the part link slug, including hyphenated Samsung numbers
  *   - rows with no OEM are dropped and counted, never stored under the AP id
  *   - the search is by model only and follows redirects, so the landing page and every
- *     section page (its URL, and its canonical link or heading) must name this exact
+ *     section page (its URL, and each of its canonical link and heading) must name this exact
  *     brand + model before anything is read
  *   - a catalog with any section blocked, missing, failed or for another model is rejected
  *     whole, never saved partially
@@ -158,11 +158,11 @@ export async function lookupAppliancePartsPros(
         return { gap: "mismatched" as const, rows: [], dropped: 0 };
       }
       const named = appSectionIdentity(q, page.finalUrl, page.html, identity.slugs);
-      if (named === "mismatch") {
-        warnings.push(`Section ${url} loaded a page whose canonical link is another model's.`);
+      if (named.status === "mismatch") {
+        warnings.push(`Section ${url} loaded a page that names ${named.named}, which is not ${q.brand} ${q.model}; it was not read.`);
         return { gap: "mismatched" as const, rows: [], dropped: 0 };
       }
-      if (named === "unknown") {
+      if (named.status === "unknown") {
         warnings.push(`Section ${url} loaded a page that does not name ${q.brand} ${q.model} (a maintenance, challenge or changed page); it was not read.`);
         return { gap: "unread" as const, rows: [], dropped: 0 };
       }

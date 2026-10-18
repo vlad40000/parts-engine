@@ -118,25 +118,46 @@ export function appSectionBelongs(url: string, slugs: string[]): boolean {
 }
 
 /**
+ * The "{brand} {model}" a section page's heading names, or null when it names none. Section pages are headed "Parts for
+ * Hot Point HTDX100ED3WW: Backsplash, Blower & Drive Assembly Parts"; a heading without that opening names a model only
+ * when it ends in this model's number ("Maytag MVWX655DW1: Cover Sheet Parts"), so a notice ("We'll be right back",
+ * "Error 503: Service Unavailable") names none.
+ */
+function appSectionHeading(q: ModelQuery, h1: string): string | null {
+  const text = h1.replace(/\s+/g, " ").trim();
+  const named = (text.includes(": ") ? text.slice(0, text.indexOf(": ")) : text).trim();
+  if (/^parts for /i.test(named)) return named.slice("parts for ".length).trim() || null;
+  const model = identityToken(q.model);
+  const words = named.split(" ");
+  return model && words.some((_, i) => identityToken(words.slice(i).join(" ")) === model) ? named : null;
+}
+
+export type AppSectionIdentity = { status: "ok" } | { status: "mismatch"; named: string } | { status: "unknown" };
+
+/**
  * What a section page's own HTML says it is. Every captured section page has a canonical link to itself and a
- * heading naming its model ("Parts for Hot Point HTDX100ED3WW: Backsplash, Blower & Drive Assembly Parts"). A
+ * heading naming its model ("Parts for Hot Point HTDX100ED3WW: Backsplash, Blower & Drive Assembly Parts"). Each one
+ * present must name this model: the link by belonging to the confirmed model page, the heading by naming exactly this
+ * model under a compatible brand, as a model page slug must. A page whose link and heading disagree is refused. A
  * maintenance, challenge or changed page served at the section URL names neither, and lists no parts either, so
  * an empty section counts as read only when its page names this model.
  */
-export function appSectionIdentity(q: ModelQuery, finalUrl: string, html: string, slugs: string[]): "ok" | "mismatch" | "unknown" {
+export function appSectionIdentity(q: ModelQuery, finalUrl: string, html: string, slugs: string[]): AppSectionIdentity {
   const $ = load(html);
   const href = $('link[rel="canonical"]').attr("href");
+  let canonical: string | null = null;
   if (href) {
     try {
-      return appSectionBelongs(new URL(href, finalUrl).toString(), slugs) ? "ok" : "mismatch";
+      canonical = new URL(href, finalUrl).toString();
     } catch {
-      return "unknown";
+      return { status: "unknown" };
     }
+    if (!appSectionBelongs(canonical, slugs)) return { status: "mismatch", named: canonical };
   }
-  const h1 = $("h1").first().text();
-  const heading = h1.includes(": ") ? h1.slice(0, h1.indexOf(": ")) : h1;
-  const model = identityToken(q.model);
-  return model && heading.split(/\s+/).some((word) => identityToken(word) === model) ? "ok" : "unknown";
+  // A heading spells its brand and model as the slug does, with spaces for hyphens.
+  const heading = appSectionHeading(q, $("h1").first().text());
+  if (heading && !appSlugMatches(q, heading.replace(/ /g, "-"))) return { status: "mismatch", named: heading };
+  return canonical || heading ? { status: "ok" } : { status: "unknown" };
 }
 
 // ---------------------------------------------------------------------------
