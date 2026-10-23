@@ -11,7 +11,7 @@ const query = { brand: "LG", model: "WM2688HWM" };
  * The parser must recover every part from embedded HTML, not save the
  * first ten parts shown by the table/pager.
  */
-function modelHtml(partCount = 111, namedModel = "WM2688HWM"): string {
+function modelHtml(partCount = 111, namedModel = "WM2688HWM", canonical = expected): string {
   const parts = Array.from({ length: partCount }, (_, i) => ({
     partNumber: `ABC${String(i).padStart(5, "0")}`,
     partDescription: `LG assembly ${i}`,
@@ -20,7 +20,7 @@ function modelHtml(partCount = 111, namedModel = "WM2688HWM"): string {
     allowPurchase: "Y"
   }));
   const payload = JSON.stringify({ modelNumber: namedModel, parts });
-  return `<!doctype html><html><head><link rel="canonical" href="${expected}"></head><body>
+  return `<!doctype html><html><head><link rel="canonical" href="${canonical}"></head><body>
     <h1>${namedModel} LG replacement parts</h1>
     <p>Showing 1 to 10 of 111 entries</p>
     <script>self.__next_f.push([1,${JSON.stringify(payload)}])</script>
@@ -61,7 +61,7 @@ describe("LG Encompass ZEN model path", () => {
       calls.push(url);
       return url === expected
         ? { ok: false, status: 404, finalUrl: url, html: "" }
-        : { ok: true, status: 200, finalUrl: url, html: modelHtml() };
+        : { ok: true, status: 200, finalUrl: url, html: modelHtml(111, "WM2688HWM", legacy) };
     };
     const result = await lookupEncompass(query, fetcher);
     expect(calls).toEqual([expected, legacy]);
