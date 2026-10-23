@@ -10,7 +10,8 @@ import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
 import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearchExportError, type SharedResearchRow } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
-import { bandsFor, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
+import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
+import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
 import * as t from "./schema";
 import type { Db } from "./types";
 
@@ -124,11 +125,11 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         availability: sql`excluded.availability`,
         applianceType: sql`excluded.appliance_type`,
         configuration: sql`excluded.configuration`,
-        brand: sql`excluded.brand`,
-        brandKey: sql`excluded.brand_key`,
-        modelRaw: sql`excluded.model_raw`,
-        modelKey: sql`excluded.model_key`,
-        serial: sql`excluded.serial`,
+        brand: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.brand else excluded.brand end`,
+        brandKey: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.brand_key else excluded.brand_key end`,
+        modelRaw: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.model_raw else excluded.model_raw end`,
+        modelKey: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.model_key else excluded.model_key end`,
+        serial: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.serial else excluded.serial end`,
         color: sql`excluded.color`,
         condition: sql`excluded.condition`,
         location: sql`excluded.location`,
@@ -136,19 +137,67 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         notes: sql`excluded.notes`,
         listPrice: sql`excluded.list_price`,
         acquiredAt: sql`excluded.acquired_at`,
-        identityStatus: sql`excluded.identity_status`,
+        identityStatus: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.identity_status else excluded.identity_status end`,
         suspectFamilies: sql`excluded.suspect_families`,
-        ageFamily: sql`excluded.age_family`,
-        ageCandidateYears: sql`excluded.age_candidate_years`,
-        ageMonth: sql`excluded.age_month`,
-        ageWeek: sql`excluded.age_week`,
-        ageConfidence: sql`excluded.age_confidence`,
-        ageNote: sql`excluded.age_note`,
+        ageFamily: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_family else excluded.age_family end`,
+        ageCandidateYears: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_candidate_years else excluded.age_candidate_years end`,
+        ageMonth: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_month else excluded.age_month end`,
+        ageWeek: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_week else excluded.age_week end`,
+        ageConfidence: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_confidence else excluded.age_confidence end`,
+        ageNote: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_note else excluded.age_note end`,
         updatedAt: sql`now()`
       }
     });
   }
   return rows.length;
+}
+
+/**
+ * Change only the physical machine's model identity, not the shared supplier BOM.
+ * All donor / queue / machine views derive their model membership by joining
+ * the fleet's brand_key + model_key. A model change therefore updates them.
+ * Never move old-model shop-floor part states to a different model.
+ */
+export async function updateMachineModel(
+  db: Db,
+  input: { machineNo: string; expectedModel: string; expectedBrand: string; expectedSerial: string; model: string }
+): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict" | "has_part_states"> {
+  const requested = input.model.trim();
+  if (!requested || requested.length > 120 || isUnreadableModel(requested) || !modelKey(requested)) return "invalid";
+  const [current] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
+  if (!current) return "not_found";
+  if (current.modelRaw !== input.expectedModel || current.brand !== input.expectedBrand || current.serial !== input.expectedSerial) return "conflict";
+  if (!current.brandKey) return "invalid";
+  if (current.modelRaw === requested) return "unchanged";
+  const nextModelKey = modelKey(requested);
+  const age = decodeSerial(current.brand, requested, current.serial);
+  const changed = await db.update(t.fleetMachines).set({
+    modelRaw: requested,
+    modelKey: nextModelKey,
+    identityStatus: "ok",
+    ageFamily: age.family,
+    ageCandidateYears: age.candidateYears,
+    ageMonth: age.month,
+    ageWeek: age.week,
+    ageConfidence: age.confidence,
+    ageNote: age.note,
+    source: "manual_model",
+    updatedAt: new Date()
+  }).where(and(
+    eq(t.fleetMachines.machineNo, input.machineNo),
+    eq(t.fleetMachines.modelRaw, input.expectedModel),
+    eq(t.fleetMachines.brand, input.expectedBrand),
+    eq(t.fleetMachines.serial, input.expectedSerial),
+    // Prevent old harvest decisions (including overlapping MPNs) from being
+    // applied to a different physical machine-model identity.
+    sql`(${t.fleetMachines.modelKey} = ${nextModelKey} or not exists
+      (select 1 from machine_part_state ps where ps.machine_no = ${input.machineNo}))`
+  )).returning({ machineNo: t.fleetMachines.machineNo });
+  if (changed.length) return "saved";
+  const [record] = await db.select({ modelRaw: t.fleetMachines.modelRaw, brand: t.fleetMachines.brand, serial: t.fleetMachines.serial })
+    .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
+  if (!record || record.modelRaw !== input.expectedModel || record.brand !== input.expectedBrand || record.serial !== input.expectedSerial) return "conflict";
+  return "has_part_states";
 }
 
 export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string };
