@@ -4,6 +4,8 @@ import { fleetFacets, fleetSummary, getSettings, listFleet } from "@/src/db/quer
 import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
+import { ModelEditCell } from "@/src/components/model-edit-cell";
+import { updateMachineModelAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -89,7 +91,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 <td className="text-xs">{m.availability}</td>
                 <td className="text-xs">{m.appliance_type}</td>
                 <td>{m.brand}</td>
-                <td className="mono">{m.model_raw}{m.identity_status !== "ok" ? <span className="pill pill-wait ml-1">nameplate</span> : null}</td>
+                <td><ModelEditCell machineNo={m.machine_no} model={m.model_raw} brand={m.brand} serial={m.serial} identityStatus={m.identity_status} action={updateMachineModelAction} /></td>
                 <td className="mono text-xs">{m.serial}</td>
                 <td className="text-xs"><Years years={m.age_candidate_years} /></td>
                 <td className="text-xs text-muted">{m.suspect_families.join(", ")}</td>
