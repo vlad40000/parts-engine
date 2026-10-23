@@ -12,6 +12,7 @@ import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearc
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
+import { isEditableFleetStatus } from "@/src/lib/fleet-status";
 import * as t from "./schema";
 import type { Db } from "./types";
 
@@ -122,7 +123,7 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
     await db.insert(t.fleetMachines).values(values).onConflictDoUpdate({
       target: t.fleetMachines.machineNo,
       set: {
-        availability: sql`excluded.availability`,
+        availability: sql`case when fleet_machines.status_override then fleet_machines.availability else excluded.availability end`,
         applianceType: sql`excluded.appliance_type`,
         configuration: sql`excluded.configuration`,
         brand: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.brand else excluded.brand end`,
@@ -198,6 +199,41 @@ export async function updateMachineModel(
     .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
   if (!record || record.modelRaw !== input.expectedModel || record.brand !== input.expectedBrand || record.serial !== input.expectedSerial) return "conflict";
   return "has_part_states";
+}
+
+/** Change one machine's availability and record the transition in the same atomic SQL statement.
+ * We deliberately do not change cached model BOMs, part-state history, or other machines.
+ * The override flag prevents an older import from undoing a SOLD/SCRAPPED correction.
+ */
+export async function updateMachineStatus(
+  db: Db, input: { machineNo: string; expectedStatus: string; status: string }
+): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict"> {
+  if (!input.machineNo || !isEditableFleetStatus(input.status)) return "invalid";
+  if (input.expectedStatus === input.status) {
+    const [current] = await db.select({ availability: t.fleetMachines.availability })
+      .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
+    if (!current) return "not_found";
+    return current.availability === input.status ? "unchanged" : "conflict";
+  }
+  // The optimistic check and audit insert share one transaction (one statement on Neon HTTP).
+  // An old browser tab cannot overwrite a newer status; no phantom audit rows on failure.
+  const saved = await q<{ machine_no: string }>(db, sql`
+    with changed as (
+      update fleet_machines
+      set availability = ${input.status}, status_override = true, updated_at = now()
+      where machine_no = ${input.machineNo} and availability = ${input.expectedStatus}
+      returning machine_no
+    ), logged as (
+      insert into fleet_status_events (machine_no, previous_status, next_status, source)
+      select machine_no, ${input.expectedStatus}, ${input.status}, 'fleet_ui' from changed
+      returning machine_no
+    )
+    select machine_no from logged
+  `);
+  if (saved.length) return "saved";
+  const [current] = await db.select({ availability: t.fleetMachines.availability })
+    .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
+  return current ? "conflict" : "not_found";
 }
 
 export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string };
