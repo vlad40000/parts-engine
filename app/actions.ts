@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
   addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartState, updateMpnManual, upsertBaseline,
-  updateMachineModel, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
@@ -47,6 +47,29 @@ export async function importFleetAction(_prev: ActionResult | null, form: FormDa
     };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Import failed." };
+  }
+}
+
+/** Persist a machine's operational status; its downstream eligibility is calculated by existing queries. */
+export async function updateMachineStatusAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const input = {
+    machineNo: String(form.get("machineNo") ?? "").trim(),
+    expectedStatus: String(form.get("expectedStatus") ?? ""),
+    status: String(form.get("status") ?? "")
+  };
+  if (!input.machineNo) return { ok: false, message: "Machine ID is required." };
+  try {
+    const outcome = await updateMachineStatus(await getDb(), input);
+    if (outcome === "saved") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: `Status saved for machine ${input.machineNo}: ${input.status}. Parts-list and donor eligibility are recalculated.` };
+    }
+    if (outcome === "unchanged") return { ok: true, message: "Status is already current." };
+    if (outcome === "invalid") return { ok: false, message: "Select a supported status from the dropdown." };
+    if (outcome === "not_found") return { ok: false, message: "Machine not found. Refresh the Fleet page." };
+    return { ok: false, message: "This machine's status changed since the page loaded. Refresh and try again." };
+  } catch {
+    return { ok: false, message: "Could not save machine status. No change confirmed." };
   }
 }
 

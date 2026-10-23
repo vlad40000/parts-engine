@@ -5,7 +5,8 @@ import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
 import { ModelEditCell } from "@/src/components/model-edit-cell";
-import { updateMachineModelAction } from "./actions";
+import { StatusEditCell } from "@/src/components/status-edit-cell";
+import { updateMachineModelAction, updateMachineStatusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -88,7 +89,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
             {list.rows.map((m) => (
               <tr key={m.machine_no}>
                 <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(m.machine_no)}`}>{m.machine_no}</Link></td>
-                <td className="text-xs">{m.availability}</td>
+                <td><StatusEditCell machineNo={m.machine_no} status={m.availability} action={updateMachineStatusAction}/></td>
                 <td className="text-xs">{m.appliance_type}</td>
                 <td>{m.brand}</td>
                 <td><ModelEditCell machineNo={m.machine_no} model={m.model_raw} brand={m.brand} serial={m.serial} identityStatus={m.identity_status} action={updateMachineModelAction} /></td>

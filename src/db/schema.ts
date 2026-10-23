@@ -1,5 +1,6 @@
 import {
   boolean,
+  bigserial,
   check,
   date,
   index,
@@ -67,6 +68,8 @@ export const settings = pgTable("settings", {
 export const fleetMachines = pgTable("fleet_machines", {
   machineNo: text("machine_no").primaryKey(),
   availability: text("availability").notNull().default("UNCHECKED"),
+  /** A fleet UI status correction must survive later inventory imports. */
+  statusOverride: boolean("status_override").notNull().default(false),
   applianceType: text("appliance_type").notNull().default(""),
   configuration: text("configuration"),
   brand: text("brand").notNull().default(""),
@@ -97,6 +100,19 @@ export const fleetMachines = pgTable("fleet_machines", {
   index("fleet_availability_idx").on(t.availability),
   check("fleet_identity_check", sql`${t.identityStatus} in ('ok','needs_nameplate')`),
   check("fleet_age_conf_check", sql`${t.ageConfidence} in ('unique','ambiguous','none')`)
+]);
+
+/** Append-only manual status-change history. No user identity is stored: the app has no login accounts. */
+export const fleetStatusEvents = pgTable("fleet_status_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  previousStatus: text("previous_status").notNull(),
+  nextStatus: text("next_status").notNull(),
+  source: text("source").notNull().default("fleet_ui"),
+  changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  index("fleet_status_events_machine_time_idx").on(t.machineNo, t.changedAt),
+  check("fleet_status_events_changed_valid", sql`${t.previousStatus} <> ${t.nextStatus}`)
 ]);
 
 // ---------------------------------------------------------------------------
