@@ -37,17 +37,22 @@ const strip = (s: string) => s.replace(/[^a-z0-9]/gi, "").toUpperCase();
 export function encompassModelUrls(brand: string, model: string): string[] {
   const abv = BRAND_TO_ABV[brand.trim().toLowerCase()];
   if (!abv) return [];
-  const prefixes = [abv, ...(FALLBACK_ABV[abv] ?? [])];
   const urls: string[] = [];
   const [base, suffix] = model.trim().split("/");
-  for (const p of prefixes) {
+  const addUrls = (host: string, prefix: string) => {
     if (suffix !== undefined && strip(suffix)) {
       // Verified 2026-10-06: /model/SMGDV45H7000EW%7CA2/0001/ lists the Samsung BOM.
-      urls.push(`${ENCOMPASS_HOST}/model/${p}${strip(base)}%7C${strip(suffix)}`);
-      urls.push(`${ENCOMPASS_HOST}/model/${p}${strip(base)}%7C${strip(suffix)}/0001/`);
+      urls.push(`${host}/model/${prefix}${strip(base)}%7C${strip(suffix)}`);
+      urls.push(`${host}/model/${prefix}${strip(base)}%7C${strip(suffix)}/0001/`);
     }
-    urls.push(`${ENCOMPASS_HOST}/model/${p}${strip(model)}`);
-  }
+    urls.push(`${host}/model/${prefix}${strip(model)}`);
+  };
+
+  // Encompass currently also files LG washer WM2688HWM under ZEN on its main host.
+  // Prefer that confirmed identity, retaining the older PartStore LGE route as fallback.
+  // Never accept a cross-model redirect, a page without identity, or an incomplete parts list.
+  if (abv === "LGE") addUrls("https://encompass.com", "ZEN");
+  for (const p of [abv, ...(FALLBACK_ABV[abv] ?? [])]) addUrls(ENCOMPASS_HOST, p);
   return [...new Set(urls)];
 }
 
