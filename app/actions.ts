@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
   addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartState, updateMpnManual, upsertBaseline,
-  upsertFleet, upsertMarketFacts, upsertSaleEvents
+  updateMachineModel, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
@@ -47,6 +47,32 @@ export async function importFleetAction(_prev: ActionResult | null, form: FormDa
     };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Import failed." };
+  }
+}
+
+/** Correct a fleet record; supplier BOMs are never renamed or copied. */
+export async function updateMachineModelAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const input = {
+    machineNo: String(form.get("machineNo") ?? "").trim(),
+    expectedModel: String(form.get("expectedModel") ?? ""),
+    expectedBrand: String(form.get("expectedBrand") ?? ""),
+    expectedSerial: String(form.get("expectedSerial") ?? ""),
+    model: String(form.get("model") ?? "")
+  };
+  if (!input.machineNo) return { ok: false, message: "Machine ID is required." };
+  try {
+    const outcome = await updateMachineModel(await getDb(), input);
+    if (outcome === "saved") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: `Model saved for machine ${input.machineNo}. Parts lists and donors now use the corrected model.` };
+    }
+    if (outcome === "unchanged") return { ok: true, message: "Model number is already current." };
+    if (outcome === "invalid") return { ok: false, message: "Enter a valid model number (and ensure this machine has a brand)." };
+    if (outcome === "not_found") return { ok: false, message: "Machine not found; refresh the Fleet page." };
+    if (outcome === "conflict") return { ok: false, message: "This machine changed since the page loaded. Refresh and try again." };
+    return { ok: false, message: "Model cannot be changed to a different model while this machine has recorded pulled, failed, missing, or skipped part states. Existing decisions were kept; resolve them before changing model identity." };
+  } catch {
+    return { ok: false, message: "Could not save model number. No changes confirmed." };
   }
 }
 
