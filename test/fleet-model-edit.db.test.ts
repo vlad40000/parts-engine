@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { bomQueue, fleetSummary, listFleet, machineDetail, updateMachineModel, upsertFleet } from "@/src/db/queries";
+import { bomQueue, fleetSummary, listFleet, machineDetail, mpnDetail, updateMachineModel, upsertFleet } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { updateMachineModelAction } from "@/app/actions";
 
@@ -53,6 +53,8 @@ describe("manual fleet model correction", () => {
     expect(other?.parts.map(p => p.mpn_canonical)).toEqual(["OLDPART"]);
     expect((await db.select().from(schema.modelPartEdges)).length).toBe(2);
     expect((await db.select().from(schema.modelBomCache)).length).toBe(2);
+    expect((await mpnDetail(db, "NEWPART"))?.machines.map(m => m.machine_no).sort()).toEqual(["1", "3"]);
+    expect((await mpnDetail(db, "OLDPART"))?.machines.map(m => m.machine_no)).toEqual(["2"]);
     expect((await listFleet(db, {})).rows.find(x => x.machine_no === "1")?.model_raw).toBe("NEW-200");
     expect((await fleetSummary(db)).totals.models).toBe(2);
   });
@@ -71,7 +73,7 @@ describe("manual fleet model correction", () => {
 
   it("moves uncached corrected models to the new parts-list queue", async () => {
     expect(await edit("1", "UNKNOWN500")).toBe("saved");
-    expect((await machineDetail(db, "1"))?.bom).toBeNull();
+    expect((await machineDetail(db, "1"))?.bom).toBeUndefined();
     expect((await machineDetail(db, "1"))?.parts).toEqual([]);
     const queue = await bomQueue(db, { availability: "PARTS ONLY" }, ["PARTS ONLY"]);
     expect(queue.rows.map(x => x.model_key)).toContain("UNKNOWN500");
