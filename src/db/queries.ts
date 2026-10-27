@@ -8,7 +8,7 @@ import { harvestCandidates, type MachineMatchRow } from "@/src/lib/harvest-candi
 import { defaultDonorStatuses, donorStatusesForSelection, eligibleDonorStatuses, isOffLotDonorStatus, selectedDonorStatuses } from "@/src/lib/donor-status";
 import type { MarketRow } from "@/src/lib/market-import";
 import type { SaleRow } from "@/src/lib/sales-import";
-import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearchExportError, type SharedResearchRow } from "@/src/lib/shared-research-csv";
+import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearchExportError, type SharedResearchRow, type SharedResearchExportRow } from "@/src/lib/shared-research-csv";
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
@@ -1238,4 +1238,43 @@ export async function researchQueueExport(db: Db, batchNumber = 1) {
 /** All batches use the same database snapshot and stable ordering; no import is necessary. */
 export async function researchQueueExports(db: Db) {
   return buildAllSharedResearchExports(await researchQueueExportRows(db));
+}
+
+
+/**
+ * Fleet-wide MPN research export, independent of the donor/qualification research queue.
+ * A status scope selects physical machines BEFORE joining their cached model parts lists.
+ * Includes historical SOLD/SCRAPPED matches when selected. A matching BOM edge is evidence
+ * of model fitment, not a guarantee the part remains installed or is harvestable.
+ * Only models with saved part edges contribute rows; never synthesize unknown MPNs.
+ */
+export async function fleetMpnExportRows(db: Db, statuses: string[] | null): Promise<SharedResearchExportRow[]> {
+  if (statuses !== null && statuses.length === 0) throw new SharedResearchExportError("Select at least one machine status.");
+  const where = statuses === null ? sql`true`
+    : sql`f.availability in (${sql.join(statuses.map((status) => sql`${status}`), sql`, `)})`;
+  const rows = await q<{
+    mpn_canonical: string; mpn_display: string; description: string; new_price_min: string | null;
+    machines: number; models: number; statuses: string;
+  }>(db, sql`
+    select e.mpn_canonical,
+      coalesce(max(m.mpn_display), max(e.mpn_display)) mpn_display,
+      coalesce(max(m.description), max(e.description), '') description,
+      max(m.new_price_min) new_price_min,
+      count(distinct f.machine_no)::int machines,
+      count(distinct (f.brand_key, f.model_key))::int models,
+      string_agg(distinct f.availability, ', ' order by f.availability) statuses
+    from fleet_machines f
+    join model_part_edges e on e.brand_key = f.brand_key and e.model_key = f.model_key
+    left join mpn_master m on m.mpn_canonical = e.mpn_canonical
+    where ${where}
+    group by e.mpn_canonical
+    order by machines desc, e.mpn_canonical
+  `);
+  return rows.map((r) => ({
+    mpnCanonical: r.mpn_canonical,
+    mpnDisplay: r.mpn_display,
+    description: r.description,
+    notes: `Parts Engine fleet fitment: ${r.machines} matching machine(s), ${r.models} model(s); statuses: ${r.statuses}. Not confirmed physical stock.`,
+    newPrice: r.new_price_min
+  }));
 }
