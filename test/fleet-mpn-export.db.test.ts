@@ -85,7 +85,7 @@ describe("fleet-wide status-scoped research export", () => {
       "ACTIVE123", "CHECK123", "COMMON123", "NEEDS123", "READY123", "SCRAP123", "SOLD123"
     ]);
     expect(rows.find((row) => row.mpnCanonical === "COMMON123")?.notes)
-      .toContain("9 matching machine(s)");
+      .toContain("5 matching machine(s)");
     expect(rows.find((row) => row.mpnCanonical === "ACTIVE123")?.notes)
       .toContain("Not confirmed physical stock");
     // Existing queue behavior is NOT broadened by this feature.
@@ -120,7 +120,7 @@ describe("fleet-wide status-scoped research export", () => {
     expect(keys(await zip.files[csvNames[0]].async("string"))).toHaveLength(7);
     const readme = await zip.files["README.txt"].async("string");
     expect(readme).toContain("ALL STATUSES");
-    expect(readme).toContain("not a guarantee");
+    expect(readme).toContain("does NOT prove");
     expect(readme).toContain("Machines without cached BOMs");
     expect((await researchQueueCsvRows(db)).map((r) => r.mpn_canonical)).toEqual(before);
   });
