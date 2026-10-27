@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
-import { mpnIndex, researchQueueExport, type MpnFilter } from "@/src/db/queries";
+import { fleetFacets, mpnIndex, researchQueueExport, type MpnFilter } from "@/src/db/queries";
 import { PART_FAMILIES } from "@/src/lib/part-family";
 import { NoDatabase, PageTitle, Pager, QualificationPill, perSlotDay, qs, usd } from "@/src/components/ui";
 import { ButtonForm, UploadForm } from "@/src/components/forms";
@@ -11,6 +11,7 @@ import { SHARED_RESEARCH_CSV_HEADERS, SHARED_RESEARCH_MAX_ROWS, SharedResearchEx
 import { importMarketAction, importSalesAction, refreshMarketFactsAction } from "../actions";
 import { researchEvidenceAction } from "../research-evidence-actions";
 import { ResearchEvidenceUpload } from "@/src/components/research-evidence-upload";
+import { FleetMpnExport } from "@/src/components/fleet-mpn-export";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -32,6 +33,7 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
   const offset = Number(sp.offset ?? 0) || 0;
   const db = await getDb();
   const { rows, total, settings, rulesSet } = await mpnIndex(db, { view, family: sp.family, q: sp.q }, 100, offset);
+  const { availability: fleetStatuses } = await fleetFacets(db);
   // Only serialize the first CSV for the page report. The full ZIP is built on demand by its endpoint.
   let exportBatch: SharedResearchExport | null = null;
   let exportError: string | null = null;
@@ -127,6 +129,8 @@ export default async function MpnsPage({ searchParams }: { searchParams: SP }) {
           </div>
         </div>
       ) : null}
+
+      <FleetMpnExport statuses={fleetStatuses} />
 
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
