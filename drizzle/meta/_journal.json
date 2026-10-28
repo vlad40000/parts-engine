@@ -43,6 +43,13 @@
       "when": 1792784000000,
       "tag": "0005_fleet_status_edits",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793190000000,
+      "tag": "0006_fleet_location_edits",
+      "breakpoints": true
     }
   ]
 }
