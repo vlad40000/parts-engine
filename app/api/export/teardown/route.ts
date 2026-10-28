@@ -13,7 +13,7 @@ export async function GET() {
   const db = await getDb();
   const { rows, status } = await teardownQueue(db, 500);
   if (status === "set_rule") {
-    const header = ["machine", "status", "brand", "model", "mpn", "description", "diagram", "action"];
+    const header = ["machine", "status", "brand", "model", "mpn", "description", "diagram", "action", "location"];
     const headerCsv = toCsv(header, []);
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
@@ -24,7 +24,7 @@ export async function GET() {
             const physical = await physicalReviewQueue(db, 500, offset);
             if (!physical.length) break;
             const lines = physical.flatMap((m) => m.lines.map((l) => [m.machine_no, m.availability, m.brand, m.model_raw,
-              l.mpn_display, l.description, l.diagram_id, l.action].map(spreadsheetCell)));
+              l.mpn_display, l.description, l.diagram_id, l.action, m.location ?? ""].map(spreadsheetCell)));
             controller.enqueue(encoder.encode(toCsv(header, lines).slice(headerCsv.length)));
             if (physical.length < 500) break;
           }
@@ -40,13 +40,13 @@ export async function GET() {
   const money = (n: number | null) => (n == null ? "" : n.toFixed(2));
   const lines = rows.flatMap((m, i) => [
     ...m.lines.map((l) => [i + 1, m.machine_no, m.brand, m.model_raw, l.mpn_display, l.description, l.diagram_id, l.removal_min ?? "",
-      money(l.break_even), money(l.contribution), l.margin_pct ?? "", l.modeled_value_slot_day ?? "", "pull"]),
+      money(l.break_even), money(l.contribution), l.margin_pct ?? "", l.modeled_value_slot_day ?? "", "pull", m.location ?? ""]),
     ...m.suspect_lines.map((l) => [i + 1, m.machine_no, m.brand, m.model_raw, l.mpn_display, l.description, l.diagram_id, l.removal_min ?? "",
-      money(l.break_even), money(l.contribution), l.margin_pct ?? "", l.modeled_value_slot_day ?? "", "test first: matches failure symptom"])
+      money(l.break_even), money(l.contribution), l.margin_pct ?? "", l.modeled_value_slot_day ?? "", "test first: matches failure symptom", m.location ?? ""])
   ]);
   const csv = toCsv([
     "order", "machine", "brand", "model", "mpn", "description", "diagram", "removal_min",
-    "break_even", "projected_contribution", "projected_margin_pct", "modeled_value_slot_day", "action"
+    "break_even", "projected_contribution", "projected_margin_pct", "modeled_value_slot_day", "action", "location"
   ], lines.map((line) => line.map(spreadsheetCell)));
   return new NextResponse(csv, {
     headers: {

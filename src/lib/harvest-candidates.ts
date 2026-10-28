@@ -7,7 +7,7 @@
 import { isEligibleDonorStatus } from "./donor-status";
 
 export type MachineMatchRow = {
-  machine_no: string; availability: string; location: string | null; appliance_type: string; brand: string; brand_key: string;
+  machine_no: string; availability: string; location?: string | null; appliance_type: string; brand: string; brand_key: string;
   model_raw: string; model_key: string; diagram_id: string; age_candidate_years: number[];
   suspect_families: string[]; identity_status: string; state: string | null;
 };

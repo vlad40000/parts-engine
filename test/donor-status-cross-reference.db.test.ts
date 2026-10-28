@@ -135,7 +135,7 @@ describe("donor status at lookup and in existing BOM cross-reference", () => {
     const response = await exportTeardown();
     const csv = parseCsvRows(await response.text());
     expect(csv).toHaveLength(50);
-    expect(csv[0]).toEqual(["machine", "status", "brand", "model", "mpn", "description", "diagram", "action"]);
+    expect(csv[0]).toEqual(["machine", "status", "brand", "model", "mpn", "description", "diagram", "action", "location"]);
     expect(csv.slice(1).every((r) => r[7] === "review")).toBe(true);
   });
 
