@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
   addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartState, updateMpnManual, upsertBaseline,
-  updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  updateMachineLocation, updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
@@ -73,6 +73,28 @@ export async function updateMachineStatusAction(_prev: ActionResult | null, form
   }
 }
 
+/** Save one machine's physical placement, even across future inventory imports. */
+export async function updateMachineLocationAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const input = {
+    machineNo: String(form.get("machineNo") ?? "").trim(),
+    expectedLocation: String(form.get("expectedLocation") ?? ""),
+    location: String(form.get("location") ?? "")
+  };
+  try {
+    const outcome = await updateMachineLocation(await getDb(), input);
+    if (outcome === "saved") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: `Location saved for machine ${input.machineNo}.` };
+    }
+    if (outcome === "unchanged") return { ok: true, message: "Location is already current." };
+    if (outcome === "invalid") return { ok: false, message: "Location must be 120 characters or fewer and contain no control characters." };
+    if (outcome === "not_found") return { ok: false, message: "Machine not found. Refresh Fleet." };
+    return { ok: false, message: "Location changed since this page loaded. Refresh and try again." };
+  } catch {
+    return { ok: false, message: "Could not save location. No change confirmed." };
+  }
+}
+
 /** Correct a fleet record; supplier BOMs are never renamed or copied. */
 export async function updateMachineModelAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const input = {
@@ -108,6 +130,7 @@ export async function addMachineAction(_prev: ActionResult | null, form: FormDat
     ModelNumber: String(form.get("model") ?? ""),
     SerialNumber: String(form.get("serial") ?? ""),
     Condition: String(form.get("condition") ?? ""),
+    Location: String(form.get("location") ?? ""),
     Diagnosis: String(form.get("diagnosis") ?? "")
   };
   if (!rec.ID) return { ok: false, message: "Machine ID is required." };

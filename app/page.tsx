@@ -6,7 +6,8 @@ import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
 import { ModelEditCell } from "@/src/components/model-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
-import { updateMachineModelAction, updateMachineStatusAction } from "./actions";
+import { LocationEditCell } from "@/src/components/location-edit-cell";
+import { updateMachineLocationAction, updateMachineModelAction, updateMachineStatusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -16,9 +17,9 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const db = await getDb();
   const offset = Number(sp.offset ?? 0) || 0;
-  const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q };
+  const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort };
   const [summary, facets, list, settings] = await Promise.all([fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset), getSettings(db)]);
-  const base = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q };
+  const base = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort };
 
   if (!summary.totals?.machines) {
     return (
@@ -66,7 +67,8 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
       </section>
 
       <form className="mb-3 flex flex-wrap items-end gap-2 text-sm">
-        <input name="q" defaultValue={sp.q ?? ""} placeholder="Machine #, model or serial" className="input w-56" />
+        <input name="q" defaultValue={sp.q ?? ""} placeholder="Machine #, model, serial or location" className="input w-64" />
+        <input name="location" defaultValue={sp.location ?? ""} placeholder="Filter location" aria-label="Filter by location" className="input w-44" />
         <select name="availability" defaultValue={sp.availability ?? ""} className="input">
           <option value="">Any status</option>
           {facets.availability.map((a) => <option key={a}>{a}</option>)}
@@ -80,11 +82,16 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
           {DEFAULT_AGE_BANDS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
           <option value="unknown">Unknown age</option>
         </select>
+        <select name="sort" defaultValue={["location_asc", "location_desc"].includes(sp.sort ?? "") ? sp.sort : "machine"} aria-label="Sort Fleet" className="input">
+          <option value="machine">Machine #</option>
+          <option value="location_asc">Location A–Z</option>
+          <option value="location_desc">Location Z–A</option>
+        </select>
         <button className="btn">Filter</button>
       </form>
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Serial</th><th>Possible years</th><th>Symptom flags</th><th>Parts list</th></tr></thead>
+          <thead><tr><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Serial</th><th>Location</th><th>Possible years</th><th>Symptom flags</th><th>Parts list</th></tr></thead>
           <tbody>
             {list.rows.map((m) => (
               <tr key={m.machine_no}>
@@ -94,6 +101,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 <td>{m.brand}</td>
                 <td><ModelEditCell machineNo={m.machine_no} model={m.model_raw} brand={m.brand} serial={m.serial} identityStatus={m.identity_status} action={updateMachineModelAction} /></td>
                 <td className="mono text-xs">{m.serial}</td>
+                <td><LocationEditCell machineNo={m.machine_no} location={m.location} action={updateMachineLocationAction} /></td>
                 <td className="text-xs"><Years years={m.age_candidate_years} /></td>
                 <td className="text-xs text-muted">{m.suspect_families.join(", ")}</td>
                 <td>{m.bom_status === "found"

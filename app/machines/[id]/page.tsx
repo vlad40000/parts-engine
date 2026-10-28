@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { machineDetail } from "@/src/db/queries";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
-import { setPartStateAction } from "../../actions";
+import { setPartStateAction, updateMachineLocationAction } from "../../actions";
+import { LocationEditCell } from "@/src/components/location-edit-cell";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
       <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
         <div className="card p-3"><div className="text-xs text-muted">Serial</div><div className="mono">{m.serial || "—"}</div>
+          <div className="mt-2 text-xs text-muted">Physical location</div><LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
           <div className="mt-2 text-xs text-muted">Possible build years</div><Years years={m.ageCandidateYears} /><div className="text-xs text-muted">{m.ageNote}</div></div>
         <div className="card p-3"><div className="text-xs text-muted">Failure symptom</div><div>{m.diagnosis || "—"}</div>
           <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
