@@ -1301,21 +1301,3 @@ export async function fleetMpnExportRows(db: Db, statuses: string[] | null): Pro
     newPrice: r.new_price_min
   }));
 }
- then lpad(f.machine_no, 12, '0') else f.machine_no end`;
-  const order = f.sort === "location_asc" ? sql`f.location asc nulls last, ${byMachine}`
-    : f.sort === "location_desc" ? sql`f.location desc nulls last, ${byMachine}` : byMachine;
-  const rows = await q<{
-    machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; serial: string; location: string | null;
-    identity_status: string; age_candidate_years: number[]; age_confidence: string; suspect_families: string[]; bom_status: string | null;
-  }>(db, sql`
-    select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.identity_status,
-      f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status
-    from fleet_machines f
-    left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
-    where ${fleetWhere(f)}
-    order by case when f.machine_no ~ '^[0-9]+$' then lpad(f.machine_no, 12, '0') else f.machine_no end
-    limit ${limit} offset ${offset}`);
-  const [{ n }] = await q<{ n: number }>(db, sql`select count(*)::int n from fleet_machines f where ${fleetWhere(f)}`);
-  return { rows, total: n };
-}
-
