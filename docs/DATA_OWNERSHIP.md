@@ -5,12 +5,13 @@ Parts Engine uses its own database. Cross-application integration is through exp
 | Data | Authority | Parts Engine role |
 |---|---|---|
 | Machine identity / fleet intake | Appliance Inventory / App 1 when connected | Operational imported snapshot |
+| Machine physical location | Fleet import or Fleet UI manual override | Operational location per machine ID; manual moves survive subsequent imports |
 | Serial age candidates | Evidence-qualified resolver / imported machine record | Preserve candidates, confidence and reason |
 | Supplier model BOM | Parts Engine supplier research | Authoritative for the captured supplier observation |
 | eBay sold/active/price research | EbayDecisions | Cache with source + captured timestamp |
 | MPN replacement/equivalence research | Parts Image Finder | Cache relationship edges |
 | External MPN-to-model fitment | Parts Image Finder | Cache separate fitment edges with completeness/provenance |
-| Physical harvested stock | Roadrunner Parts Ledger | Consume stock facts; never infer from donor availability |
+| Physical harvested stock and loose-part bin locations | Roadrunner Parts Ledger | Consume stock facts; do not treat a donor machine location as a harvested part's bin |
 | SKU/listing/publish lifecycle | Roadrunner Parts Ledger | Downstream consumer / feedback |
 | Realized sale outcomes | Roadrunner Parts Ledger/eBay sync | Feedback/calibration input |
 | Harvest planning state | Parts Engine | Authoritative planning state |
