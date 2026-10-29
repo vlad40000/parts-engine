@@ -195,12 +195,18 @@ export const fleetFieldEvents = pgTable("fleet_field_events", {
    * already set the field (status rows of this kind live here, not in fleet_status_events).
    */
   applied: boolean("applied").notNull().default(true),
+  /**
+   * True: the note confirmed the value already on record (same before and after). Kept so a later
+   * upload of an older note cannot override an observation that was newer.
+   */
+  confirmation: boolean("confirmation").notNull().default(false),
   changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
   index("fleet_field_events_machine_time_idx").on(t.machineNo, t.changedAt),
   check("fleet_field_events_field_valid", sql`${t.field} in ('status','condition','location','diagnosis','notes','sticker_price')`),
-  check("fleet_field_events_status_history_only", sql`${t.field} <> 'status' or not ${t.applied}`),
-  check("fleet_field_events_changed_valid", sql`${t.previousValue} is distinct from ${t.nextValue}`)
+  // Status changes live in fleet_status_events; here only history-only rows and confirmations.
+  check("fleet_field_events_status_valid", sql`${t.field} <> 'status' or not ${t.applied} or ${t.confirmation}`),
+  check("fleet_field_events_changed_valid", sql`(${t.previousValue} is distinct from ${t.nextValue}) <> ${t.confirmation}`)
 ]);
 /**
  * Every part decision a tech note records, applied or history only. Only failed, missing and

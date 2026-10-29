@@ -133,6 +133,8 @@ export type PlannedEntry = {
   changes: FieldChange[];
   /** What the note said that an older date keeps out of the record: history only. */
   history: FieldChange[];
+  /** Values the note confirms as already on record (from = to): dated so an older note cannot override them. */
+  confirmed: FieldChange[];
   parts: PartDecision[];
   /** Availability states written to machine_part_state (applied failed, missing, removed). */
   partStates: PartStateChange[];
@@ -547,7 +549,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       const fact = known(r.machineNo);
       const planned: PlannedEntry = {
         key: e.key, label: `Entry ${i + 1}`, machineNo: r.machineNo, skipped: r.skipped, fact,
-        changes: [], history: [], parts: [], partStates: [], testFirst: [], locationCheck: null, struck: e.struck, info: []
+        changes: [], history: [], confirmed: [], parts: [], partStates: [], testFirst: [], locationCheck: null, struck: e.struck, info: []
       };
       entries.push(planned);
       if (r.skipped || !fact) continue;
@@ -875,6 +877,15 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         ["stickerPrice", fact.stickerPrice, price && !sameMoney(price, fact.stickerPrice) ? price : null]
       ];
       const historyNotes: string[] = [];
+      // A value the note states that is already on record: a newer observation of it, not a change.
+      const confirms: Array<[TrackedField, string | null]> = [
+        ["availability", target != null && target === fact.availability ? target : null],
+        ["location", nextLocation != null && nextLocation === (fact.location ?? "") ? nextLocation : null],
+        ["stickerPrice", price != null && sameMoney(price, fact.stickerPrice) ? fact.stickerPrice : null]
+      ];
+      for (const [field, value] of confirms) {
+        if (value != null && precedence(day, fact.fieldUpdates[field], fact.lastUpdate) === "apply") planned.confirmed.push({ field, from: value, to: value });
+      }
       for (const [field, from, to] of want) {
         if (to == null || (from ?? "") === to) continue;
         const p = fieldPrecedence[field] ?? "apply";
@@ -963,7 +974,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
   }
 
   const unanswered = questions.filter((q) => q.answer == null).length;
-  const hasChanges = entries.some((e) => e.changes.length || e.history.length || e.parts.length);
+  const hasChanges = entries.some((e) => e.changes.length || e.history.length || e.parts.length || e.confirmed.length);
   return {
     date,
     uploadedOn: facts.uploadedOn,

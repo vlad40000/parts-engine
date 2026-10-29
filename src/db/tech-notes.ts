@@ -103,8 +103,10 @@ export async function getTechNotePhoto(db: Db, id: string): Promise<{ type: stri
 
 /** A new reading (re-read, or edits saved for later). Only while the note is open. */
 export async function saveReading(db: Db, id: string, reading: NoteReading, reader?: { model: string | null; error: string | null }): Promise<boolean> {
+  // A new read from the reader replaces the reading the saved answers were given against: they go.
   const rows = await q<{ id: string }>(db, sql`
     update tech_notes set reading = ${JSON.stringify(reading)}::jsonb, card = ${reading.card},
+      answers = ${reader ? sql`'{}'::jsonb` : sql`answers`},
       reader_model = ${reader ? reader.model : sql`reader_model`}, reader_error = ${reader ? reader.error : sql`reader_error`}, updated_at = now()
     where id = ${id}::uuid and status = 'open' returning id`);
   return rows.length > 0;
@@ -219,6 +221,9 @@ async function latestUpdates(db: Db, machineNos: string[]): Promise<UpdateRow[]>
       select machine_no, 'availability' key, coalesce(observed_at, changed_at) at, source, null::text state, null::text state_token
       from fleet_status_events where machine_no = any(${nos})
       union all
+      select machine_no, 'availability', coalesce(observed_at, changed_at), source, null, null
+      from fleet_field_events where field = 'status' and confirmation and machine_no = any(${nos})
+      union all
       select machine_no, case field when 'sticker_price' then 'stickerPrice' else field end, coalesce(observed_at, changed_at), source, null, null
       from fleet_field_events where applied and field in ('condition','location','diagnosis','sticker_price') and machine_no = any(${nos})
       union all
@@ -305,7 +310,7 @@ const FIELD_COLUMN = { availability: "status", condition: "condition", location:
 export async function applyTechNote(db: Db, id: string, plan: Plan, reading: NoteReading, answers: Answers): Promise<ApplyOutcome> {
   if (!plan.date) return "conflict";
   const live = plan.entries.filter((e) => e.fact && !e.skipped);
-  const machines = live.filter((e) => e.changes.length || e.history.length || e.testFirst.length).map((e) => {
+  const machines = live.filter((e) => e.changes.length || e.history.length || e.testFirst.length || e.confirmed.length).map((e) => {
     const f = e.fact!;
     const to = (field: string) => e.changes.find((c) => c.field === field);
     const diagnosis = to("diagnosis")?.to ?? f.diagnosis;
@@ -314,7 +319,7 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     const olderNote = e.history.length > 0 || e.parts.some((p) => !p.applied);
     // Status and location carry their own override flags (status_override, location_override from #31).
     const local = e.changes.flatMap((c) => (c.field === "availability" || c.field === "location" ? [] : [FIELD_COLUMN[c.field]]));
-    const decided = e.changes.some((c) => c.field !== "notes") || e.parts.some((p) => p.applied && p.machineNo === f.machineNo);
+    const decided = e.changes.some((c) => c.field !== "notes") || e.confirmed.length > 0 || e.parts.some((p) => p.applied && p.machineNo === f.machineNo);
     return {
       machine_no: f.machineNo,
       version: f.version,
@@ -337,8 +342,9 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
   // Donors whose part a note marks removed, without any change of their own.
   const partOnly = [...new Set(live.flatMap((e) => e.parts.filter((p) => p.applied && !inInput.has(p.machineNo)).map((p) => p.machineNo)))];
   const events = live.flatMap((e) => [
-    ...e.changes.filter((c) => c.field !== "availability").map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.from, next: c.to, applied: true })),
-    ...e.history.map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.from, next: c.to, applied: false }))
+    ...e.changes.filter((c) => c.field !== "availability").map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.from, next: c.to, applied: true, confirmation: false })),
+    ...e.history.map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.from, next: c.to, applied: false, confirmation: false })),
+    ...e.confirmed.map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.to, next: c.to, applied: true, confirmation: true }))
   ]);
   // One row per machine and part (the planner already settled conflicts): a bulk upsert cannot touch a row twice.
   const parts = [...new Map(live.flatMap((e) => e.partStates).map((p) => [`${p.machineNo}|${p.mpn}`,
@@ -412,11 +418,11 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
       returning 1
     ),
     field_events as (
-      insert into fleet_field_events (machine_no, field, previous_value, next_value, source, tech_note_id, observed_at, applied)
-      select e.machine_no, e.field, e.prev, e.next, 'tech_note', ${id}::uuid, ${obs}, e.applied
-      from jsonb_to_recordset(${JSON.stringify(events)}::jsonb) as e(machine_no text, field text, prev text, next text, applied boolean)
+      insert into fleet_field_events (machine_no, field, previous_value, next_value, source, tech_note_id, observed_at, applied, confirmation)
+      select e.machine_no, e.field, e.prev, e.next, 'tech_note', ${id}::uuid, ${obs}, e.applied, e.confirmation
+      from jsonb_to_recordset(${JSON.stringify(events)}::jsonb) as e(machine_no text, field text, prev text, next text, applied boolean, confirmation boolean)
       join upd u on u.machine_no = e.machine_no
-      where e.prev is distinct from e.next
+      where (e.prev is distinct from e.next) <> e.confirmation
       returning 1
     ),
     part_states as (
@@ -553,7 +559,8 @@ export async function machineHistory(db: Db, machineNo: string, limit = 60): Pro
         source, tech_note_id::text tech_note_id, true applied, changed_at sort, 1 rank
       from fleet_status_events where machine_no = ${machineNo}
       union all
-      select ${shopTime("changed_at")}, ${day("observed_at")}, field, previous_value, next_value, source, tech_note_id::text, applied, changed_at, 1
+      select ${shopTime("changed_at")}, ${day("observed_at")}, case when confirmation then field || ' confirmed' else field end,
+        previous_value, next_value, source, tech_note_id::text, applied, changed_at, 1
       from fleet_field_events where machine_no = ${machineNo}
       union all
       select ${shopTime("created_at")}, ${day("observed_at")}, 'part ' || kind, null, trim(both ' ' from coalesce(part_name, '') || ' ' || coalesce(mpn_display, '')),

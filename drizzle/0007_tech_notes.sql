@@ -8,10 +8,11 @@ CREATE TABLE "fleet_field_events" (
 	"tech_note_id" uuid,
 	"observed_at" timestamp with time zone,
 	"applied" boolean DEFAULT true NOT NULL,
+	"confirmation" boolean DEFAULT false NOT NULL,
 	"changed_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "fleet_field_events_field_valid" CHECK ("fleet_field_events"."field" in ('status','condition','location','diagnosis','notes','sticker_price')),
-	CONSTRAINT "fleet_field_events_status_history_only" CHECK ("fleet_field_events"."field" <> 'status' or not "fleet_field_events"."applied"),
-	CONSTRAINT "fleet_field_events_changed_valid" CHECK ("fleet_field_events"."previous_value" is distinct from "fleet_field_events"."next_value")
+	CONSTRAINT "fleet_field_events_status_valid" CHECK ("fleet_field_events"."field" <> 'status' or not "fleet_field_events"."applied" or "fleet_field_events"."confirmation"),
+	CONSTRAINT "fleet_field_events_changed_valid" CHECK (("fleet_field_events"."previous_value" is distinct from "fleet_field_events"."next_value") <> "fleet_field_events"."confirmation")
 );
 --> statement-breakpoint
 CREATE TABLE "fleet_location_checks" (

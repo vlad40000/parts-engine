@@ -466,6 +466,20 @@ describe("chronology: an older note never reverses a newer decision", () => {
   });
 });
 
+describe("confirmations", () => {
+  it("dates a value the note confirms, without a change or a location check, only when the note is newer", () => {
+    const m = fact("611", { availability: "NEEDS PARTS", location: "ICU", stickerPrice: "120.00" });
+    const r = { entries: [entry("611", { status: { checked: "NEEDS PARTS", phrases: [], confidence: "high" }, location: { name: "ICU", text: "", confidence: "high" }, price: { text: "$120", confidence: "high" } })] };
+    const p = plan(r, facts([m]));
+    expect(p.entries[0].changes).toEqual([]);
+    expect(p.entries[0].confirmed.map((c) => [c.field, c.to])).toEqual([["availability", "NEEDS PARTS"], ["location", "ICU"], ["stickerPrice", "120.00"]]);
+    expect(p.entries[0].locationCheck).toBeNull();
+    expect(p.ready).toBe(true);
+    const older = fact("611", { availability: "NEEDS PARTS", location: "ICU", fieldUpdates: { location: { day: "2026-05-23", label: "on 5/23/26" } } });
+    expect(plan(r, facts([older])).entries[0].confirmed.map((c) => c.field)).toEqual(["availability"]);
+  });
+});
+
 describe("VERIFY LOCATION", () => {
   it("raises a check when the note records a different location than the record, and keeps both", () => {
     const p = plan({ entries: [entry("611", { location: { name: "Graveyard", text: "", confidence: "high" } })] }, facts([fact("611", { availability: "NEEDS PARTS", location: "ICU" })]));

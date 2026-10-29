@@ -1,5 +1,5 @@
 {
-  "id": "1f224df3-51ee-4e66-b311-74ab5ff448f1",
+  "id": "5c741e29-a7fc-4103-8108-7afef68d02aa",
   "prevId": "ac2e2f33-9a01-4cb5-8d25-009eafcb6136",
   "version": "7",
   "dialect": "postgresql",
@@ -63,6 +63,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": true
+        },
+        "confirmation": {
+          "name": "confirmation",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "changed_at": {
           "name": "changed_at",
@@ -131,13 +138,13 @@
           "name": "fleet_field_events_field_valid",
           "value": "\"fleet_field_events\".\"field\" in ('status','condition','location','diagnosis','notes','sticker_price')"
         },
-        "fleet_field_events_status_history_only": {
-          "name": "fleet_field_events_status_history_only",
-          "value": "\"fleet_field_events\".\"field\" <> 'status' or not \"fleet_field_events\".\"applied\""
+        "fleet_field_events_status_valid": {
+          "name": "fleet_field_events_status_valid",
+          "value": "\"fleet_field_events\".\"field\" <> 'status' or not \"fleet_field_events\".\"applied\" or \"fleet_field_events\".\"confirmation\""
         },
         "fleet_field_events_changed_valid": {
           "name": "fleet_field_events_changed_valid",
-          "value": "\"fleet_field_events\".\"previous_value\" is distinct from \"fleet_field_events\".\"next_value\""
+          "value": "(\"fleet_field_events\".\"previous_value\" is distinct from \"fleet_field_events\".\"next_value\") <> \"fleet_field_events\".\"confirmation\""
         }
       },
       "isRLSEnabled": false

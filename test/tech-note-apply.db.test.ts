@@ -63,9 +63,9 @@ const reading6171 = () => normalizeReading({
 const ANSWERS: Answers = { "location:red building": "add:Red Building", "part:e0:p0": "use:3948891" };
 const machine = async (no: string) => (await db.select().from(schema.fleetMachines).where(eq(schema.fleetMachines.machineNo, no)))[0];
 /** Plans and applies a reading as a new note; returns the note id. */
-const applyReading = async (reading: ReturnType<typeof normalizeReading>, answers: Answers = {}) => {
+const applyReading = async (reading: ReturnType<typeof normalizeReading>, answers: Answers = {}, now: Date = NOW) => {
   const id = await createTechNote(db, { origin: "manual", reading });
-  const plan = planNote(reading, await loadPlanFacts(db, reading, answers, NOW), answers);
+  const plan = planNote(reading, await loadPlanFacts(db, reading, answers, now), answers);
   expect(plan.unanswered).toBe(0);
   expect(await applyTechNote(db, id, plan, reading, answers)).toBe("applied");
   return { id, plan };
@@ -185,6 +185,24 @@ describe("tech note apply", () => {
     expect(await db.select().from(schema.fleetStatusEvents).where(eq(schema.fleetStatusEvents.techNoteId, id))).toEqual([]);
     expect(await openLocationCheckCount(db)).toBe(1);
     expect((await machineHistory(db, "6171")).filter((h) => !h.applied).map((h) => h.field).sort()).toEqual(["condition", "diagnosis", "location", "part removed", "status"]);
+  });
+
+  it("keeps a newer note's confirmation of the location, so an older note uploaded later is history", async () => {
+    await applyReading(reading6171(), ANSWERS);
+    const confirm = normalizeReading({ date: { text: "5/22/26" }, entries: [{ machine: { text: "6171" }, location: { name: "Red Building" }, workDone: "checked timer" }] });
+    const LATER = new Date("2026-05-23T15:00:00Z");
+    const { id } = await applyReading(confirm, {}, LATER);
+    const rows = await db.select().from(schema.fleetFieldEvents).where(eq(schema.fleetFieldEvents.techNoteId, id)).orderBy(schema.fleetFieldEvents.field);
+    expect(rows.map((r) => [r.field, r.previousValue, r.nextValue, r.confirmation])).toEqual([
+      ["location", "Red Building", "Red Building", true], ["notes", expect.any(String), expect.any(String), false]
+    ]);
+    expect(await openLocationCheckCount(db)).toBe(1);
+    expect((await machine("6171")).lastFieldUpdateAt).toEqual(shopDay("2026-05-22"));
+    const older = normalizeReading({ date: { text: "5/16/26" }, entries: [{ machine: { text: "6171" }, location: { name: "Graveyard" } }] });
+    const p = planNote(older, await loadPlanFacts(db, older, {}, LATER), {});
+    expect(p.questions).toEqual([]);
+    expect(p.entries[0].history.map((c) => [c.field, c.to])).toEqual([["location", "Graveyard"]]);
+    expect((await machineHistory(db, "6171")).some((h) => h.field === "location confirmed")).toBe(true);
   });
 
   it("asks when a Fleet edit and the note fall on the same day", async () => {

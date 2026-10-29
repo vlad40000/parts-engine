@@ -89,8 +89,11 @@ describe("tech note actions", () => {
 
   it("re-reads carefully, then applies only once every question is answered and the records are unchanged", async () => {
     const id = idFrom(await redirectOf(readCardAction(null, form({ photo: photo() }))));
+    // Answers saved against the first reading do not carry over to a new read.
+    expect(await saveDraftAction(id, (await getTechNote(db, id))!.reading!, { "status:e0": "set:PARTS ONLY" })).toMatchObject({ ok: true });
     expect(await rereadNoteAction(null, form({ id }))).toMatchObject({ ok: true });
     expect((await getTechNote(db, id))?.readerModel).toBe("careful-model");
+    expect((await getTechNote(db, id))?.answers).toEqual({});
 
     const r = (await getTechNote(db, id))!.reading!;
     const facts = await loadFactsAction(id, r, {});

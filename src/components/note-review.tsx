@@ -108,7 +108,7 @@ export function NoteReview(p: NoteReviewProps) {
         <section>
           <h2 className="mb-2 font-semibold">What will change</h2>
           <div className="flex flex-col gap-3">
-            {plan.entries.map((e) => <EntryChanges key={e.key} e={e} />)}
+            {plan.entries.map((e) => <EntryChanges key={e.key} e={e} plan={plan} />)}
           </div>
           {plan.locationsToAdd.length ? <p className="mt-2 text-sm">New location{plan.locationsToAdd.length > 1 ? "s" : ""} for the location list: {plan.locationsToAdd.map((l) => l.name).join(", ")}.</p> : null}
           {plan.aliasesToAdd.length ? <p className="mt-1 text-xs text-muted">Remembered wording: {plan.aliasesToAdd.map((a) => `"${a.alias}" = ${a.name}`).join(", ")}.</p> : null}
@@ -183,7 +183,7 @@ function appended(c: FieldChange): string | null {
   return c.to.slice(c.from.length).trim();
 }
 
-function EntryChanges({ e }: { e: PlannedEntry }) {
+function EntryChanges({ e, plan }: { e: PlannedEntry; plan: Plan }) {
   return (
     <div className="card p-3">
       <div className="flex flex-wrap items-baseline gap-x-2">
@@ -210,7 +210,8 @@ function EntryChanges({ e }: { e: PlannedEntry }) {
             </tbody>
           </table>
         </div>
-      ) : e.machineNo && !e.parts.length && !e.history.length ? <p className="mt-1 text-xs text-muted">Nothing changes for this machine.</p> : null}
+      ) : e.machineNo && !e.parts.length && !e.history.length && !e.confirmed?.length ? <p className="mt-1 text-xs text-muted">Nothing changes for this machine.</p> : null}
+      {e.confirmed?.length ? <p className="mt-2 text-xs text-muted">Confirms what is on record (dated {plan.date ? shortDate(plan.date) : "with the note"}): {e.confirmed.map((c) => `${FIELD_WORD[c.field]} ${c.field === "stickerPrice" ? `$${c.to}` : c.to}`).join("; ")}</p> : null}
       {e.locationCheck ? (
         <p className="mt-2 text-xs"><span className="pill pill-stop">VERIFY LOCATION</span> on record: {e.locationCheck.from}; this note: {e.locationCheck.to}. Both stay in the history until someone checks.</p>
       ) : null}
@@ -376,7 +377,7 @@ function ApplyBar({ noteId, plan, reading, answers, facts, applyAction, saveDraf
   const versions = Object.fromEntries(plan.entries.filter((e) => e.fact).map((e) => [e.fact!.machineNo, facts.machines[e.fact!.machineNo]?.version ?? e.fact!.version]));
   // The part records each state write was planned against: apply refuses if any changed since.
   const partRecords = Object.fromEntries(plan.entries.flatMap((e) => e.partStates.map((x) => [`${x.machineNo}|${x.mpn}`, x.seenToken ?? ""])));
-  const machines = plan.entries.filter((e) => e.changes.length || e.parts.length || e.history.length).length;
+  const machines = plan.entries.filter((e) => e.changes.length || e.parts.length || e.history.length || e.confirmed.length).length;
   const blocker = plan.unanswered ? `Answer ${plan.unanswered === 1 ? "the last question" : `${plan.unanswered} questions`} to apply.` : !plan.hasChanges ? "Nothing to apply yet." : !plan.date ? "Settle the note's date to apply." : null;
   return (
     <div className="sticky bottom-0 -mx-1 border-t border-line bg-paper/95 px-1 py-3 backdrop-blur">
