@@ -78,6 +78,7 @@ export function MachineForm({ action }: { action: (prev: ActionResult | null, fo
           </select>
         </label>
         {field("condition", "Condition")}
+        {field("location", "Physical location", { placeholder: "YARD-A3 / RACK-B2", maxLength: 120 })}
         {field("diagnosis", "Why it was retired (failure symptom)", { placeholder: "won't drain, no power, …" })}
       </div>
       <div className="mt-3"><Submit label="Save machine" pendingLabel="Saving machine, reading parts list…" /></div>

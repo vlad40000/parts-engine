@@ -19,7 +19,7 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   serial: ["serialnumber", "serial number", "serial", "serial #"],
   color: ["color", "colour"],
   condition: ["condition"],
-  location: ["location"],
+  location: ["location", "storage location", "yard location", "warehouse location"],
   acquiredAt: ["dateacquired", "date acquired", "acquired"],
   diagnosis: ["diagnosis", "failure", "symptom", "primary failure"],
   repairNotes: ["repairnotes", "repair notes"],

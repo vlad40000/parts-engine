@@ -133,7 +133,7 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         serial: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.serial else excluded.serial end`,
         color: sql`excluded.color`,
         condition: sql`excluded.condition`,
-        location: sql`excluded.location`,
+        location: sql`case when fleet_machines.location_override or excluded.location is null then fleet_machines.location else excluded.location end`,
         diagnosis: sql`excluded.diagnosis`,
         notes: sql`excluded.notes`,
         listPrice: sql`excluded.list_price`,
@@ -151,6 +151,25 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
     });
   }
   return rows.length;
+}
+
+/** Update a single physical machine's location without touching shared parts lists. */
+export async function updateMachineLocation(
+  db: Db, input: { machineNo: string; expectedLocation: string; location: string }
+): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict"> {
+  const location = input.location.trim();
+  if (!input.machineNo || location.length > 120 || /[\u0000-\u001F\u007F]/.test(location)) return "invalid";
+  const [current] = await db.select({ location: t.fleetMachines.location }).from(t.fleetMachines)
+    .where(eq(t.fleetMachines.machineNo, input.machineNo));
+  if (!current) return "not_found";
+  if ((current.location ?? "") !== input.expectedLocation) return "conflict";
+  if ((current.location ?? "") === location) return "unchanged";
+  const saved = await db.update(t.fleetMachines)
+    .set({ location: location || null, locationOverride: true, updatedAt: new Date() })
+    .where(and(eq(t.fleetMachines.machineNo, input.machineNo),
+      sql`coalesce(${t.fleetMachines.location}, '') = ${input.expectedLocation}`))
+    .returning({ machineNo: t.fleetMachines.machineNo });
+  return saved.length ? "saved" : "conflict";
 }
 
 /**
@@ -236,14 +255,15 @@ export async function updateMachineStatus(
   return current ? "conflict" : "not_found";
 }
 
-export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string };
+export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string; location?: string; sort?: string };
 
 function fleetWhere(f: FleetFilter) {
   const parts = [sql`true`];
   if (f.availability) parts.push(sql`f.availability = ${f.availability}`);
   if (f.type) parts.push(sql`f.appliance_type = ${f.type}`);
   if (f.brand) parts.push(sql`f.brand_key = ${f.brand}`);
-  if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"})`);
+  if (f.location?.trim()) parts.push(sql`coalesce(f.location, '') ilike ${"%" + f.location.trim() + "%"}`);
+  if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"})`);
   if (f.band) {
     const band = DEFAULT_AGE_BANDS.find((b) => b.key === f.band);
     if (band) parts.push(sql`exists (select 1 from unnest(f.age_candidate_years) y where y between ${band.start} and ${band.end})`);
@@ -294,16 +314,19 @@ export async function fleetSummary(db: Db) {
 }
 
 export async function listFleet(db: Db, f: FleetFilter, limit = 100, offset = 0) {
+  const byMachine = sql`case when f.machine_no ~ '^[0-9]+$' then lpad(f.machine_no, 12, '0') else f.machine_no end`;
+  const order = f.sort === "location_asc" ? sql`f.location asc nulls last, ${byMachine}`
+    : f.sort === "location_desc" ? sql`f.location desc nulls last, ${byMachine}` : byMachine;
   const rows = await q<{
-    machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; serial: string;
+    machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; serial: string; location: string | null;
     identity_status: string; age_candidate_years: number[]; age_confidence: string; suspect_families: string[]; bom_status: string | null;
   }>(db, sql`
-    select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.identity_status,
+    select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.location, f.identity_status,
       f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status
     from fleet_machines f
     left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
     where ${fleetWhere(f)}
-    order by case when f.machine_no ~ '^[0-9]+$' then lpad(f.machine_no, 12, '0') else f.machine_no end
+    order by ${order}
     limit ${limit} offset ${offset}`);
   const [{ n }] = await q<{ n: number }>(db, sql`select count(*)::int n from fleet_machines f where ${fleetWhere(f)}`);
   return { rows, total: n };
@@ -674,7 +697,7 @@ export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "
     ? sql`and f.identity_status = 'ok' and f.availability = any(${sql.raw(pgTextArray(selectedDonorStatuses(s.donorAvailabilities, availability === "include_unchecked")))}) and s.state is null`
     : availability !== "all" ? sql`and f.availability = ${availability}` : sql``;
   const machines = await q<MachineMatchRow>(db, sql`
-    select f.machine_no, f.availability, f.appliance_type, f.brand, f.brand_key, f.model_raw, f.model_key, e.diagram_id,
+    select f.machine_no, f.availability, f.location, f.appliance_type, f.brand, f.brand_key, f.model_raw, f.model_key, e.diagram_id,
       f.age_candidate_years, f.suspect_families, f.identity_status, s.state
     from model_part_edges e
     join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
@@ -1031,7 +1054,7 @@ export type PullLine = {
   modeled_value_slot_day: number | null; suspect: boolean;
 };
 export type TeardownRow = {
-  machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
+  machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string; location: string | null;
   age_candidate_years: number[];
   /** Ordering key only: sum of modeled value / slot-day of qualified parts. Not a profit score. */
   order_value: number;
@@ -1044,7 +1067,7 @@ export type PhysicalReviewLine = {
   action: "review" | "test_first";
 };
 export type PhysicalReviewRow = {
-  machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
+  machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string; location: string | null;
   age_candidate_years: number[]; lines: PhysicalReviewLine[];
 };
 
@@ -1065,12 +1088,12 @@ export async function physicalReviewCount(db: Db): Promise<number> {
 export async function physicalReviewQueue(db: Db, limit = 150, offset = 0): Promise<PhysicalReviewRow[]> {
   const settings = await getSettings(db);
   const matches = await q<{
-    machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
+    machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string; location: string | null;
     age_candidate_years: number[]; suspect_families: string[]; mpn_canonical: string; mpn_display: string;
     description: string; diagram_id: string; part_family: string;
   }>(db, sql`
     with selected as (
-      select f.machine_no, f.brand, f.model_raw, f.appliance_type, f.availability, f.age_candidate_years,
+      select f.machine_no, f.brand, f.model_raw, f.appliance_type, f.availability, f.location, f.age_candidate_years,
         f.suspect_families, f.brand_key, f.model_key
       from fleet_machines f
       where f.identity_status = 'ok'
@@ -1082,7 +1105,7 @@ export async function physicalReviewQueue(db: Db, limit = 150, offset = 0): Prom
       order by f.machine_no
       limit ${limit} offset ${offset}
     )
-    select s.machine_no, s.brand, s.model_raw, s.appliance_type, s.availability, s.age_candidate_years, s.suspect_families,
+    select s.machine_no, s.brand, s.model_raw, s.appliance_type, s.availability, s.location, s.age_candidate_years, s.suspect_families,
       e.mpn_canonical, m.mpn_display, coalesce(nullif(e.description, ''), m.description) description,
       e.diagram_id, m.part_family
     from selected s
@@ -1094,7 +1117,7 @@ export async function physicalReviewQueue(db: Db, limit = 150, offset = 0): Prom
   for (const match of matches) {
     const machine = machines.get(match.machine_no) ?? {
       machine_no: match.machine_no, brand: match.brand, model_raw: match.model_raw,
-      appliance_type: match.appliance_type, availability: match.availability,
+      appliance_type: match.appliance_type, availability: match.availability, location: match.location,
       age_candidate_years: match.age_candidate_years, lines: []
     };
     machine.lines.push({
@@ -1120,10 +1143,10 @@ export async function teardownQueue(db: Db, limit = 100): Promise<TeardownResult
   if (!qualifiedRows.length) return { status: "ok", rows: [], qualified: 0, settings: s };
   const byMpn = new Map(qualifiedRows.map((r) => [r.mpn_canonical, r]));
   const candidates = await q<{
-    machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string;
+    machine_no: string; brand: string; model_raw: string; appliance_type: string; availability: string; location: string | null;
     age_candidate_years: number[]; suspect_families: string[]; mpn_canonical: string; diagram_id: string; description: string;
   }>(db, sql`
-    select f.machine_no, f.brand, f.model_raw, f.appliance_type, f.availability, f.age_candidate_years, f.suspect_families,
+    select f.machine_no, f.brand, f.model_raw, f.appliance_type, f.availability, f.location, f.age_candidate_years, f.suspect_families,
       e.mpn_canonical, e.diagram_id, e.description
     from model_part_edges e
     join fleet_machines f on f.brand_key = e.brand_key and f.model_key = e.model_key
@@ -1138,7 +1161,7 @@ export async function teardownQueue(db: Db, limit = 100): Promise<TeardownResult
     const econ = m.qualification.economics;
     const row = machines.get(c.machine_no) ?? {
       machine_no: c.machine_no, brand: c.brand, model_raw: c.model_raw, appliance_type: c.appliance_type,
-      availability: c.availability, age_candidate_years: c.age_candidate_years, order_value: 0, lines: [], suspect_lines: []
+      availability: c.availability, location: c.location, age_candidate_years: c.age_candidate_years, order_value: 0, lines: [], suspect_lines: []
     };
     const line: PullLine = {
       mpn_canonical: c.mpn_canonical, mpn_display: m.mpn_display, description: m.description || c.description, diagram_id: c.diagram_id,

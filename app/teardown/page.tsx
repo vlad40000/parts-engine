@@ -32,11 +32,11 @@ export default async function TeardownPage({ searchParams }: { searchParams: Pro
           {physical.length ? (
             <div className="card overflow-x-auto p-4">
               <table className="w-full text-sm">
-                <thead><tr><th>Machine</th><th>Status</th><th>Brand</th><th>Model</th><th>MPN</th><th>Description</th><th>Diagram</th><th>Review</th></tr></thead>
+                <thead><tr><th>Machine</th><th>Status</th><th>Location</th><th>Brand</th><th>Model</th><th>MPN</th><th>Description</th><th>Diagram</th><th>Review</th></tr></thead>
                 <tbody>{physical.flatMap((machine) => machine.lines.map((line) => (
                   <tr key={`${machine.machine_no}:${line.mpn_canonical}`}>
                     <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(machine.machine_no)}`}>{machine.machine_no}</Link></td>
-                    <td>{machine.availability}</td><td>{machine.brand}</td><td className="mono">{machine.model_raw}</td>
+                    <td>{machine.availability}</td><td className="mono text-xs">{machine.location || "—"}</td><td>{machine.brand}</td><td className="mono">{machine.model_raw}</td>
                     <td><Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(line.mpn_canonical)}`}>{line.mpn_display}</Link></td>
                     <td>{line.description}</td><td>{line.diagram_id}</td>
                     <td><span className={`pill ${line.action === "test_first" ? "pill-wait" : "pill-mute"}`}>{line.action === "test_first" ? "test first" : "review"}</span></td>
@@ -63,6 +63,7 @@ export default async function TeardownPage({ searchParams }: { searchParams: Pro
                     <span className="text-muted tabular-nums">{i + 1}.</span>
                     <Link className="mono font-semibold text-accent hover:underline" href={`/machines/${encodeURIComponent(m.machine_no)}`}>#{m.machine_no}</Link>
                     <span>{m.brand} <span className="mono">{m.model_raw}</span></span>
+                    <span className="mono text-xs text-muted">Location: {m.location || "unassigned"}</span>
                     <span className="text-xs text-muted">{m.appliance_type} · {m.availability} · <Years years={m.age_candidate_years} /></span>
                     <span className="ml-auto text-xs text-muted">{m.lines.length} qualified part{m.lines.length === 1 ? "" : "s"}</span>
                   </div>

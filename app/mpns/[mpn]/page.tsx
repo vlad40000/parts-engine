@@ -184,12 +184,13 @@ export default async function MpnPage({ params, searchParams }: { params: Promis
           ))}
         </dl>
         <table className="w-full text-sm">
-          <thead><tr><th>Candidate</th><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Diagram</th><th>Possible years</th><th>Part state</th><th>Reason</th></tr></thead>
+          <thead><tr><th>Candidate</th><th>#</th><th>Location</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Diagram</th><th>Possible years</th><th>Part state</th><th>Reason</th></tr></thead>
           <tbody>
             {machineMatchesByStatus(h).map((x) => (
               <tr key={x.machine_no} className={x.candidate === "unavailable" ? "opacity-50" : ""}>
                 <td><span className={`pill ${CANDIDATE_PILL[x.candidate]}`}>{HARVEST_LABEL[x.candidate]}</span></td>
                 <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(x.machine_no)}`}>{x.machine_no}</Link></td>
+                <td className="mono text-xs">{x.location || "—"}</td>
                 <td className="text-xs">{x.availability}</td>
                 <td className="text-xs">{x.appliance_type}</td>
                 <td>{x.brand}</td>
@@ -200,7 +201,7 @@ export default async function MpnPage({ params, searchParams }: { params: Promis
                 <td className="text-xs text-muted">{x.reasons.join(" ")}</td>
               </tr>
             ))}
-            {!d.machines.length ? <tr><td colSpan={10} className="py-6 text-center text-muted">No machines match this status filter.</td></tr> : null}
+            {!d.machines.length ? <tr><td colSpan={11} className="py-6 text-center text-muted">No machines match this status filter.</td></tr> : null}
           </tbody>
         </table>
         {h.counts.testFirst ? <p className="mt-2 text-xs text-muted">Test-first machines require inspection before the part can be counted as harvestable.</p> : null}

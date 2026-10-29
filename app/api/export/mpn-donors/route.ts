@@ -18,9 +18,9 @@ export async function GET(request: Request) {
   if (!detail) return NextResponse.json({ error: "MPN not found." }, { status: 404 });
   const matches = machineMatchesByStatus(detail.harvest);
   const csv = toCsv(
-    ["MPN", "machine", "status", "candidate", "type", "brand", "model", "diagram", "possible_years", "part_state", "reason"],
+    ["MPN", "machine", "status", "candidate", "type", "brand", "model", "diagram", "possible_years", "part_state", "reason", "location"],
     matches.map((m) => [detail.mpn.mpn_display, m.machine_no, m.availability, m.candidate, m.appliance_type,
-      m.brand, m.model_raw, m.diagram_id, m.age_candidate_years.join("; "), m.state ?? "", m.reasons.join(" ")].map(spreadsheetCell))
+      m.brand, m.model_raw, m.diagram_id, m.age_candidate_years.join("; "), m.state ?? "", m.reasons.join(" "), m.location ?? ""].map(spreadsheetCell))
   );
   return new NextResponse(csv, {
     headers: {

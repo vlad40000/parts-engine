@@ -80,6 +80,8 @@ export const fleetMachines = pgTable("fleet_machines", {
   color: text("color"),
   condition: text("condition"),
   location: text("location"),
+  /** A manually entered location survives subsequent inventory imports. */
+  locationOverride: boolean("location_override").notNull().default(false),
   diagnosis: text("diagnosis"),
   notes: text("notes"),
   listPrice: numeric("list_price", { precision: 10, scale: 2 }),
