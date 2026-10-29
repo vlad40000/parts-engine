@@ -7,6 +7,8 @@ import type { ActionResult } from "@/app/actions";
  * Shrinks a phone photo before upload (long edge 1600 px, JPEG): faster on shop Wi-Fi,
  * cheaper to read, and still sharp enough for handwriting. Falls back to the original file.
  */
+const MAX_SEND_BYTES = 4 * 1024 * 1024;
+
 async function downscale(file: File, maxEdge = 1600, quality = 0.85): Promise<Blob> {
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   try {
@@ -31,6 +33,7 @@ export function NoteUpload({ action, readerReady }: {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  const [tooBig, setTooBig] = useState(false);
   const camera = useRef<HTMLInputElement>(null);
   const library = useRef<HTMLInputElement>(null);
 
@@ -38,6 +41,7 @@ export function NoteUpload({ action, readerReady }: {
 
   function pick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] ?? null;
+    setTooBig(false);
     setFile(f);
     setPreview(f ? URL.createObjectURL(f) : null);
   }
@@ -45,8 +49,11 @@ export function NoteUpload({ action, readerReady }: {
   async function read() {
     if (!file) return;
     setPreparing(true);
+    setTooBig(false);
     let photo: Blob = file;
     try { photo = await downscale(file); } catch { photo = file; }
+    // Hosted servers refuse uploads over about 4.5 MB, and only a photo the browser could not shrink gets near that.
+    if (photo.size > MAX_SEND_BYTES) { setPreparing(false); setTooBig(true); return; }
     const fd = new FormData();
     fd.set("photo", new File([photo], photo === file ? file.name : "card.jpg", { type: photo.type || file.type }));
     setPreparing(false);
@@ -77,6 +84,7 @@ export function NoteUpload({ action, readerReady }: {
         <p className="text-xs text-muted">Fill the whole frame with one card, flat and in good light.</p>
       )}
       {!readerReady ? <p className="text-xs text-wait">The card reader is not set up on this server (GEMINI_API_KEY), so photos are kept and you type what they say.</p> : null}
+      {tooBig ? <p role="alert" className="rounded border border-stop/30 bg-red-50 p-3 text-sm">This photo is too large to send (over 4 MB) and could not be shrunk here. Take it with the Take photo button, or save it as a JPEG first.</p> : null}
       {state && !state.ok ? <p role="alert" className="rounded border border-stop/30 bg-red-50 p-3 text-sm">{state.message}</p> : null}
     </div>
   );
