@@ -151,6 +151,16 @@ describe("tech note actions", () => {
     expect((await db.select().from(schema.machinePartState))[0].state).toBe("pulled");
   });
 
+  it("refuses a reading with more machines or part lines than a note keeps, instead of dropping them", async () => {
+    const id = idFrom(await redirectOf(startTypedNoteAction()));
+    const many = { date: { text: "5/11/26" }, entries: Array.from({ length: 13 }, (_, i) => ({ machine: { text: String(3000 + i) } })) };
+    expect(await applyNoteAction(null, form({ id, reading: JSON.stringify(many), answers: "{}", versions: "{}" })))
+      .toMatchObject({ ok: false, message: "A note holds up to 12 machines. Split it into two notes." });
+    expect(await saveDraftAction(id, many, {})).toMatchObject({ ok: false });
+    const parts = { entries: [{ machine: { text: "4928" }, parts: Array.from({ length: 13 }, () => ({ name: "screw", action: "taken" })) }] };
+    expect(await saveDraftAction(id, parts, {})).toMatchObject({ ok: false, message: expect.stringContaining("12 part lines") });
+  });
+
   it("starts a typed note and discards it", async () => {
     const url = await redirectOf(startTypedNoteAction());
     const id = idFrom(url);

@@ -205,6 +205,14 @@ describe("tech note apply", () => {
     expect((await machineHistory(db, "6171")).some((h) => h.field === "location confirmed")).toBe(true);
   });
 
+  it("keeps confirmed status and location through a workbook import, like changed ones", async () => {
+    // 611 is NEEDS PARTS in ICU from the workbook; a note confirms both.
+    await applyReading(normalizeReading({ date: { text: "5/14/26" }, entries: [{ machine: { text: "611" }, status: { checked: "NEEDS PARTS" }, location: { name: "ICU" } }] }));
+    expect(await machine("611")).toMatchObject({ statusOverride: true, locationOverride: true });
+    await upsertFleet(db, mapFleetRows([row(611, { Brand: "Speed Queen", ModelNumber: "AWS52NW", ApplianceType: "Washer - Top Load / Agitator", Availability: "PARTS ONLY", Location: "Graveyard" })], NOW).rows);
+    expect(await machine("611")).toMatchObject({ availability: "NEEDS PARTS", location: "ICU" });
+  });
+
   it("asks when a Fleet edit and the note fall on the same day", async () => {
     expect(await updateMachineStatus(db, { machineNo: "611", expectedStatus: "NEEDS PARTS", status: "PARTS ONLY" })).toBe("saved");
     const facts = await loadPlanFacts(db, normalizeReading({ entries: [{ machine: { text: "611" } }] }), {}, new Date());

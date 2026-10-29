@@ -7,7 +7,7 @@ import {
   FIELD_LABEL as FIELD_WORD, PART_KIND_LABEL, planNote, referencedMachineNumbers, machineSummary,
   type Answers, type FieldChange, type Plan, type PlanFacts, type PlannedEntry, type Question
 } from "@/src/lib/tech-notes/plan";
-import { emptyEntry, emptyPart, PART_ACTIONS, type NoteReading, type ReadEntry, type ReadPart } from "@/src/lib/tech-notes/reading";
+import { emptyEntry, emptyPart, MAX_ENTRIES, MAX_PARTS, PART_ACTIONS, type NoteReading, type ReadEntry, type ReadPart } from "@/src/lib/tech-notes/reading";
 import { CARD_NAMES, CARD_SYMPTOMS, NOTE_STATUSES, SALE_GRADES, shortDate } from "@/src/lib/tech-notes/vocabulary";
 
 type Action = (prev: ActionResult | null, form: FormData) => Promise<ActionResult>;
@@ -325,7 +325,10 @@ function ReadingEditor({ reading, onChange, locations }: { reading: NoteReading;
             disabled={reading.entries.length === 1}>Remove machine {i + 1}</button>
         </fieldset>
       ))}
-      <div><button type="button" className="btn" onClick={() => onChange({ ...reading, entries: [...reading.entries, emptyEntry()] })}>Add a machine</button></div>
+      <div>
+        <button type="button" className="btn" disabled={reading.entries.length >= MAX_ENTRIES} onClick={() => onChange({ ...reading, entries: [...reading.entries, emptyEntry()] })}>Add a machine</button>
+        {reading.entries.length >= MAX_ENTRIES ? <span className="ml-2 text-xs text-muted">A note holds up to {MAX_ENTRIES} machines: start a second note for more.</span> : null}
+      </div>
     </div>
   );
 }
@@ -354,7 +357,8 @@ function PartsEditor({ parts, onChange }: { parts: ReadPart[]; onChange: (parts:
           <button type="button" className="btn px-2 text-xs" onClick={() => onChange(parts.filter((x) => x.key !== p.key))}>Remove</button>
         </div>
       ))}
-      <button type="button" className="btn mt-2 text-xs" onClick={() => onChange([...parts, emptyPart()])}>Add a part line</button>
+      <button type="button" className="btn mt-2 text-xs" disabled={parts.length >= MAX_PARTS} onClick={() => onChange([...parts, emptyPart()])}>Add a part line</button>
+      {parts.length >= MAX_PARTS ? <span className="ml-2 text-xs text-muted">Up to {MAX_PARTS} part lines per machine.</span> : null}
     </div>
   );
 }

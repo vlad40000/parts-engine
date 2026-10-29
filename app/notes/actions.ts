@@ -9,7 +9,7 @@ import {
   loadPlanFacts, locationList, saveDraft, saveReading, setReaderError
 } from "@/src/db/tech-notes";
 import { planNote, type PlanFacts } from "@/src/lib/tech-notes/plan";
-import { emptyReading, normalizeReading } from "@/src/lib/tech-notes/reading";
+import { emptyReading, normalizeReading, readingOverLimit } from "@/src/lib/tech-notes/reading";
 import { readCard, readerConfig, ReaderError } from "@/src/lib/tech-notes/reader";
 import type { ActionResult } from "../actions";
 
@@ -68,6 +68,8 @@ export async function loadFactsAction(id: string, reading: unknown, answers: unk
 }
 
 export async function saveDraftAction(id: string, reading: unknown, answers: unknown): Promise<ActionResult> {
+  const tooBig = readingOverLimit(reading);
+  if (tooBig) return { ok: false, message: tooBig };
   const saved = await saveDraft(await getDb(), id, normalizeReading(reading), cleanAnswers(answers));
   return saved ? { ok: true, message: "Saved. Come back to it from Tech notes." } : { ok: false, message: "This note is no longer open." };
 }
@@ -96,7 +98,11 @@ export async function rereadNoteAction(_prev: ActionResult | null, form: FormDat
 /** Recomputes the plan from the posted reading and answers with fresh records, then writes it all or nothing. */
 export async function applyNoteAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const id = String(form.get("id") ?? "");
-  const reading = normalizeReading(parseJson(form.get("reading")));
+  const posted = parseJson(form.get("reading"));
+  // Nothing shown in the review may be dropped silently on the way in.
+  const tooBig = readingOverLimit(posted);
+  if (tooBig) return { ok: false, message: tooBig };
+  const reading = normalizeReading(posted);
   const answers = cleanAnswers(parseJson(form.get("answers")));
   const seen = cleanAnswers(parseJson(form.get("versions")));
   const seenParts = cleanAnswers(parseJson(form.get("parts")));

@@ -67,6 +67,16 @@ export type NoteReading = {
 export const MAX_ENTRIES = 12;
 export const MAX_PARTS = 12;
 
+/** A posted reading with more machines or part lines than a note keeps (normalizeReading would drop the rest). */
+export function readingOverLimit(raw: unknown): string | null {
+  const entries = raw && typeof raw === "object" && Array.isArray((raw as { entries?: unknown }).entries) ? (raw as { entries: unknown[] }).entries : [];
+  if (entries.length > MAX_ENTRIES) return `A note holds up to ${MAX_ENTRIES} machines. Split it into two notes.`;
+  if (entries.some((e) => e && typeof e === "object" && Array.isArray((e as { parts?: unknown }).parts) && (e as { parts: unknown[] }).parts.length > MAX_PARTS)) {
+    return `A machine holds up to ${MAX_PARTS} part lines on one note. Split it into two notes.`;
+  }
+  return null;
+}
+
 let keySeq = 0;
 /** A key unlikely to collide with e0, e1… or another new line in the same session. */
 export const newKey = (prefix: string) => `${prefix}${Date.now().toString(36)}${(keySeq++).toString(36)}`;

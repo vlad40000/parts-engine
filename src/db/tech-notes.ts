@@ -319,12 +319,17 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     const olderNote = e.history.length > 0 || e.parts.some((p) => !p.applied);
     // Status and location carry their own override flags (status_override, location_override from #31).
     const local = e.changes.flatMap((c) => (c.field === "availability" || c.field === "location" ? [] : [FIELD_COLUMN[c.field]]));
+    // A confirmed value is note-set state too: it must survive the next workbook import like a change.
+    const confirmed = new Set(e.confirmed.map((c) => c.field));
+    if (confirmed.has("stickerPrice")) local.push("sticker_price");
     const decided = e.changes.some((c) => c.field !== "notes") || e.confirmed.length > 0 || e.parts.some((p) => p.applied && p.machineNo === f.machineNo);
     return {
       machine_no: f.machineNo,
       version: f.version,
       prev_availability: f.availability,
       set_availability: Boolean(to("availability")), availability: to("availability")?.to ?? f.availability,
+      own_status: Boolean(to("availability")) || confirmed.has("availability"),
+      own_location: Boolean(to("location")) || confirmed.has("location"),
       set_condition: Boolean(to("condition")), condition: to("condition")?.to ?? null,
       set_location: Boolean(to("location")), location: to("location")?.to ?? null,
       set_diagnosis: Boolean(to("diagnosis")), diagnosis: to("diagnosis")?.to ?? null,
@@ -361,7 +366,7 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
         machine_no text, version text, prev_availability text,
         set_availability boolean, availability text, set_condition boolean, condition text, set_location boolean, location text,
         set_diagnosis boolean, diagnosis text, set_notes boolean, notes text, set_sticker boolean, sticker_price text,
-        families text[], local_add text[], decided boolean)
+        families text[], local_add text[], decided boolean, own_status boolean, own_location boolean)
     ),
     locked as (
       select f.machine_no from fleet_machines f join input m on m.machine_no = f.machine_no
@@ -389,10 +394,10 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     upd as (
       update fleet_machines f set
         availability = case when m.set_availability then m.availability else f.availability end,
-        status_override = f.status_override or m.set_availability,
+        status_override = f.status_override or m.own_status,
         condition = case when m.set_condition then m.condition else f.condition end,
         location = case when m.set_location then m.location else f.location end,
-        location_override = f.location_override or m.set_location,
+        location_override = f.location_override or m.own_location,
         diagnosis = case when m.set_diagnosis then m.diagnosis else f.diagnosis end,
         notes = case when m.set_notes then m.notes else f.notes end,
         sticker_price = case when m.set_sticker then m.sticker_price::numeric else f.sticker_price end,
