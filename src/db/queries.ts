@@ -181,11 +181,24 @@ export async function updateMachineLocation(
   if (!current) return "not_found";
   if ((current.location ?? "") !== input.expectedLocation) return "conflict";
   if ((current.location ?? "") === location) return "unchanged";
-  const saved = await db.update(t.fleetMachines)
-    .set({ location: location || null, locationOverride: true, updatedAt: new Date() })
-    .where(and(eq(t.fleetMachines.machineNo, input.machineNo),
-      sql`coalesce(${t.fleetMachines.location}, '') = ${input.expectedLocation}`))
-    .returning({ machineNo: t.fleetMachines.machineNo });
+  // One statement: the move, its history row and the location list land together (Neon HTTP has no transactions).
+  const saved = await q<{ machine_no: string }>(db, sql`
+    with changed as (
+      update fleet_machines
+      set location = ${location || null}, location_override = true, updated_at = now()
+      where machine_no = ${input.machineNo} and coalesce(location, '') = ${input.expectedLocation}
+      returning machine_no
+    ), logged as (
+      insert into fleet_field_events (machine_no, field, previous_value, next_value, source)
+      select machine_no, 'location', ${input.expectedLocation || null}, ${location || null}, 'fleet_ui' from changed
+      returning 1
+    ), listed as (
+      insert into fleet_locations (name, source)
+      select ${location}, 'fleet_ui' from changed where ${location} <> ''
+      on conflict (name) do nothing
+      returning 1
+    )
+    select machine_no, (select count(*) from logged) + (select count(*) from listed) touched from changed`);
   return saved.length ? "saved" : "conflict";
 }
 

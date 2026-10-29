@@ -211,7 +211,8 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     const diagnosis = to("diagnosis")?.to ?? f.diagnosis;
     const notes = to("notes")?.to ?? f.notes;
     const touchesText = Boolean(to("diagnosis") || to("notes"));
-    const local = e.changes.flatMap((c) => (c.field === "availability" ? [] : [FIELD_COLUMN[c.field]]));
+    // Status and location carry their own override flags (status_override, location_override from #31).
+    const local = e.changes.flatMap((c) => (c.field === "availability" || c.field === "location" ? [] : [FIELD_COLUMN[c.field]]));
     return {
       machine_no: f.machineNo,
       version: f.version,
@@ -256,6 +257,7 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
         status_override = f.status_override or m.set_availability,
         condition = case when m.set_condition then m.condition else f.condition end,
         location = case when m.set_location then m.location else f.location end,
+        location_override = f.location_override or m.set_location,
         diagnosis = case when m.set_diagnosis then m.diagnosis else f.diagnosis end,
         notes = case when m.set_notes then m.notes else f.notes end,
         sticker_price = case when m.set_sticker then m.sticker_price::numeric else f.sticker_price end,

@@ -6,7 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { saveModelBom, updateMachineStatus, upsertFleet } from "@/src/db/queries";
+import { saveModelBom, updateMachineLocation, updateMachineStatus, upsertFleet } from "@/src/db/queries";
 import {
   applyTechNote, createTechNote, discardTechNote, findNoteByPhoto, getTechNote, getTechNotePhoto, loadPlanFacts, locationList, machineHistory, saveDraft
 } from "@/src/db/tech-notes";
@@ -87,7 +87,9 @@ describe("tech note apply", () => {
       diagnosis: "Timer won't advance but everything works. Needs timer (WP3948891).",
       notes: "5/14/26-Moved to Red Building. Needs parts. Replaced lid switch (WP3355806) from #5000."
     });
-    expect(m.localFields).toEqual(["condition", "diagnosis", "location", "notes"]);
+    expect(m.localFields).toEqual(["condition", "diagnosis", "notes"]);
+    // Location uses #31's override flag, so the Fleet location editor and tech notes share one rule.
+    expect(m.locationOverride).toBe(true);
     // Same rule as the workbook import: diagnosis and repair notes together set the part-family flags.
     expect(m.suspectFamilies).toEqual(["lock_latch"]);
     const status = await db.select().from(schema.fleetStatusEvents);
@@ -126,6 +128,16 @@ describe("tech note apply", () => {
     // A machine no note touched still takes every imported value.
     await upsertFleet(db, mapFleetRows([row(5000, { Availability: "PARTS ONLY", Location: "Red Building", Diagnosis: "won't drain" })], NOW).rows);
     expect(await machine("5000")).toMatchObject({ location: "Red Building", diagnosis: "won't drain", suspectFamilies: ["pump"], localFields: [] });
+  });
+
+  it("records a Fleet location edit in the machine history and the location list", async () => {
+    expect(await updateMachineLocation(db, { machineNo: "6171", expectedLocation: "Warehouse", location: "Yard A3" })).toBe("saved");
+    expect(await machine("6171")).toMatchObject({ location: "Yard A3", locationOverride: true });
+    expect((await machineHistory(db, "6171")).map((h) => [h.field, h.previous_value, h.next_value, h.source])).toEqual([["location", "Warehouse", "Yard A3", "fleet_ui"]]);
+    expect((await locationList(db)).some((l) => l.name === "Yard A3")).toBe(true);
+    // A stale edit writes neither the move nor a history row.
+    expect(await updateMachineLocation(db, { machineNo: "6171", expectedLocation: "Warehouse", location: "Shop" })).toBe("conflict");
+    expect(await db.select().from(schema.fleetFieldEvents)).toHaveLength(1);
   });
 
   it("writes nothing when a machine changed after the plan was made", async () => {
