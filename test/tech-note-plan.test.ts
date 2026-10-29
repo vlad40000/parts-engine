@@ -341,8 +341,16 @@ describe("parts: needed is not failed", () => {
     const q = plan(r, facts([laundry, donor])).questions.find((x) => x.id === "partstate:5000|WP3948891")!;
     expect(q.options.map((o) => o.value)).toEqual(["set:pulled", "set:missing", "none"]);
     expect(plan(r, facts([laundry, donor])).ready).toBe(false);
-    expect(plan(r, facts([laundry, donor]), { [q.id]: "set:missing" }).entries.flatMap((e) => e.partStates).map((x) => [x.machineNo, x.state])).toEqual([["5000", "missing"]]);
-    expect(plan(r, facts([laundry, donor]), { [q.id]: "none" }).entries.flatMap((e) => e.partStates)).toEqual([]);
+    const missing = plan(r, facts([laundry, donor]), { [q.id]: "set:missing" });
+    expect(missing.ready).toBe(true);
+    expect(missing.entries.flatMap((e) => e.partStates).map((x) => [x.machineNo, x.state])).toEqual([["5000", "missing"]]);
+    expect(missing.entries.flatMap((e) => e.parts).filter((d) => d.machineNo === "5000").map((d) => [d.kind, d.applied])).toEqual([["removed", false], ["missing", true]]);
+    // Neither: no state, no applied decision, and the diagnosis does not say it either.
+    const neither = plan(r, facts([laundry, donor]), { [q.id]: "none" });
+    expect(neither.entries.flatMap((e) => e.partStates)).toEqual([]);
+    expect(neither.entries.flatMap((e) => e.parts).filter((d) => d.machineNo === "5000").every((d) => !d.applied)).toBe(true);
+    expect(changes(neither, "e1").diagnosis).toBeUndefined();
+    expect(changes(missing, "e1").diagnosis).toBe("Timer (WP3948891) missing.");
   });
 
   it("asks about a part line's machine number that is not in the fleet", () => {

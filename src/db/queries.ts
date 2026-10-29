@@ -1249,7 +1249,16 @@ export async function machineDetail(db: Db, machineNo: string) {
 
 export async function setPartState(db: Db, machineNo: string, mpnCanonical: string, state: "pulled" | "failed" | "missing" | "skip" | null, note?: string) {
   if (state === null) {
-    await db.delete(t.machinePartState).where(and(eq(t.machinePartState.machineNo, machineNo), eq(t.machinePartState.mpnCanonical, mpnCanonical)));
+    // Undo is a decision too: the delete and a dated "cleared" event land together, so an older
+    // tech note uploaded later cannot quietly put the state back.
+    await db.execute(sql`
+      with del as (
+        delete from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}
+        returning machine_no, mpn_canonical
+      )
+      insert into fleet_part_events (machine_no, mpn_canonical, part_name, kind, applied, source, observed_at)
+      select d.machine_no, d.mpn_canonical, '', 'cleared', true, 'fleet_ui', now() from del d
+      where exists (select 1 from fleet_machines f where f.machine_no = d.machine_no)`);
     return;
   }
   // A hand edit is observed now: clear any tech note's observation date so chronology dates it by updated_at.

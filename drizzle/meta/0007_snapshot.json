@@ -1,5 +1,5 @@
 {
-  "id": "5b51f12c-9481-4af2-919b-002b0bf3595b",
+  "id": "1f224df3-51ee-4e66-b311-74ab5ff448f1",
   "prevId": "ac2e2f33-9a01-4cb5-8d25-009eafcb6136",
   "version": "7",
   "dialect": "postgresql",
@@ -724,7 +724,7 @@
       "checkConstraints": {
         "fleet_part_events_kind_valid": {
           "name": "fleet_part_events_kind_valid",
-          "value": "\"fleet_part_events\".\"kind\" in ('suspected','needed','failed','missing','replaced','removed')"
+          "value": "\"fleet_part_events\".\"kind\" in ('suspected','needed','failed','missing','replaced','removed','cleared')"
         }
       },
       "isRLSEnabled": false

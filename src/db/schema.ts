@@ -223,7 +223,8 @@ export const fleetPartEvents = pgTable("fleet_part_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
   index("fleet_part_events_machine_idx").on(t.machineNo, t.observedAt),
-  check("fleet_part_events_kind_valid", sql`${t.kind} in ('suspected','needed','failed','missing','replaced','removed')`)
+  // "cleared": a part state removed by hand (machine page undo), kept so chronology remembers it.
+  check("fleet_part_events_kind_valid", sql`${t.kind} in ('suspected','needed','failed','missing','replaced','removed','cleared')`)
 ]);
 
 /**

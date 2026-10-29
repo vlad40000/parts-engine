@@ -240,6 +240,19 @@ describe("tech note apply", () => {
     expect(ps.state).toBe("missing");
   });
 
+  it("remembers a part state undone by hand, so an older note cannot quietly put it back", async () => {
+    await applyReading(reading6171(), ANSWERS);
+    await setPartState(db, "6171", "3948891", null);
+    expect(await db.select().from(schema.machinePartState).where(eq(schema.machinePartState.machineNo, "6171"))).toEqual([]);
+    const facts = await loadPlanFacts(db, normalizeReading({ entries: [{ machine: { text: "6171" } }] }), {}, new Date());
+    expect(facts.machines["6171"].partUpdates["3948891"]).toMatchObject({ day: facts.today, state: null });
+    expect((await machineHistory(db, "6171"))[0]).toMatchObject({ field: "part cleared", source: "fleet_ui", applied: true });
+    const older = normalizeReading({ date: { text: "5/16/26" }, entries: [{ machine: { text: "6171" }, parts: [{ mpn: "WP3948891", name: "timer", action: "taken" }] }] });
+    const p = planNote(older, await loadPlanFacts(db, older, {}, new Date()), {});
+    expect(p.entries[0].parts).toMatchObject([{ kind: "removed", applied: false }]);
+    expect(p.entries[0].partStates).toEqual([]);
+  });
+
   it("never writes over a part record changed after the plan was made", async () => {
     const reading = normalizeReading({ date: { text: "5/14/26" }, entries: [{
       machine: { text: "6171" }, status: { checked: "NEEDS PARTS" }, parts: [{ mpn: "WP3948891", name: "timer", action: "needed", condition: "bad" }]

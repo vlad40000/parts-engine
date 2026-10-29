@@ -531,368 +531,385 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
   }
 
   // --- Entries ------------------------------------------------------------------------
-  const entries: PlannedEntry[] = [];
-  for (const [i, e] of reading.entries.entries()) {
-    const r = resolved.get(e.key)!;
-    const fact = known(r.machineNo);
-    const planned: PlannedEntry = {
-      key: e.key, label: `Entry ${i + 1}`, machineNo: r.machineNo, skipped: r.skipped, fact,
-      changes: [], history: [], parts: [], partStates: [], testFirst: [], locationCheck: null, struck: e.struck, info: []
+  /**
+   * Builds every entry's changes. `veto` holds the answers to part-state conflicts across the note
+   * (machine|mpn → the state kept, or null for neither): a decision whose state was not kept is not
+   * applied, writes no state and adds nothing to the diagnosis.
+   */
+  const buildEntries = (veto: Map<string, string | null>): PlannedEntry[] => {
+    const entries: PlannedEntry[] = [];
+    const rejected = (machineNo: string, mpn: string | null, kind: PartKind) => {
+      const k = `${machineNo}|${mpn}`;
+      return mpn != null && veto.has(k) && STATE_FOR_KIND[kind] != null && STATE_FOR_KIND[kind] !== veto.get(k);
     };
-    entries.push(planned);
-    if (r.skipped || !fact) continue;
-    const no = fact.machineNo;
-    const groups = groupMembers.get(e.key) ?? [];
+    for (const [i, e] of reading.entries.entries()) {
+      const r = resolved.get(e.key)!;
+      const fact = known(r.machineNo);
+      const planned: PlannedEntry = {
+        key: e.key, label: `Entry ${i + 1}`, machineNo: r.machineNo, skipped: r.skipped, fact,
+        changes: [], history: [], parts: [], partStates: [], testFirst: [], locationCheck: null, struck: e.struck, info: []
+      };
+      entries.push(planned);
+      if (r.skipped || !fact) continue;
+      const no = fact.machineNo;
+      const groups = groupMembers.get(e.key) ?? [];
 
-    // Location: the entry's own words win over a group line.
-    let location: { name: string; detail: string | null } | "keep" | null | undefined = resolveLocation(e.location, e.key);
-    if (location === undefined) {
-      for (const g of groups) {
-        const l = resolveLocation(g.location, e.key);
-        if (l !== undefined) { location = l; break; }
-      }
-    }
-    const nextLocation = location && location !== "keep" ? location.name : null;
-    const locationChanged = nextLocation != null && nextLocation !== (fact.location ?? "");
-
-    // Status: only a Fleet status the note actually says. Never from the location.
-    const phrases = [...e.status.phrases, ...groups.flatMap((g) => g.status.phrases)];
-    const statuses = new Set<string>();
-    for (const c of [e.status.checked, ...groups.map((g) => g.status.checked)]) if (c && isNoteStatus(c)) statuses.add(c);
-    const otherWords: string[] = [];
-    for (const p of phrases) {
-      const s = statusFromPhrase(p);
-      if (s) statuses.add(s);
-      else if (!READY_FOR_CLEAN.test(p) && (!nextLocation || normalizeLocation(p) !== normalizeLocation(nextLocation))) otherWords.push(p);
-    }
-    const readyForClean = e.readyForClean || phrases.some((p) => READY_FOR_CLEAN.test(p));
-    const keep = { value: "keep", label: `Leave status as ${fact.availability}` };
-    const statusOptions = (recommended?: string | null) => NOTE_STATUS_VALUES.filter((s) => s !== fact.availability)
-      .map((s) => ({ value: `set:${s}`, label: s, recommended: s === recommended }));
-    let target: string | null = null;
-    if (statuses.size > 1) {
-      const a = ask({
-        id: `status:${e.key}`, kind: "status", entry: e.key,
-        prompt: `#${no}: the note says more than one status (${[...statuses].join(", ")}). Which one is right?`,
-        options: [...[...statuses].map((s) => ({ value: `set:${s}`, label: s })), keep]
-      });
-      target = a && a !== "keep" ? a.slice(4) : null;
-    } else if (statuses.size === 1) {
-      const only = [...statuses][0];
-      if (e.status.checked === only && e.status.confidence === "low") {
-        const a = ask({
-          id: `status:${e.key}`, kind: "status", entry: e.key,
-          prompt: `#${no}: the status looks like ${only}, but it is hard to read. Which is it?`,
-          options: [...statusOptions(only), keep]
-        });
-        target = a && a !== "keep" ? a.slice(4) : null;
-      } else target = only;
-    } else if (fact.availability === "UNCHECKED") {
-      const needed = e.parts.some((x) => partKind(x) === "needed" || partKind(x) === "failed" || partKind(x) === "missing");
-      const describes = needed || e.symptoms.length > 0 || Boolean(e.problem || e.workDone);
-      if (describes) {
-        // Checked by a tech but still UNCHECKED: the status is the part of the note that is missing.
-        const a = ask({
-          id: `status:${e.key}`, kind: "status", entry: e.key,
-          prompt: `#${no} is still UNCHECKED, but the note says what is wrong with it. What is its status now?`,
-          options: [...["NEEDS PARTS", "PARTS ONLY", "PARTS PROGRAM", "READY TO SALE"].map((s) => ({ value: `set:${s}`, label: s, recommended: needed && s === "NEEDS PARTS" })),
-            { value: "keep", label: "Leave it UNCHECKED" }]
-        });
-        target = a && a !== "keep" ? a.slice(4) : null;
-      }
-    }
-    if (target && target !== fact.availability && isOffLot(target) && !isOffLot(fact.availability)) {
-      // Leaving the lot takes the machine off every donor list: confirm it.
-      const a = ask({
-        id: `offlot-status:${e.key}`, kind: "status", entry: e.key,
-        prompt: `#${no} would be marked ${target}. That takes it off the lot and off every donor list. Is that right?`,
-        options: [{ value: "yes", label: `Yes, mark it ${target}` }, keep]
-      });
-      if (a !== "yes") target = null;
-    }
-    const statusChanged = target != null && target !== fact.availability;
-    const effectiveStatus = statusChanged ? target! : fact.availability;
-
-    // Condition: follows the status (grade when for sale).
-    let condition: string | null = null;
-    if (effectiveStatus === "READY TO SALE") {
-      if (e.grade) condition = gradeCondition(e.grade);
-      else if (statusChanged && !isSaleCondition(fact.condition)) {
-        const a = ask({
-          id: `grade:${e.key}`, kind: "grade", entry: e.key, prompt: `#${no} is going up for sale. What grade is it?`,
-          options: SALE_GRADES.map((g) => ({ value: `set:${g.condition}`, label: g.condition, recommended: g.grade === "B" }))
-        });
-        condition = a ? a.slice(4) : null;
-      }
-    } else if (statusChanged) {
-      condition = CONDITION_FOR_STATUS[effectiveStatus] ?? null;
-      if (e.grade) planned.info.push(`Grade ${e.grade} is not used: #${no} is not for sale.`);
-    } else if (e.grade) planned.info.push(`Grade ${e.grade} is not used: #${no} is not for sale.`);
-
-    // Price
-    let price: string | null = null;
-    if (e.price.text) {
-      const read = money(e.price.text);
-      if (read && e.price.confidence !== "low") price = read;
-      else {
-        const a = ask({
-          id: `price:${e.key}`, kind: "price", entry: e.key,
-          prompt: read ? `#${no}: the price looks like $${read}, but it is hard to read. What is the sticker price?` : `#${no}: the price reads "${e.price.text}". What is the sticker price?`,
-          options: [...(read ? [{ value: `set:${read}`, label: `$${read}` }] : []), { value: "keep", label: "Leave the price unchanged" }],
-          allowText: { label: "Price $", placeholder: "350" }
-        }, (v) => (v.startsWith("text:") && !money(v.slice(5)) ? "Enter a dollar amount." : null));
-        price = a == null || a === "keep" ? null : a.startsWith("set:") ? a.slice(4) : money(a.slice(5));
-      }
-    }
-
-    // Parts
-    const bom = fact.bomStatus === "found" ? fact.bomParts : null;
-    const resolvePart = (p: ReadPart, kind: PartKind | null): { mpn: string | null; display: string; family: string | null } | "drop" => {
-      const canonical = canonicalizeMpn(p.mpn);
-      const byName = p.name ? classifyFamily(p.name) : "other";
-      const nameFamily = byName === "other" ? null : byName;
-      if (canonical) {
-        if (!bom) {
-          planned.info.push(`No parts list is cached for ${fact.brand} ${fact.modelRaw || "this model"}, so ${p.mpn} goes in the notes only.`);
-          return { mpn: null, display: p.mpn, family: nameFamily };
+      // Location: the entry's own words win over a group line.
+      let location: { name: string; detail: string | null } | "keep" | null | undefined = resolveLocation(e.location, e.key);
+      if (location === undefined) {
+        for (const g of groups) {
+          const l = resolveLocation(g.location, e.key);
+          if (l !== undefined) { location = l; break; }
         }
-        const hit = bomLookup(bom, canonical);
-        if (hit) return { mpn: hit.mpn, display: hit.display, family: flaggable(hit.family) ?? nameFamily };
-        const near = nearMpns(bom, canonical);
-        const a = ask({
-          id: `part:${e.key}:${p.key}`, kind: "part", entry: e.key,
-          prompt: `#${no}: ${p.mpn}${p.name ? ` (${p.name})` : ""} is not in the parts list for ${fact.brand} ${fact.modelRaw}.${near.length ? " Did you mean one of these?" : ""}`,
-          options: [
-            ...near.map((b, j) => ({ value: `use:${b.mpn}`, label: `Use ${b.display}`, detail: b.description, recommended: j === 0 })),
-            { value: "keep", label: `Keep ${p.mpn} as written`, detail: "It goes in the notes only" },
-            { value: "drop", label: "Leave this part out" }
-          ]
-        });
-        if (a == null || a === "keep") return { mpn: null, display: p.mpn, family: nameFamily };
-        if (a === "drop") return "drop";
-        const chosen = bom.find((b) => b.mpn === a.slice(4))!;
-        return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
       }
-      if (bom && kind && kind !== "suspected" && kind !== "replaced") {
-        const cands = partsByName(bom, p.name);
-        if (cands.length) {
+      const nextLocation = location && location !== "keep" ? location.name : null;
+      const locationChanged = nextLocation != null && nextLocation !== (fact.location ?? "");
+
+      // Status: only a Fleet status the note actually says. Never from the location.
+      const phrases = [...e.status.phrases, ...groups.flatMap((g) => g.status.phrases)];
+      const statuses = new Set<string>();
+      for (const c of [e.status.checked, ...groups.map((g) => g.status.checked)]) if (c && isNoteStatus(c)) statuses.add(c);
+      const otherWords: string[] = [];
+      for (const p of phrases) {
+        const s = statusFromPhrase(p);
+        if (s) statuses.add(s);
+        else if (!READY_FOR_CLEAN.test(p) && (!nextLocation || normalizeLocation(p) !== normalizeLocation(nextLocation))) otherWords.push(p);
+      }
+      const readyForClean = e.readyForClean || phrases.some((p) => READY_FOR_CLEAN.test(p));
+      const keep = { value: "keep", label: `Leave status as ${fact.availability}` };
+      const statusOptions = (recommended?: string | null) => NOTE_STATUS_VALUES.filter((s) => s !== fact.availability)
+        .map((s) => ({ value: `set:${s}`, label: s, recommended: s === recommended }));
+      let target: string | null = null;
+      if (statuses.size > 1) {
+        const a = ask({
+          id: `status:${e.key}`, kind: "status", entry: e.key,
+          prompt: `#${no}: the note says more than one status (${[...statuses].join(", ")}). Which one is right?`,
+          options: [...[...statuses].map((s) => ({ value: `set:${s}`, label: s })), keep]
+        });
+        target = a && a !== "keep" ? a.slice(4) : null;
+      } else if (statuses.size === 1) {
+        const only = [...statuses][0];
+        if (e.status.checked === only && e.status.confidence === "low") {
+          const a = ask({
+            id: `status:${e.key}`, kind: "status", entry: e.key,
+            prompt: `#${no}: the status looks like ${only}, but it is hard to read. Which is it?`,
+            options: [...statusOptions(only), keep]
+          });
+          target = a && a !== "keep" ? a.slice(4) : null;
+        } else target = only;
+      } else if (fact.availability === "UNCHECKED") {
+        const needed = e.parts.some((x) => partKind(x) === "needed" || partKind(x) === "failed" || partKind(x) === "missing");
+        const describes = needed || e.symptoms.length > 0 || Boolean(e.problem || e.workDone);
+        if (describes) {
+          // Checked by a tech but still UNCHECKED: the status is the part of the note that is missing.
+          const a = ask({
+            id: `status:${e.key}`, kind: "status", entry: e.key,
+            prompt: `#${no} is still UNCHECKED, but the note says what is wrong with it. What is its status now?`,
+            options: [...["NEEDS PARTS", "PARTS ONLY", "PARTS PROGRAM", "READY TO SALE"].map((s) => ({ value: `set:${s}`, label: s, recommended: needed && s === "NEEDS PARTS" })),
+              { value: "keep", label: "Leave it UNCHECKED" }]
+          });
+          target = a && a !== "keep" ? a.slice(4) : null;
+        }
+      }
+      if (target && target !== fact.availability && isOffLot(target) && !isOffLot(fact.availability)) {
+        // Leaving the lot takes the machine off every donor list: confirm it.
+        const a = ask({
+          id: `offlot-status:${e.key}`, kind: "status", entry: e.key,
+          prompt: `#${no} would be marked ${target}. That takes it off the lot and off every donor list. Is that right?`,
+          options: [{ value: "yes", label: `Yes, mark it ${target}` }, keep]
+        });
+        if (a !== "yes") target = null;
+      }
+      const statusChanged = target != null && target !== fact.availability;
+      const effectiveStatus = statusChanged ? target! : fact.availability;
+
+      // Condition: follows the status (grade when for sale).
+      let condition: string | null = null;
+      if (effectiveStatus === "READY TO SALE") {
+        if (e.grade) condition = gradeCondition(e.grade);
+        else if (statusChanged && !isSaleCondition(fact.condition)) {
+          const a = ask({
+            id: `grade:${e.key}`, kind: "grade", entry: e.key, prompt: `#${no} is going up for sale. What grade is it?`,
+            options: SALE_GRADES.map((g) => ({ value: `set:${g.condition}`, label: g.condition, recommended: g.grade === "B" }))
+          });
+          condition = a ? a.slice(4) : null;
+        }
+      } else if (statusChanged) {
+        condition = CONDITION_FOR_STATUS[effectiveStatus] ?? null;
+        if (e.grade) planned.info.push(`Grade ${e.grade} is not used: #${no} is not for sale.`);
+      } else if (e.grade) planned.info.push(`Grade ${e.grade} is not used: #${no} is not for sale.`);
+
+      // Price
+      let price: string | null = null;
+      if (e.price.text) {
+        const read = money(e.price.text);
+        if (read && e.price.confidence !== "low") price = read;
+        else {
+          const a = ask({
+            id: `price:${e.key}`, kind: "price", entry: e.key,
+            prompt: read ? `#${no}: the price looks like $${read}, but it is hard to read. What is the sticker price?` : `#${no}: the price reads "${e.price.text}". What is the sticker price?`,
+            options: [...(read ? [{ value: `set:${read}`, label: `$${read}` }] : []), { value: "keep", label: "Leave the price unchanged" }],
+            allowText: { label: "Price $", placeholder: "350" }
+          }, (v) => (v.startsWith("text:") && !money(v.slice(5)) ? "Enter a dollar amount." : null));
+          price = a == null || a === "keep" ? null : a.startsWith("set:") ? a.slice(4) : money(a.slice(5));
+        }
+      }
+
+      // Parts
+      const bom = fact.bomStatus === "found" ? fact.bomParts : null;
+      const resolvePart = (p: ReadPart, kind: PartKind | null): { mpn: string | null; display: string; family: string | null } | "drop" => {
+        const canonical = canonicalizeMpn(p.mpn);
+        const byName = p.name ? classifyFamily(p.name) : "other";
+        const nameFamily = byName === "other" ? null : byName;
+        if (canonical) {
+          if (!bom) {
+            planned.info.push(`No parts list is cached for ${fact.brand} ${fact.modelRaw || "this model"}, so ${p.mpn} goes in the notes only.`);
+            return { mpn: null, display: p.mpn, family: nameFamily };
+          }
+          const hit = bomLookup(bom, canonical);
+          if (hit) return { mpn: hit.mpn, display: hit.display, family: flaggable(hit.family) ?? nameFamily };
+          const near = nearMpns(bom, canonical);
           const a = ask({
             id: `part:${e.key}:${p.key}`, kind: "part", entry: e.key,
-            prompt: `#${no}: which part in the ${fact.brand} ${fact.modelRaw} parts list is "${p.name}"?`,
+            prompt: `#${no}: ${p.mpn}${p.name ? ` (${p.name})` : ""} is not in the parts list for ${fact.brand} ${fact.modelRaw}.${near.length ? " Did you mean one of these?" : ""}`,
             options: [
-              ...cands.map((b) => ({ value: `use:${b.mpn}`, label: b.display, detail: b.description })),
-              { value: "keep", label: "Not sure: notes only" }
+              ...near.map((b, j) => ({ value: `use:${b.mpn}`, label: `Use ${b.display}`, detail: b.description, recommended: j === 0 })),
+              { value: "keep", label: `Keep ${p.mpn} as written`, detail: "It goes in the notes only" },
+              { value: "drop", label: "Leave this part out" }
             ]
           });
-          if (a && a.startsWith("use:")) {
-            const chosen = bom.find((b) => b.mpn === a.slice(4))!;
-            return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
-          }
+          if (a == null || a === "keep") return { mpn: null, display: p.mpn, family: nameFamily };
+          if (a === "drop") return "drop";
+          const chosen = bom.find((b) => b.mpn === a.slice(4))!;
+          return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
         }
-      }
-      return { mpn: null, display: p.mpn, family: nameFamily };
-    };
-    const resolveOther = (p: ReadPart): { no: string | null; label: string } => {
-      const raw = p.otherMachine;
-      if (known(raw)) return { no: raw, label: `#${raw}` };
-      const a = ask({
-        id: `other:${e.key}:${p.key}`, kind: "other_machine", entry: e.key,
-        prompt: `#${no}: the part line names machine #${raw}, which is not in the fleet. Which machine is it?`,
-        options: [
-          ...nearMachineNumbers(raw).filter((n) => known(n)).slice(0, 4).map((n) => ({ value: `use:${n}`, label: `#${n}`, detail: machineSummary(known(n)!) })),
-          { value: "keep", label: `Keep "#${raw}" in the notes only` }
-        ],
-        allowText: { label: "Machine #", placeholder: "number" }
-      }, (v) => {
-        if (v === "keep") return null;
-        const n = v.startsWith("use:") ? v.slice(4) : machineDigits(v.slice(5));
-        return known(n) ? null : `There is no machine #${n}.`;
-      });
-      if (a == null || a === "keep") return { no: null, label: `#${raw}` };
-      const n = a.startsWith("use:") ? a.slice(4) : machineDigits(a.slice(5));
-      return { no: n, label: `#${n}` };
-    };
-
-    type DraftPart = PartDecision & { diagnosisBit: string; noteBit: string; precedence: Precedence };
-    const draftParts: DraftPart[] = [];
-    const donorParts: Array<PartDecision & { donor: MachineFact; precedence: Precedence }> = [];
-    const mentionBits: string[] = [];
-    for (const p of e.parts) {
-      const kind = partKind(p);
-      const part = resolvePart(p, kind);
-      if (part === "drop") continue;
-      const label = `${p.name || "part"}${part.display ? ` (${part.display})` : ""}`;
-      const other = p.otherMachine ? resolveOther(p) : null;
-      if (!kind) { mentionBits.push(sentence(label)); continue; }
-      const alreadySaid = !part.display && p.name && e.problem.toLowerCase().includes(p.name.toLowerCase());
-      const diagnosisBit = alreadySaid ? "" : kind === "needed" ? sentence(`Needs ${label}`) : kind === "suspected" ? sentence(`Check ${label}`)
-        : kind === "failed" ? sentence(`Bad ${label}`) : kind === "missing" ? sentence(`${label} missing`) : "";
-      const noteBit = kind === "removed" ? sentence(`Took ${label}${other ? ` for ${other.label}` : ""}`)
-        : kind === "replaced" ? sentence(`Replaced ${label}${other ? ` from ${other.label}` : ""}`) : "";
-      draftParts.push({
-        machineNo: no, mpn: part.mpn, mpnDisplay: part.display, name: p.name, kind, otherMachine: other?.no ?? null, applied: true,
-        testFirst: kind === "needed" || kind === "suspected" ? part.family : null,
-        note: other?.no ? (kind === "removed" ? `for #${other.no}` : `from #${other.no}`) : "tech note",
-        diagnosisBit, noteBit, precedence: "apply"
-      });
-      if (kind === "replaced" && part.mpn) {
-        const donor = known(other?.no);
-        if (donor) {
-          // The donor's own parts-list identity (WP3948891 and 3948891 are different keys), when it has a list.
-          const donorHit = donor.bomStatus === "found" ? bomLookup(donor.bomParts, part.mpn) : null;
-          if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked removed there.`);
-          else if (donor.bomStatus === "found" && !donorHit) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
-          else {
-            const mpn = donorHit?.mpn ?? part.mpn;
-            donorParts.push({
-              machineNo: donor.machineNo, mpn, mpnDisplay: donorHit?.display ?? part.display, name: p.name, kind: "removed", otherMachine: no,
-              applied: true, testFirst: null, note: `for #${no}`, donor, precedence: precedence(day, donor.partUpdates[mpn], donor.lastUpdate)
+        if (bom && kind && kind !== "suspected" && kind !== "replaced") {
+          const cands = partsByName(bom, p.name);
+          if (cands.length) {
+            const a = ask({
+              id: `part:${e.key}:${p.key}`, kind: "part", entry: e.key,
+              prompt: `#${no}: which part in the ${fact.brand} ${fact.modelRaw} parts list is "${p.name}"?`,
+              options: [
+                ...cands.map((b) => ({ value: `use:${b.mpn}`, label: b.display, detail: b.description })),
+                { value: "keep", label: "Not sure: notes only" }
+              ]
             });
+            if (a && a.startsWith("use:")) {
+              const chosen = bom.find((b) => b.mpn === a.slice(4))!;
+              return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
+            }
+          }
+        }
+        return { mpn: null, display: p.mpn, family: nameFamily };
+      };
+      const resolveOther = (p: ReadPart): { no: string | null; label: string } => {
+        const raw = p.otherMachine;
+        if (known(raw)) return { no: raw, label: `#${raw}` };
+        const a = ask({
+          id: `other:${e.key}:${p.key}`, kind: "other_machine", entry: e.key,
+          prompt: `#${no}: the part line names machine #${raw}, which is not in the fleet. Which machine is it?`,
+          options: [
+            ...nearMachineNumbers(raw).filter((n) => known(n)).slice(0, 4).map((n) => ({ value: `use:${n}`, label: `#${n}`, detail: machineSummary(known(n)!) })),
+            { value: "keep", label: `Keep "#${raw}" in the notes only` }
+          ],
+          allowText: { label: "Machine #", placeholder: "number" }
+        }, (v) => {
+          if (v === "keep") return null;
+          const n = v.startsWith("use:") ? v.slice(4) : machineDigits(v.slice(5));
+          return known(n) ? null : `There is no machine #${n}.`;
+        });
+        if (a == null || a === "keep") return { no: null, label: `#${raw}` };
+        const n = a.startsWith("use:") ? a.slice(4) : machineDigits(a.slice(5));
+        return { no: n, label: `#${n}` };
+      };
+
+      type DraftPart = PartDecision & { diagnosisBit: string; noteBit: string; precedence: Precedence; rejected?: boolean };
+      const draftParts: DraftPart[] = [];
+      const donorParts: Array<PartDecision & { donor: MachineFact; precedence: Precedence }> = [];
+      const mentionBits: string[] = [];
+      for (const p of e.parts) {
+        const kind = partKind(p);
+        const part = resolvePart(p, kind);
+        if (part === "drop") continue;
+        const label = `${p.name || "part"}${part.display ? ` (${part.display})` : ""}`;
+        const other = p.otherMachine ? resolveOther(p) : null;
+        if (!kind) { mentionBits.push(sentence(label)); continue; }
+        const alreadySaid = !part.display && p.name && e.problem.toLowerCase().includes(p.name.toLowerCase());
+        const diagnosisBit = alreadySaid ? "" : kind === "needed" ? sentence(`Needs ${label}`) : kind === "suspected" ? sentence(`Check ${label}`)
+          : kind === "failed" ? sentence(`Bad ${label}`) : kind === "missing" ? sentence(`${label} missing`) : "";
+        const noteBit = kind === "removed" ? sentence(`Took ${label}${other ? ` for ${other.label}` : ""}`)
+          : kind === "replaced" ? sentence(`Replaced ${label}${other ? ` from ${other.label}` : ""}`) : "";
+        draftParts.push({
+          machineNo: no, mpn: part.mpn, mpnDisplay: part.display, name: p.name, kind, otherMachine: other?.no ?? null, applied: true,
+          testFirst: kind === "needed" || kind === "suspected" ? part.family : null,
+          note: other?.no ? (kind === "removed" ? `for #${other.no}` : `from #${other.no}`) : "tech note",
+          diagnosisBit, noteBit, precedence: "apply"
+        });
+        if (kind === "replaced" && part.mpn) {
+          const donor = known(other?.no);
+          if (donor) {
+            // The donor's own parts-list identity (WP3948891 and 3948891 are different keys), when it has a list.
+            const donorHit = donor.bomStatus === "found" ? bomLookup(donor.bomParts, part.mpn) : null;
+            if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked removed there.`);
+            else if (donor.bomStatus === "found" && !donorHit) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
+            else {
+              const mpn = donorHit?.mpn ?? part.mpn;
+              donorParts.push({
+                machineNo: donor.machineNo, mpn, mpnDisplay: donorHit?.display ?? part.display, name: p.name, kind: "removed", otherMachine: no,
+                applied: true, testFirst: null, note: `for #${no}`, donor, precedence: precedence(day, donor.partUpdates[mpn], donor.lastUpdate)
+              });
+            }
           }
         }
       }
-    }
 
-    // --- Precedence: an older note never reverses a newer decision -------------------------
-    const symptomBits = [...e.symptoms.map((k) => CARD_SYMPTOMS.find((s) => s.key === k)?.phrase ?? ""), sentence(e.problem)].filter(Boolean);
-    const wants: Partial<Record<TrackedField, boolean>> = {
-      availability: statusChanged,
-      condition: condition != null && condition !== (fact.condition ?? ""),
-      location: locationChanged,
-      stickerPrice: price != null && !sameMoney(price, fact.stickerPrice),
-      diagnosis: symptomBits.length > 0 || draftParts.some((d) => d.diagnosisBit)
-    };
-    const fieldPrecedence: Partial<Record<TrackedField, Precedence>> = {};
-    for (const f of Object.keys(wants) as TrackedField[]) if (wants[f]) fieldPrecedence[f] = precedence(day, fact.fieldUpdates[f], fact.lastUpdate);
-    // Condition is written with the status: it never outlives a status kept as history.
-    if (fieldPrecedence.availability && fieldPrecedence.condition) {
-      const rank = { older: 2, uncertain: 1, apply: 0 } as const;
-      if (rank[fieldPrecedence.availability] > rank[fieldPrecedence.condition]) fieldPrecedence.condition = fieldPrecedence.availability;
-    }
-    // A part with a parts-list number has its own record; a named part follows the diagnosis.
-    for (const d of draftParts) {
-      d.precedence = d.mpn ? precedence(day, fact.partUpdates[d.mpn], fact.lastUpdate)
-        : fieldPrecedence.diagnosis ?? precedence(day, fact.fieldUpdates.diagnosis, fact.lastUpdate);
-    }
-    // When part of this note is certainly older than the record, the note as a whole predates it:
-    // fields the record has not set since are history too, not a question. Same-day ties still ask.
-    if (Object.values(fieldPrecedence).includes("older") || draftParts.some((d) => d.mpn && d.precedence === "older")) {
-      for (const f of Object.keys(fieldPrecedence) as TrackedField[]) {
-        if (fieldPrecedence[f] === "uncertain" && fact.fieldUpdates[f]?.day !== day) fieldPrecedence[f] = "older";
+      // --- Precedence: an older note never reverses a newer decision -------------------------
+      const symptomBits = [...e.symptoms.map((k) => CARD_SYMPTOMS.find((s) => s.key === k)?.phrase ?? ""), sentence(e.problem)].filter(Boolean);
+      const wants: Partial<Record<TrackedField, boolean>> = {
+        availability: statusChanged,
+        condition: condition != null && condition !== (fact.condition ?? ""),
+        location: locationChanged,
+        stickerPrice: price != null && !sameMoney(price, fact.stickerPrice),
+        diagnosis: symptomBits.length > 0 || draftParts.some((d) => d.diagnosisBit)
+      };
+      const fieldPrecedence: Partial<Record<TrackedField, Precedence>> = {};
+      for (const f of Object.keys(wants) as TrackedField[]) if (wants[f]) fieldPrecedence[f] = precedence(day, fact.fieldUpdates[f], fact.lastUpdate);
+      // Condition is written with the status: it never outlives a status kept as history.
+      if (fieldPrecedence.availability && fieldPrecedence.condition) {
+        const rank = { older: 2, uncertain: 1, apply: 0 } as const;
+        if (rank[fieldPrecedence.availability] > rank[fieldPrecedence.condition]) fieldPrecedence.condition = fieldPrecedence.availability;
       }
-      for (const d of draftParts) if (d.precedence === "uncertain" && (!d.mpn || fact.partUpdates[d.mpn]?.day !== day)) d.precedence = "older";
-    }
-    const uncertainFields = (Object.keys(fieldPrecedence) as TrackedField[]).filter((f) => fieldPrecedence[f] === "uncertain");
-    const uncertainParts = draftParts.filter((d) => d.mpn && d.precedence === "uncertain");
-    // A donor's part has its own record: the same rules, the same question.
-    const uncertainDonors = donorParts.filter((d) => d.precedence === "uncertain");
-    let uncertainApplies = false;
-    if (uncertainFields.length || uncertainParts.length || uncertainDonors.length) {
-      const what = [...uncertainFields.map((f) => FIELD_LABEL[f]), ...uncertainParts.map((d) => `${d.name || "part"} (${d.mpnDisplay || "no number"}) as ${d.kind}`),
-        ...uncertainDonors.map((d) => `#${d.machineNo}'s ${d.name || "part"} (${d.mpnDisplay}) as removed`)];
-      const sameDay = [...uncertainFields.filter((f) => fact.fieldUpdates[f]?.day === day).map((f) => `${FIELD_LABEL[f]} was set ${fact.fieldUpdates[f]!.label}`),
-        ...uncertainParts.filter((d) => d.mpn && fact.partUpdates[d.mpn]?.day === day).map((d) => `${d.mpnDisplay} was set ${fact.partUpdates[d.mpn!]!.label}`),
-        ...uncertainDonors.filter((d) => d.donor.partUpdates[d.mpn!]?.day === day).map((d) => `#${d.machineNo}'s ${d.mpnDisplay} was set ${d.donor.partUpdates[d.mpn!]!.label}`)];
-      const newer = (uncertainFields.length || uncertainParts.length) && fact.lastUpdate && fact.lastUpdate.day > day;
-      const newerDonors = [...new Set(uncertainDonors.filter((d) => d.donor.lastUpdate && d.donor.lastUpdate.day > day).map((d) => d.donor))];
-      const reason = [
-        ...(sameDay.length ? [`On the same day, ${sameDay.join("; ")}.`] : []),
-        ...(newer ? [`#${no} was updated ${fact.lastUpdate!.label}, after this note's date.`] : []),
-        ...newerDonors.map((dn) => `#${dn.machineNo} was updated ${dn.lastUpdate!.label}, after this note's date.`)
-      ].join(" ");
-      const a = ask({
-        id: `order:${e.key}`, kind: "order", entry: e.key,
-        prompt: `#${no}: this note is dated ${shortDate(day)}. ${reason} Is this note the latest word on its ${what.join(", ")}?`,
-        options: [
-          { value: "apply", label: "Yes, apply them", detail: "This note is newer than the record" },
-          { value: "history", label: "No, keep the current record", detail: "Save what this note says as history only", recommended: Boolean(newer) || newerDonors.length > 0 }
-        ]
-      });
-      uncertainApplies = a === "apply";
-    }
-    const applies = (p: Precedence | undefined) => p === "apply" || (p === "uncertain" && uncertainApplies);
+      // A part with a parts-list number has its own record; a named part follows the diagnosis.
+      for (const d of draftParts) {
+        d.precedence = d.mpn ? precedence(day, fact.partUpdates[d.mpn], fact.lastUpdate)
+          : fieldPrecedence.diagnosis ?? precedence(day, fact.fieldUpdates.diagnosis, fact.lastUpdate);
+      }
+      // When part of this note is certainly older than the record, the note as a whole predates it:
+      // fields the record has not set since are history too, not a question. Same-day ties still ask.
+      if (Object.values(fieldPrecedence).includes("older") || draftParts.some((d) => d.mpn && d.precedence === "older")) {
+        for (const f of Object.keys(fieldPrecedence) as TrackedField[]) {
+          if (fieldPrecedence[f] === "uncertain" && fact.fieldUpdates[f]?.day !== day) fieldPrecedence[f] = "older";
+        }
+        for (const d of draftParts) if (d.precedence === "uncertain" && (!d.mpn || fact.partUpdates[d.mpn]?.day !== day)) d.precedence = "older";
+      }
+      const uncertainFields = (Object.keys(fieldPrecedence) as TrackedField[]).filter((f) => fieldPrecedence[f] === "uncertain");
+      const uncertainParts = draftParts.filter((d) => d.mpn && d.precedence === "uncertain");
+      // A donor's part has its own record: the same rules, the same question.
+      const uncertainDonors = donorParts.filter((d) => d.precedence === "uncertain");
+      let uncertainApplies = false;
+      if (uncertainFields.length || uncertainParts.length || uncertainDonors.length) {
+        const what = [...uncertainFields.map((f) => FIELD_LABEL[f]), ...uncertainParts.map((d) => `${d.name || "part"} (${d.mpnDisplay || "no number"}) as ${d.kind}`),
+          ...uncertainDonors.map((d) => `#${d.machineNo}'s ${d.name || "part"} (${d.mpnDisplay}) as removed`)];
+        const sameDay = [...uncertainFields.filter((f) => fact.fieldUpdates[f]?.day === day).map((f) => `${FIELD_LABEL[f]} was set ${fact.fieldUpdates[f]!.label}`),
+          ...uncertainParts.filter((d) => d.mpn && fact.partUpdates[d.mpn]?.day === day).map((d) => `${d.mpnDisplay} was set ${fact.partUpdates[d.mpn!]!.label}`),
+          ...uncertainDonors.filter((d) => d.donor.partUpdates[d.mpn!]?.day === day).map((d) => `#${d.machineNo}'s ${d.mpnDisplay} was set ${d.donor.partUpdates[d.mpn!]!.label}`)];
+        const newer = (uncertainFields.length || uncertainParts.length) && fact.lastUpdate && fact.lastUpdate.day > day;
+        const newerDonors = [...new Set(uncertainDonors.filter((d) => d.donor.lastUpdate && d.donor.lastUpdate.day > day).map((d) => d.donor))];
+        const reason = [
+          ...(sameDay.length ? [`On the same day, ${sameDay.join("; ")}.`] : []),
+          ...(newer ? [`#${no} was updated ${fact.lastUpdate!.label}, after this note's date.`] : []),
+          ...newerDonors.map((dn) => `#${dn.machineNo} was updated ${dn.lastUpdate!.label}, after this note's date.`)
+        ].join(" ");
+        const a = ask({
+          id: `order:${e.key}`, kind: "order", entry: e.key,
+          prompt: `#${no}: this note is dated ${shortDate(day)}. ${reason} Is this note the latest word on its ${what.join(", ")}?`,
+          options: [
+            { value: "apply", label: "Yes, apply them", detail: "This note is newer than the record" },
+            { value: "history", label: "No, keep the current record", detail: "Save what this note says as history only", recommended: Boolean(newer) || newerDonors.length > 0 }
+          ]
+        });
+        uncertainApplies = a === "apply";
+      }
+      const applies = (p: Precedence | undefined) => p === "apply" || (p === "uncertain" && uncertainApplies);
+      for (const d of draftParts) d.rejected = rejected(no, d.mpn, d.kind);
 
-    // Parts: applied decisions change availability; older ones are history.
-    for (const d of draftParts) {
-      const ok = applies(d.precedence);
-      const { diagnosisBit: _d, noteBit: _n, precedence: _p, ...decision } = d;
-      planned.parts.push({ ...decision, applied: ok });
-      const state = STATE_FOR_KIND[d.kind];
-      if (ok && state && d.mpn) planned.partStates.push({ machineNo: no, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state, note: d.note, seenToken: fact.partUpdates[d.mpn]?.token ?? null });
-      if (ok && d.testFirst && !planned.testFirst.includes(d.testFirst)) planned.testFirst.push(d.testFirst);
-    }
-    for (const { donor, precedence: pr, ...d } of donorParts) {
-      const ok = applies(pr);
-      planned.parts.push({ ...d, applied: ok });
-      if (ok && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note, seenToken: donor.partUpdates[d.mpn]?.token ?? null });
-      if (!ok) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} has a newer record, so it is not marked removed there.`);
-    }
+      // Parts: applied decisions change availability; older ones are history.
+      for (const d of draftParts) {
+        const ok = applies(d.precedence) && !d.rejected;
+        if (d.rejected) planned.info.push(`${d.name || d.mpnDisplay} on #${no} is not recorded as ${d.kind}: you chose another line for it.`);
+        const { diagnosisBit: _d, noteBit: _n, precedence: _p, rejected: _r, ...decision } = d;
+        planned.parts.push({ ...decision, applied: ok });
+        const state = STATE_FOR_KIND[d.kind];
+        if (ok && state && d.mpn) planned.partStates.push({ machineNo: no, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state, note: d.note, seenToken: fact.partUpdates[d.mpn]?.token ?? null });
+        if (ok && d.testFirst && !planned.testFirst.includes(d.testFirst)) planned.testFirst.push(d.testFirst);
+      }
+      for (const { donor, precedence: pr, ...d } of donorParts) {
+        const no2 = rejected(d.machineNo, d.mpn, d.kind);
+        const ok = applies(pr) && !no2;
+        if (no2) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} is not recorded as removed: you chose another line for it.`);
+        planned.parts.push({ ...d, applied: ok });
+        if (ok && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note, seenToken: donor.partUpdates[d.mpn]?.token ?? null });
+        if (!applies(pr)) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} has a newer record, so it is not marked removed there.`);
+      }
 
-    // Diagnosis: what is wrong, appended to what the record already says.
-    const current = (fact.diagnosis ?? "").trim();
-    const said = [...new Set([...symptomBits, ...draftParts.map((d) => d.diagnosisBit).filter(Boolean)])];
-    const bits = [...symptomBits, ...draftParts.filter((d) => d.diagnosisBit && applies(d.precedence)).map((d) => d.diagnosisBit)]
-      .filter((b) => b && !current.toLowerCase().includes(b.toLowerCase().replace(/\.$/, "")));
-    const diagnosis = bits.length ? [current, ...new Set(bits)].filter(Boolean).join(" ") : null;
+      // Diagnosis: what is wrong, appended to what the record already says.
+      const current = (fact.diagnosis ?? "").trim();
+      const said = [...new Set([...symptomBits, ...draftParts.map((d) => d.diagnosisBit).filter(Boolean)])];
+      const bits = [...symptomBits, ...draftParts.filter((d) => d.diagnosisBit && applies(d.precedence) && !d.rejected).map((d) => d.diagnosisBit)]
+        .filter((b) => b && !current.toLowerCase().includes(b.toLowerCase().replace(/\.$/, "")));
+      const diagnosis = bits.length ? [current, ...new Set(bits)].filter(Boolean).join(" ") : null;
 
-    const want: Array<[TrackedField, string | null, string | null]> = [
-      ["availability", fact.availability, statusChanged ? target : null],
-      ["condition", fact.condition, condition],
-      ["location", fact.location, nextLocation],
-      ["diagnosis", fact.diagnosis, diagnosis],
-      ["stickerPrice", fact.stickerPrice, price && !sameMoney(price, fact.stickerPrice) ? price : null]
-    ];
-    const historyNotes: string[] = [];
-    for (const [field, from, to] of want) {
-      if (to == null || (from ?? "") === to) continue;
-      const p = fieldPrecedence[field] ?? "apply";
-      if (applies(p)) planned.changes.push({ field, from, to });
-      else {
-        // History keeps what the note said, not the merged text.
-        planned.history.push({ field, from, to: field === "diagnosis" ? said.join(" ") : to });
-        historyNotes.push(FIELD_LABEL[field]);
+      const want: Array<[TrackedField, string | null, string | null]> = [
+        ["availability", fact.availability, statusChanged ? target : null],
+        ["condition", fact.condition, condition],
+        ["location", fact.location, nextLocation],
+        ["diagnosis", fact.diagnosis, diagnosis],
+        ["stickerPrice", fact.stickerPrice, price && !sameMoney(price, fact.stickerPrice) ? price : null]
+      ];
+      const historyNotes: string[] = [];
+      for (const [field, from, to] of want) {
+        if (to == null || (from ?? "") === to) continue;
+        const p = fieldPrecedence[field] ?? "apply";
+        if (applies(p)) planned.changes.push({ field, from, to });
+        else {
+          // History keeps what the note said, not the merged text.
+          planned.history.push({ field, from, to: field === "diagnosis" ? said.join(" ") : to });
+          historyNotes.push(FIELD_LABEL[field]);
+        }
+      }
+      if (said.length && !planned.changes.some((c) => c.field === "diagnosis") && !planned.history.some((c) => c.field === "diagnosis")
+        && fieldPrecedence.diagnosis && !applies(fieldPrecedence.diagnosis)) {
+        planned.history.push({ field: "diagnosis", from: fact.diagnosis, to: said.join(" ") });
+        historyNotes.push(FIELD_LABEL.diagnosis);
+      }
+      const applied = (field: TrackedField) => planned.changes.some((c) => c.field === field);
+
+      // VERIFY LOCATION: a recorded location that differs from the one on record.
+      if (applied("location") && (fact.location ?? "").trim()) {
+        planned.locationCheck = { from: fact.location!, to: nextLocation! };
+        planned.info.push(`#${no} was recorded at ${fact.location}; this note says ${nextLocation}. VERIFY LOCATION stays on until someone checks where it is.`);
+      }
+      // Donor pool consequence of a status change.
+      if (applied("availability")) {
+        const was = facts.donorStatuses.includes(fact.availability);
+        const will = facts.donorStatuses.includes(target!);
+        if (!was && will) planned.info.push(`#${no} joins the donor pool: ${target} is a donor status in Settings.`);
+        if (was && !will) planned.info.push(`#${no} leaves the donor pool.`);
+      }
+
+      // Repair notes: one dated line, the inventory's "5/12/26-…" style. Always appended: it is the log.
+      const line: string[] = [];
+      if (locationChanged) line.push(`Location: ${nextLocation}${location && location !== "keep" && location.detail ? ` (${location.detail})` : ""}.`);
+      if (statusChanged) line.push(`${target}.`);
+      if (otherWords.length) line.push(...otherWords.map(sentence));
+      if (readyForClean) line.push("Ready for clean.");
+      if (e.workDone) line.push(sentence(e.workDone));
+      line.push(...draftParts.map((d) => d.noteBit).filter(Boolean), ...mentionBits);
+      if (price && !sameMoney(price, fact.stickerPrice)) line.push(`Sticker $${Number(price).toFixed(2).replace(/\.00$/, "")}.`);
+      if (e.note) line.push(sentence(e.note));
+      if (historyNotes.length || draftParts.some((d) => !applies(d.precedence)) || donorParts.some((d) => !applies(d.precedence))) {
+        if (!applies(fieldPrecedence.diagnosis ?? "apply")) line.push(...said);
+        line.push("(Older than the current record: kept as history.)");
+      }
+      const notesLine = line.length ? `${shortDate(day)}-${line.join(" ")}` : "";
+      if (notesLine) {
+        const currentNotes = (fact.notes ?? "").trim();
+        planned.changes.push({ field: "notes", from: fact.notes, to: [currentNotes, notesLine].filter(Boolean).join(" ") });
       }
     }
-    if (said.length && !planned.changes.some((c) => c.field === "diagnosis") && !planned.history.some((c) => c.field === "diagnosis")
-      && fieldPrecedence.diagnosis && !applies(fieldPrecedence.diagnosis)) {
-      planned.history.push({ field: "diagnosis", from: fact.diagnosis, to: said.join(" ") });
-      historyNotes.push(FIELD_LABEL.diagnosis);
-    }
-    const applied = (field: TrackedField) => planned.changes.some((c) => c.field === field);
-
-    // VERIFY LOCATION: a recorded location that differs from the one on record.
-    if (applied("location") && (fact.location ?? "").trim()) {
-      planned.locationCheck = { from: fact.location!, to: nextLocation! };
-      planned.info.push(`#${no} was recorded at ${fact.location}; this note says ${nextLocation}. VERIFY LOCATION stays on until someone checks where it is.`);
-    }
-    // Donor pool consequence of a status change.
-    if (applied("availability")) {
-      const was = facts.donorStatuses.includes(fact.availability);
-      const will = facts.donorStatuses.includes(target!);
-      if (!was && will) planned.info.push(`#${no} joins the donor pool: ${target} is a donor status in Settings.`);
-      if (was && !will) planned.info.push(`#${no} leaves the donor pool.`);
-    }
-
-    // Repair notes: one dated line, the inventory's "5/12/26-…" style. Always appended: it is the log.
-    const line: string[] = [];
-    if (locationChanged) line.push(`Location: ${nextLocation}${location && location !== "keep" && location.detail ? ` (${location.detail})` : ""}.`);
-    if (statusChanged) line.push(`${target}.`);
-    if (otherWords.length) line.push(...otherWords.map(sentence));
-    if (readyForClean) line.push("Ready for clean.");
-    if (e.workDone) line.push(sentence(e.workDone));
-    line.push(...draftParts.map((d) => d.noteBit).filter(Boolean), ...mentionBits);
-    if (price && !sameMoney(price, fact.stickerPrice)) line.push(`Sticker $${Number(price).toFixed(2).replace(/\.00$/, "")}.`);
-    if (e.note) line.push(sentence(e.note));
-    if (historyNotes.length || planned.parts.some((d) => !d.applied)) {
-      if (!applies(fieldPrecedence.diagnosis ?? "apply")) line.push(...said);
-      line.push("(Older than the current record: kept as history.)");
-    }
-    const notesLine = line.length ? `${shortDate(day)}-${line.join(" ")}` : "";
-    if (notesLine) {
-      const currentNotes = (fact.notes ?? "").trim();
-      planned.changes.push({ field: "notes", from: fact.notes, to: [currentNotes, notesLine].filter(Boolean).join(" ") });
-    }
-  }
+    return entries;
+  };
+  let entries = buildEntries(new Map());
 
   // One part on one machine gets one availability state per note. The same state written twice is
   // written once; different states (a part "taken" on one line and "missing" on another) are asked.
@@ -901,25 +918,30 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     const k = `${change.machineNo}|${change.mpn}`;
     byPart.set(k, [...(byPart.get(k) ?? []), { entry, change }]);
   }
+  const veto = new Map<string, string | null>();
   for (const [k, list] of byPart) {
-    if (list.length < 2) continue;
     const states = [...new Set(list.map((x) => x.change.state))];
-    let keepState: string | null = states[0];
-    if (states.length > 1) {
-      const [machineNo] = k.split("|");
-      const a = ask({
-        id: `partstate:${k}`, kind: "part", entry: null,
-        prompt: `#${machineNo}: this note marks ${list[0].change.mpnDisplay} as ${states.join(" and as ")}. Which is right?`,
-        options: [...states.map((st) => ({ value: `set:${st}`, label: st === "pulled" ? "removed" : st })), { value: "none", label: "Neither: leave the part as it is" }]
-      });
-      keepState = a == null || a === "none" ? null : a.slice(4);
-    }
-    let kept = false;
-    for (const { entry, change } of list) {
-      const keep = !kept && change.state === keepState;
-      if (keep) kept = true;
-      else entry.partStates = entry.partStates.filter((x) => x !== change);
-    }
+    if (states.length < 2) continue;
+    const [machineNo] = k.split("|");
+    const a = ask({
+      id: `partstate:${k}`, kind: "part", entry: null,
+      prompt: `#${machineNo}: this note marks ${list[0].change.mpnDisplay} as ${states.map((st) => (st === "pulled" ? "removed" : st)).join(" and as ")}. Which is right?`,
+      options: [...states.map((st) => ({ value: `set:${st}`, label: st === "pulled" ? "removed" : st })), { value: "none", label: "Neither: leave the part as it is" }]
+    });
+    // Unanswered: nothing is written for this part until it is (and the note is not ready).
+    veto.set(k, a == null || a === "none" ? null : a.slice(4));
+  }
+  // The answers change decisions, diagnoses and notes, not only the state rows: build the entries again.
+  if (veto.size) entries = buildEntries(veto);
+  // The same state written twice is written once.
+  const written = new Set<string>();
+  for (const entry of entries) {
+    entry.partStates = entry.partStates.filter((x) => {
+      const k = `${x.machineNo}|${x.mpn}`;
+      if (written.has(k)) return false;
+      written.add(k);
+      return true;
+    });
   }
 
   const unanswered = questions.filter((q) => q.answer == null).length;

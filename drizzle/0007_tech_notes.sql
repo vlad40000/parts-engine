@@ -50,7 +50,7 @@ CREATE TABLE "fleet_part_events" (
 	"tech_note_id" uuid,
 	"observed_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "fleet_part_events_kind_valid" CHECK ("fleet_part_events"."kind" in ('suspected','needed','failed','missing','replaced','removed'))
+	CONSTRAINT "fleet_part_events_kind_valid" CHECK ("fleet_part_events"."kind" in ('suspected','needed','failed','missing','replaced','removed','cleared'))
 );
 --> statement-breakpoint
 CREATE TABLE "tech_notes" (
