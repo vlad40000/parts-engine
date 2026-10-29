@@ -15,7 +15,7 @@ Techs record what they found and where a machine is on paper. **Tech notes** tur
    - two statuses written, a status that takes a machine off the lot (SOLD, SCRAPPED), or a machine still UNCHECKED that the note describes;
    - the grade when a machine goes up for sale without one;
    - location wording that is not on the location list (use an existing location and remember the wording, or add a new location);
-   - a part number not in that model's cached parts list (near matches such as WP394889 → WP3948891), a part named without a number, or a part line's machine number that does not exist;
+   - a part number not in that model's cached parts list (near matches such as WP394889 → WP3948891), a part named without a number, or a part line's machine number that does not exist. A number matches only itself or a recorded WP alias of it (`mpn_alias`); 3948891 written against a list that has only WP3948891 is offered as a suggestion, never assumed;
    - whether the note or the record is newer, when the dates cannot settle it (see Chronology);
    - a price that is hard to read.
 4. **Apply.** Nothing is written until every question is answered. Then, in one SQL statement: the applied changes, history rows dated by the note, part decisions, VERIFY LOCATION checks, `last_field_update_at`, new locations and remembered wordings, and the note with its written date. If any machine changed after the page was opened, nothing is written and the answers are kept.

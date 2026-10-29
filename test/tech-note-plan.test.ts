@@ -305,6 +305,28 @@ describe("parts: needed is not failed", () => {
     expect(plan({ entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", confidence: "low" })] })] }, facts([laundry])).questions).toEqual([]);
   });
 
+  it("treats a WP variant as the same part only through a persisted alias; otherwise it is suggested and asked", () => {
+    const bad = (mpn: string) => ({ entries: [entry("6171", { parts: [line({ mpn, name: "timer", condition: "bad" })] })] });
+    // Written without the prefix, the list has only WP3948891: a different OEM number until someone confirms it.
+    const bare = plan(bad("3948891"), facts([laundry]));
+    expect(bare.ready).toBe(false);
+    const q = bare.questions.find((x) => x.id === "part:e0:p0")!;
+    expect(q.options[0]).toMatchObject({ value: "use:WP3948891", recommended: true });
+    expect(bare.entries[0].partStates).toEqual([]);
+    expect(plan(bad("3948891"), facts([laundry]), { [q.id]: "use:WP3948891" }).entries[0].partStates).toMatchObject([{ mpn: "WP3948891", state: "failed" }]);
+    expect(plan(bad("3948891"), facts([laundry]), { [q.id]: "keep" }).entries[0].partStates).toEqual([]);
+
+    // The list stores the base number: the WP number written matches only when the alias is on record.
+    const timer = { mpn: "3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" };
+    const withAlias = fact("6171", { ...laundry, bomParts: [{ ...timer, aliases: ["WP3948891"] }] });
+    const matched = plan(bad("WP3948891"), facts([withAlias]));
+    expect(matched.questions).toEqual([]);
+    expect(matched.entries[0].partStates).toMatchObject([{ mpn: "3948891", state: "failed" }]);
+    const noAlias = plan(bad("WP3948891"), facts([fact("6171", { ...laundry, bomParts: [timer] })]));
+    expect(noAlias.questions.map((x) => x.id)).toEqual(["part:e0:p0"]);
+    expect(noAlias.entries[0].partStates).toEqual([]);
+  });
+
   it("matches a named missing part to the parts list", () => {
     const r = { entries: [entry("6171", { parts: [line({ name: "lid switch", condition: "missing" })] })] };
     const q = plan(r, facts([laundry])).questions.find((x) => x.kind === "part")!;
@@ -351,7 +373,8 @@ describe("parts: needed is not failed", () => {
   });
 
   it("records the donor's removal under the donor's own parts-list number, by the same chronology rules", () => {
-    const recipient = fact("6171", { availability: "NEEDS PARTS", bomStatus: "found", bomParts: [{ mpn: "3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" }] });
+    // The recipient's list stores WP3948891 under 3948891 with a persisted WP alias; the donor's list kept WP3948891.
+    const recipient = fact("6171", { availability: "NEEDS PARTS", bomStatus: "found", bomParts: [{ mpn: "3948891", display: "WP3948891", description: "Timer", family: "sensor_switch", aliases: ["WP3948891"] }] });
     const donorBom = [{ mpn: "WP3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" }];
     const r = { entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", action: "replaced", otherMachine: "5000" })] })] };
     const donor = fact("5000", { availability: "PARTS ONLY", bomStatus: "found", bomParts: donorBom });

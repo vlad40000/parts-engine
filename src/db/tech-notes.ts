@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Db } from "./types";
 import { classifyFamily, suspectFamilies } from "@/src/lib/part-family";
 import { modelKey } from "@/src/lib/model-key";
+import { wpPrefixTarget } from "@/src/lib/mpn";
 import { defaultDonorStatuses } from "@/src/lib/donor-status";
 import {
   nearMachineNumbers, referencedMachineNumbers,
@@ -259,8 +260,10 @@ export async function loadPlanFacts(db: Db, reading: NoteReading, answers: Answe
     order by f.machine_no limit 200`) : [];
 
   const withBom = direct.filter((r) => r.bom_status === "found");
-  const edges = withBom.length ? await q<{ brand_key: string; model_key: string; mpn_canonical: string; mpn_display: string; description: string; part_family: string | null }>(db, sql`
-    select e.brand_key, e.model_key, e.mpn_canonical, e.mpn_display, coalesce(nullif(e.description, ''), m.description, '') description, m.part_family
+  const edges = withBom.length ? await q<{ brand_key: string; model_key: string; mpn_canonical: string; mpn_display: string; description: string; part_family: string | null; aliases: string[] }>(db, sql`
+    select e.brand_key, e.model_key, e.mpn_canonical, e.mpn_display, coalesce(nullif(e.description, ''), m.description, '') description, m.part_family,
+      coalesce((select array_agg(a.alias_canonical order by a.alias_canonical) from mpn_alias a
+        where a.mpn_canonical = e.mpn_canonical and a.kind = 'wp_prefix'), '{}') aliases
     from model_part_edges e
     join unnest(${textArray(withBom.map((r) => r.brand_key))}, ${textArray(withBom.map((r) => r.model_key))}) k(b, m2)
       on e.brand_key = k.b and e.model_key = k.m2
@@ -271,7 +274,12 @@ export async function loadPlanFacts(db: Db, reading: NoteReading, answers: Answe
     const key = `${e.brand_key}|${e.model_key}`;
     const list = bomFor.get(key) ?? [];
     if (!list.some((p) => p.mpn === e.mpn_canonical)) {
-      list.push({ mpn: e.mpn_canonical, display: e.mpn_display, description: e.description, family: e.part_family && e.part_family !== "other" ? e.part_family : classifyFamily(e.description) });
+      list.push({
+        mpn: e.mpn_canonical, display: e.mpn_display, description: e.description,
+        family: e.part_family && e.part_family !== "other" ? e.part_family : classifyFamily(e.description),
+        // Only persisted WP identity aliases (as harvest times accept): never a prefix stripped here.
+        aliases: (e.aliases ?? []).filter((a) => wpPrefixTarget(a) === e.mpn_canonical)
+      });
     }
     bomFor.set(key, list);
   }

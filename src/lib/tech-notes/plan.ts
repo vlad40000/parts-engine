@@ -27,7 +27,11 @@ import { machineDigits, type NoteReading, type ReadEntry, type ReadGroup, type R
 // ---------------------------------------------------------------------------
 // Facts: the fleet records the planner may consult.
 // ---------------------------------------------------------------------------
-export type BomPart = { mpn: string; display: string; description: string; family: string };
+/**
+ * A parts-list part. `aliases` are persisted WP identity aliases (mpn_alias, kind wp_prefix) that
+ * resolve to `mpn`. Any other prefix or number variant is a distinct identity (AGENTS.md).
+ */
+export type BomPart = { mpn: string; display: string; description: string; family: string; aliases?: string[] };
 /** When a decision was observed: the shop day (YYYY-MM-DD) and how to show it. */
 export type Observed = { day: string; label: string };
 /** Fields whose newest decision an older note must not reverse. Repair notes are a log, not a decision. */
@@ -261,11 +265,11 @@ function applianceMismatch(entry: ReadEntry, applianceType: string): string | nu
   return null;
 }
 
+/** The same part identity only: the key itself or a persisted WP alias of it. A WP variant without one is only a suggestion. */
 function bomLookup(bom: BomPart[], canonical: string): BomPart | null {
-  return bom.find((b) => b.mpn === canonical)
-    ?? bom.find((b) => `WP${b.mpn}` === canonical || b.mpn === `WP${canonical}`)
-    ?? null;
+  return bom.find((b) => b.mpn === canonical) ?? bom.find((b) => (b.aliases ?? []).includes(canonical)) ?? null;
 }
+const identities = (b: BomPart | undefined, mpn: string) => [mpn, ...(b?.aliases ?? [])];
 function nearMpns(bom: BomPart[], canonical: string): BomPart[] {
   const bare = canonical.replace(/^WP/, "");
   return bom
@@ -770,7 +774,9 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
           const donor = known(other?.no);
           if (donor) {
             // The donor's own parts-list identity (WP3948891 and 3948891 are different keys), when it has a list.
-            const donorHit = donor.bomStatus === "found" && part.mpn ? bomLookup(donor.bomParts, part.mpn) : null;
+            const ids = part.mpn ? identities(bom?.find((b) => b.mpn === part.mpn), part.mpn) : [];
+            const donorHit = donor.bomStatus === "found" && part.mpn
+              ? donor.bomParts.find((b) => identities(b, b.mpn).some((k) => ids.includes(k))) ?? null : null;
             if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked removed there.`);
             else if (!part.mpn) planned.info.push(`${label} has no parts-list number, so #${donor.machineNo}'s part is not marked removed.`);
             else if (donor.bomStatus === "found" && !donorHit) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
