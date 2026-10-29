@@ -24,6 +24,7 @@ vi.mock("@/src/lib/tech-notes/reader", async () => {
   return { ...actual, readerConfig: () => holder.config, readCard: (...args: unknown[]) => holder.read(...args) };
 });
 import { applyNoteAction, discardNoteAction, loadFactsAction, readCardAction, rereadNoteAction, saveDraftAction, startTypedNoteAction } from "@/app/notes/actions";
+import { verifyLocationAction } from "@/app/actions";
 import { ReaderError } from "@/src/lib/tech-notes/reader";
 
 let db: Db;
@@ -91,7 +92,9 @@ describe("tech note actions", () => {
     expect((await getTechNote(db, id))?.readerModel).toBe("careful-model");
 
     const r = (await getTechNote(db, id))!.reading!;
-    const facts = await loadFactsAction(r, {});
+    const facts = await loadFactsAction(id, r, {});
+    // The note was uploaded on the test's clock day; the written date (5/11/26) is what counts.
+    expect(facts.uploadedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(Object.keys(facts.machines)).toEqual(["4928"]);
     const versions = JSON.stringify({ "4928": facts.machines["4928"].version });
 
@@ -105,8 +108,15 @@ describe("tech note actions", () => {
 
     expect(await redirectOf(applyNoteAction(null, form({ id, reading: JSON.stringify(r), answers: "{}", versions })))).toBe(`/notes/${id}`);
     const [m] = await db.select().from(schema.fleetMachines).where(eq(schema.fleetMachines.machineNo, "4928"));
-    expect(m).toMatchObject({ availability: "READY TO SALE", condition: "B - Good", location: "Showroom - Main", stickerPrice: "350.00", statusOverride: true });
-    expect(m.notes).toBe("5/11/26-Moved to Showroom - Main. Ready for sale. Sticker $350.");
+    expect(m).toMatchObject({ availability: "READY TO SALE", condition: "B - Good", location: "Showroom - Main", stickerPrice: "350.00", statusOverride: true, locationOverride: true });
+    expect(m.notes).toBe("5/11/26-Location: Showroom - Main. READY TO SALE. Sticker $350.");
+    expect((await getTechNote(db, id))?.observedOn).toBe("2026-05-11");
+
+    // Warehouse → Showroom - Main conflicts with the record: verified through the production action.
+    const verify = await verifyLocationAction(null, form({ machineNo: "4928", location: "__other", other: "Showroom - WH" }));
+    expect(verify).toMatchObject({ ok: true, message: "Verified: #4928 is at Showroom - WH." });
+    expect((await db.select().from(schema.fleetMachines).where(eq(schema.fleetMachines.machineNo, "4928")))[0].location).toBe("Showroom - WH");
+    expect(await verifyLocationAction(null, form({ machineNo: "4928", location: "Showroom - WH" }))).toMatchObject({ ok: false });
     expect(await applyNoteAction(null, form({ id, reading: JSON.stringify(r), answers: "{}", versions }))).toMatchObject({ ok: false, message: "This note was already applied or discarded." });
     expect(await discardNoteAction(null, form({ id }))).toMatchObject({ ok: false });
   });

@@ -61,8 +61,10 @@ export async function startTypedNoteAction(): Promise<void> {
 }
 
 /** Records the review page needs for the reading and answers as they stand. */
-export async function loadFactsAction(reading: unknown, answers: unknown): Promise<PlanFacts> {
-  return loadPlanFacts(await getDb(), normalizeReading(reading), cleanAnswers(answers));
+export async function loadFactsAction(id: string, reading: unknown, answers: unknown): Promise<PlanFacts> {
+  const db = await getDb();
+  const note = await getTechNote(db, id);
+  return loadPlanFacts(db, normalizeReading(reading), cleanAnswers(answers), new Date(), note?.uploadedOn);
 }
 
 export async function saveDraftAction(id: string, reading: unknown, answers: unknown): Promise<ActionResult> {
@@ -100,10 +102,10 @@ export async function applyNoteAction(_prev: ActionResult | null, form: FormData
   const db = await getDb();
   const note = await getTechNote(db, id);
   if (!note || note.status !== "open") return { ok: false, message: "This note was already applied or discarded." };
-  const plan = planNote(reading, await loadPlanFacts(db, reading, answers), answers);
+  const plan = planNote(reading, await loadPlanFacts(db, reading, answers, new Date(), note.uploadedOn), answers);
   if (plan.unanswered) return { ok: false, message: `Answer the ${plan.unanswered === 1 ? "last question" : `${plan.unanswered} remaining questions`} first.` };
   if (!plan.hasChanges) return { ok: false, message: "Nothing on this note changes a machine. Edit the reading, or discard the note." };
-  const changed = plan.entries.filter((e) => e.fact && e.changes.length && seen[e.fact.machineNo] !== e.fact.version);
+  const changed = plan.entries.filter((e) => e.fact && (e.changes.length || e.history.length) && seen[e.fact.machineNo] !== e.fact.version);
   if (changed.length) {
     await saveDraft(db, id, reading, answers);
     return { ok: false, message: `${changed.map((e) => `#${e.machineNo}`).join(", ")} changed since this page opened. Your answers are saved: reload to check the current record.` };

@@ -185,7 +185,8 @@ export async function updateMachineLocation(
   const saved = await q<{ machine_no: string }>(db, sql`
     with changed as (
       update fleet_machines
-      set location = ${location || null}, location_override = true, updated_at = now()
+      set location = ${location || null}, location_override = true, updated_at = now(),
+        last_field_update_at = greatest(last_field_update_at, now())
       where machine_no = ${input.machineNo} and coalesce(location, '') = ${input.expectedLocation}
       returning machine_no
     ), logged as (
@@ -269,7 +270,8 @@ export async function updateMachineStatus(
   const saved = await q<{ machine_no: string }>(db, sql`
     with changed as (
       update fleet_machines
-      set availability = ${input.status}, status_override = true, updated_at = now()
+      set availability = ${input.status}, status_override = true, updated_at = now(),
+        last_field_update_at = greatest(last_field_update_at, now())
       where machine_no = ${input.machineNo} and availability = ${input.expectedStatus}
       returning machine_no
     ), logged as (
@@ -285,7 +287,7 @@ export async function updateMachineStatus(
   return current ? "conflict" : "not_found";
 }
 
-export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string; location?: string; sort?: string };
+export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string; location?: string; sort?: string; verify?: string };
 
 function fleetWhere(f: FleetFilter) {
   const parts = [sql`true`];
@@ -293,6 +295,7 @@ function fleetWhere(f: FleetFilter) {
   if (f.type) parts.push(sql`f.appliance_type = ${f.type}`);
   if (f.brand) parts.push(sql`f.brand_key = ${f.brand}`);
   if (f.location?.trim()) parts.push(sql`coalesce(f.location, '') ilike ${"%" + f.location.trim() + "%"}`);
+  if (f.verify === "1") parts.push(sql`exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null)`);
   if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"})`);
   if (f.band) {
     const band = DEFAULT_AGE_BANDS.find((b) => b.key === f.band);
@@ -350,9 +353,11 @@ export async function listFleet(db: Db, f: FleetFilter, limit = 100, offset = 0)
   const rows = await q<{
     machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; serial: string; location: string | null;
     identity_status: string; age_candidate_years: number[]; age_confidence: string; suspect_families: string[]; bom_status: string | null;
+    verify_location: boolean;
   }>(db, sql`
     select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.location, f.identity_status,
-      f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status
+      f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status,
+      exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null) verify_location
     from fleet_machines f
     left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
     where ${fleetWhere(f)}
