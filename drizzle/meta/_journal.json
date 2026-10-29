@@ -50,6 +50,13 @@
       "when": 1793190000000,
       "tag": "0006_fleet_location_edits",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793292873996,
+      "tag": "0007_tech_notes",
+      "breakpoints": true
     }
   ]
 }
