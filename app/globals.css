@@ -32,40 +32,27 @@ th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--color-line); ver
 .pill-wait { background: #fef3c7; color: var(--color-wait); }
 .pill-mute { background: #f5f5f4; color: var(--color-muted); }
 
-/* Printable tech-note cards. Sizes are inches so a 100% print matches the reader's layout. */
+/*
+ * Roadrunner Standardized Field Intake (RR-F1). Sizes are inches so a 100% print is exact:
+ * a letter page holds two 8.5in x 5.5in forms. Solid black text and lines only.
+ */
 .rr-sheet-wrap { overflow-x: auto; }
 .rr-sheet { width: 8.5in; height: 11in; background: white; color: #000; display: grid; box-shadow: 0 0 0 1px var(--color-line); font-family: Arial, Helvetica, sans-serif; }
-.rr-sheet-quarters { grid-template-columns: 4.25in 4.25in; grid-template-rows: 5.5in 5.5in; }
-.rr-sheet-halves { grid-template-columns: 8.5in; grid-template-rows: 5.5in 5.5in; }
-.rr-card { box-sizing: border-box; padding: 0.28in; overflow: hidden; display: flex; flex-direction: column; gap: 0.04in; font-size: 7.5pt; line-height: 1.15; outline: 1px dashed #9ca3af; outline-offset: -0.5px; }
-.rr-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 0.03in; font-size: 9pt; }
-.rr-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; font-size: 13pt; letter-spacing: 0.04em; border: 2px solid #000; padding: 0 0.06in; }
-.rr-hint, .rr-foot { font-size: 6.5pt; color: #222; margin: 0; }
-.rr-foot { margin-top: auto; }
-.rr-label { font-weight: 700; text-transform: uppercase; font-size: 6.5pt; letter-spacing: 0.03em; }
-.rr-row { display: flex; align-items: center; gap: 0.07in; flex-wrap: wrap; }
-.rr-ids { display: grid; grid-template-columns: max-content max-content; gap: 0.06in 0.2in; }
-.rr-comb { display: inline-grid; grid-auto-flow: column; }
-.rr-comb-md { grid-auto-columns: 0.26in; }
-.rr-comb-md .rr-box { height: 0.34in; }
-.rr-comb-sm { grid-auto-columns: 0.21in; }
-.rr-comb-sm .rr-box { height: 0.26in; }
-.rr-box { border: 1.5px solid #000; margin-left: -1.5px; }
-.rr-comb .rr-box:first-child { margin-left: 0; }
-.rr-date { display: inline-flex; align-items: center; gap: 0.02in; }
-.rr-check { display: inline-flex; align-items: center; gap: 0.05in; white-space: nowrap; }
-.rr-tick { display: inline-block; width: 0.15in; height: 0.15in; border: 1.5px solid #000; flex: none; }
-.rr-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.03in 0.1in; }
-.rr-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.03in 0.08in; }
-.rr-line { border-bottom: 1px solid #000; height: 0.22in; }
-.rr-grow { flex: 1; min-width: 1in; }
-.rr-cols { display: grid; grid-template-columns: 3.2in 1fr; gap: 0.25in; }
-.rr-cols > div { display: flex; flex-direction: column; gap: 0.04in; }
-.rr-parts { width: 100%; border-collapse: collapse; }
-.rr-parts th { font-size: 6pt; text-transform: uppercase; color: #000; padding: 0 0.03in; border: 0; letter-spacing: 0; text-align: center; }
-.rr-parts td { padding: 0.02in 0.03in; border: 0; vertical-align: middle; text-align: center; }
-.rr-parts .rr-name { width: 1.45in; }
-.rr-parts .rr-name .rr-line { display: block; height: 0.2in; }
+.rf-sheet { grid-template-columns: 8.5in; grid-template-rows: 5.5in 5.5in; }
+.rf-form { box-sizing: border-box; height: 5.5in; padding: 0.3in 0.35in 0.25in; display: flex; flex-direction: column; gap: 0.08in; color: #000; }
+.rf-form + .rf-form { border-top: 1px solid #000; }
+.rf-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 0.04in; }
+.rf-title { font-weight: 800; font-size: 12pt; letter-spacing: 0.02em; }
+.rf-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; font-size: 12pt; border: 2px solid #000; padding: 0 0.06in; }
+.rf-row { display: grid; grid-template-columns: 1fr 2.2in; gap: 0.2in; }
+.rf-field { display: flex; flex-direction: column; gap: 0.02in; }
+.rf-label { font-weight: 800; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.03em; }
+.rf-space { border: 1.5px solid #000; height: 0.5in; }
+.rf-machine .rf-space, .rf-date .rf-space { height: 0.6in; }
+.rf-notes { flex: 1; }
+.rf-notes .rf-space { flex: 1; height: auto; min-height: 1.4in; }
+.rf-ref { font-size: 7pt; color: #000; }
+.rf-foot { font-size: 7pt; color: #000; margin: 0; }
 @media print {
   @page { size: letter; margin: 0; }
   html, body { background: white !important; }
