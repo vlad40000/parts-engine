@@ -734,6 +734,21 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         const label = `${p.name || "part"}${part.display ? ` (${part.display})` : ""}`;
         const other = p.otherMachine ? resolveOther(p) : null;
         if (!kind) { mentionBits.push(sentence(label)); continue; }
+        // A hard-to-read line that would take a part off pick lists (here or on a donor) is confirmed first,
+        // even when its number matches the parts list: a match does not make the reading certain.
+        if (p.confidence === "low" && (STATE_FOR_KIND[kind] || (kind === "replaced" && other?.no))) {
+          const a = ask({
+            id: `partread:${e.key}:${p.key}`, kind: "part", entry: e.key,
+            prompt: `#${no}: a part line reads "${label}: ${kind}${other ? ` (${kind === "replaced" ? "from" : "for"} ${other.label})` : ""}", but it is hard to read. Is that right?`,
+            options: [
+              { value: "yes", label: `Yes, ${label} ${PART_KIND_LABEL[kind]}` },
+              { value: "notes", label: "Keep it in the repair notes only", detail: "No part is marked" },
+              { value: "drop", label: "Leave this line out" }
+            ]
+          });
+          if (a === "drop") continue;
+          if (a !== "yes") { mentionBits.push(sentence(`${label}: ${kind}`)); continue; }
+        }
         const alreadySaid = !part.display && p.name && e.problem.toLowerCase().includes(p.name.toLowerCase());
         const diagnosisBit = alreadySaid ? "" : kind === "needed" ? sentence(`Needs ${label}`) : kind === "suspected" ? sentence(`Check ${label}`)
           : kind === "failed" ? sentence(`Bad ${label}`) : kind === "missing" ? sentence(`${label} missing`) : "";

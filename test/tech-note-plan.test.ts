@@ -281,6 +281,20 @@ describe("parts: needed is not failed", () => {
     expect(changes(p, "e0").diagnosis).toBe("Bad timer (WP3948891).");
   });
 
+  it("confirms a hard-to-read part line before it changes availability, even when its number matches", () => {
+    const r = { entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", condition: "bad", confidence: "low" })] })] };
+    const p = plan(r, facts([laundry]));
+    expect(p.questions.map((q) => q.id)).toEqual(["partread:e0:p0"]);
+    expect(p.entries[0].partStates).toEqual([]);
+    expect(plan(r, facts([laundry]), { "partread:e0:p0": "yes" }).entries[0].partStates).toMatchObject([{ state: "failed", mpn: "WP3948891" }]);
+    const notes = plan(r, facts([laundry]), { "partread:e0:p0": "notes" });
+    expect(notes.entries[0].partStates).toEqual([]);
+    expect(notes.entries[0].parts).toEqual([]);
+    expect(changes(notes, "e0").notes).toBe("5/22/26-Timer (WP3948891): failed.");
+    // A hard-to-read "needs" line only flags test first, so it is not asked.
+    expect(plan({ entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", confidence: "low" })] })] }, facts([laundry])).questions).toEqual([]);
+  });
+
   it("matches a named missing part to the parts list", () => {
     const r = { entries: [entry("6171", { parts: [line({ name: "lid switch", condition: "missing" })] })] };
     const q = plan(r, facts([laundry])).questions.find((x) => x.kind === "part")!;
