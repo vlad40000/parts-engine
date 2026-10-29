@@ -688,7 +688,8 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
           const chosen = bom.find((b) => b.mpn === a.slice(4))!;
           return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
         }
-        if (bom && kind && kind !== "suspected" && kind !== "replaced") {
+        // A replaced part is matched only when it names a donor: the donor's removal needs the number.
+        if (bom && kind && kind !== "suspected" && (kind !== "replaced" || p.otherMachine)) {
           const cands = partsByName(bom, p.name);
           if (cands.length) {
             const a = ask({
@@ -765,12 +766,13 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
           note: other?.no ? (kind === "removed" ? `for #${other.no}` : `from #${other.no}`) : "tech note",
           diagnosisBit, noteBit, precedence: "apply"
         });
-        if (kind === "replaced" && part.mpn) {
+        if (kind === "replaced") {
           const donor = known(other?.no);
           if (donor) {
             // The donor's own parts-list identity (WP3948891 and 3948891 are different keys), when it has a list.
-            const donorHit = donor.bomStatus === "found" ? bomLookup(donor.bomParts, part.mpn) : null;
+            const donorHit = donor.bomStatus === "found" && part.mpn ? bomLookup(donor.bomParts, part.mpn) : null;
             if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked removed there.`);
+            else if (!part.mpn) planned.info.push(`${label} has no parts-list number, so #${donor.machineNo}'s part is not marked removed.`);
             else if (donor.bomStatus === "found" && !donorHit) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
             else {
               const mpn = donorHit?.mpn ?? part.mpn;

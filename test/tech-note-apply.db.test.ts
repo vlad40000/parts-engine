@@ -244,6 +244,19 @@ describe("tech note apply", () => {
     expect(facts.machines["6171"].partUpdates["3948891"]).toMatchObject({ state: "pulled" });
   });
 
+  it("keeps a part-flagged test-first family through a workbook import when the words were already on record", async () => {
+    const imported = () => mapFleetRows([row(6171, { Availability: "NEEDS PARTS", Diagnosis: "Needs timer (WP3948891)." })], NOW).rows;
+    await upsertFleet(db, imported());
+    expect((await machine("6171")).suspectFamilies).not.toContain("sensor_switch");
+    const reading = normalizeReading({ date: { text: "5/14/26" }, entries: [{ machine: { text: "6171" }, parts: [{ mpn: "WP3948891", name: "timer", action: "needed" }] }] });
+    const { plan } = await applyReading(reading);
+    expect(plan.entries[0].changes).toEqual([]);
+    expect(plan.entries[0].testFirst).toEqual(["sensor_switch"]);
+    expect((await machine("6171")).suspectFamilies).toContain("sensor_switch");
+    await upsertFleet(db, imported());
+    expect((await machine("6171")).suspectFamilies).toContain("sensor_switch");
+  });
+
   it("dates a hand-made part edit now, and applies a same-day note the reviewer confirms over it", async () => {
     await applyReading(reading6171(), ANSWERS);
     // A hand edit after the 5/14 note is a new decision, not the note's.

@@ -332,6 +332,24 @@ describe("parts: needed is not failed", () => {
     expect(sold.entries[0].info).toContain("#5000 is SOLD, so no part is marked removed there.");
   });
 
+  it("asks which part a replacement names when it comes from a donor, so the donor's part is marked removed", () => {
+    const donor = fact("5000", { availability: "PARTS ONLY", modelRaw: "LTE5243DZ0", bomStatus: "found", bomParts });
+    const r = { entries: [entry("6171", { parts: [line({ name: "drain pump", action: "replaced", otherMachine: "5000" })] })] };
+    const p = plan(r, facts([laundry, donor]));
+    expect(p.ready).toBe(false);
+    const q = p.questions.find((x) => x.id === "part:e0:p0")!;
+    expect(q.options.map((o) => o.value)).toEqual(["use:W10185976", "keep"]);
+    const done = plan(r, facts([laundry, donor]), { [q.id]: "use:W10185976" });
+    expect(done.entries[0].parts.map((d) => [d.machineNo, d.kind, d.mpn])).toEqual([["6171", "replaced", "W10185976"], ["5000", "removed", "W10185976"]]);
+    expect(done.entries[0].partStates).toMatchObject([{ machineNo: "5000", mpn: "W10185976", state: "pulled" }]);
+    // Not sure which part: nothing is marked on the donor, and the review says so.
+    const unsure = plan(r, facts([laundry, donor]), { [q.id]: "keep" });
+    expect(unsure.entries[0].partStates).toEqual([]);
+    expect(unsure.entries[0].info).toContain("drain pump has no parts-list number, so #5000's part is not marked removed.");
+    // A replacement with no donor named is only recorded, so it is not asked.
+    expect(plan({ entries: [entry("6171", { parts: [line({ name: "drain pump", action: "replaced" })] })] }, facts([laundry])).questions).toEqual([]);
+  });
+
   it("records the donor's removal under the donor's own parts-list number, by the same chronology rules", () => {
     const recipient = fact("6171", { availability: "NEEDS PARTS", bomStatus: "found", bomParts: [{ mpn: "3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" }] });
     const donorBom = [{ mpn: "WP3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" }];

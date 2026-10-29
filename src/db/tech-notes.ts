@@ -338,8 +338,9 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
       // Test-first flags only grow: text rules plus the families of suspected and needed parts.
       // An older note's line is history: its words do not flag anything (the notes before it do).
       families: [...new Set([...(touchesText ? suspectFamilies(diagnosis, olderNote ? f.notes : notes) : []), ...e.testFirst])],
-      // Diagnosis and notes together drive part-family flags, so both stay local once either is set here.
-      local_add: [...new Set(touchesText ? [...local, "diagnosis", "notes"] : local)],
+      // Diagnosis and notes together drive part-family flags, so both stay local once either is set here,
+      // or once a suspected or needed part flags a family (its words may already be in the record).
+      local_add: [...new Set(touchesText || e.testFirst.length ? [...local, "diagnosis", "notes"] : local)],
       decided
     };
   });
