@@ -346,6 +346,23 @@ describe("tech note apply", () => {
     expect(await db.select().from(schema.fleetFieldEvents)).toHaveLength(1);
   });
 
+  it("writes nothing for a note already applied with another machine, or discarded after the plan was made", async () => {
+    const at = (no: string) => normalizeReading({ date: { text: "5/14/26" }, entries: [{ machine: { text: no }, status: { checked: "PARTS PROGRAM" } }] });
+    const planFor = async (r: ReturnType<typeof at>) => planNote(r, await loadPlanFacts(db, r, {}, NOW), {});
+    const id = await createTechNote(db, { origin: "manual", reading: at("6171") });
+    const [first, second] = [await planFor(at("6171")), await planFor(at("5000"))];
+    expect(await applyTechNote(db, id, first, at("6171"), {})).toBe("applied");
+    expect(await applyTechNote(db, id, second, at("5000"), {})).toBe("not_open");
+    expect((await machine("5000")).availability).toBe("PARTS ONLY");
+
+    const gone = await createTechNote(db, { origin: "manual", reading: at("5000") });
+    const plan = await planFor(at("5000"));
+    expect(await discardTechNote(db, gone)).toBe(true);
+    expect(await applyTechNote(db, gone, plan, at("5000"), {})).toBe("not_open");
+    expect(await machine("5000")).toMatchObject({ availability: "PARTS ONLY", lastFieldUpdateAt: null });
+    expect(await db.select().from(schema.fleetStatusEvents).where(eq(schema.fleetStatusEvents.techNoteId, gone))).toEqual([]);
+  });
+
   it("writes nothing when a machine changed after the plan was made", async () => {
     const reading = reading6171();
     const id = await createTechNote(db, { origin: "manual", reading });

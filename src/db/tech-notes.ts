@@ -385,12 +385,17 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
       join part_input p on p.machine_no = s.machine_no and p.mpn = s.mpn_canonical
       for update of s
     ),
+    -- Claim the note first: a second apply or a discard of the same note waits here, then sees it is no
+    -- longer open, so nothing below is written twice or for a discarded note.
+    note_lock as (
+      select id from tech_notes where id = ${id}::uuid and status = 'open' for update
+    ),
     ok as (
-      select (select count(*) from locked) = (select count(*) from input)
+      select exists (select 1 from note_lock)
+        and (select count(*) from locked) = (select count(*) from input)
         and not exists (
           select 1 from part_locked l join part_input p on p.machine_no = l.machine_no and p.mpn = l.mpn_canonical
-          where l.updated_at > coalesce(p.seen::timestamptz, ${obs}))
-        and exists (select 1 from tech_notes where id = ${id}::uuid and status = 'open') as ok
+          where l.updated_at > coalesce(p.seen::timestamptz, ${obs})) as ok
     ),
     upd as (
       update fleet_machines f set
