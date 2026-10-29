@@ -285,6 +285,14 @@ describe("tech note apply", () => {
     expect(await verifyLocation(db, { machineNo: "6171", location: "Warehouse" })).toBe("no_open_check");
   });
 
+  it("dates the location by a physical check even when it confirms the location shown", async () => {
+    await applyReading(reading6171(), ANSWERS);
+    expect(await verifyLocation(db, { machineNo: "6171", location: "Red Building" })).toBe("verified");
+    const facts = await loadPlanFacts(db, normalizeReading({ entries: [{ machine: { text: "6171" } }] }), {}, new Date());
+    expect(facts.machines["6171"].fieldUpdates.location).toMatchObject({ day: facts.today });
+    expect(facts.machines["6171"].fieldUpdates.location?.label).toMatch(/\(location check\)$/);
+  });
+
   it("records a Fleet location edit in the machine history and the location list", async () => {
     expect(await updateMachineLocation(db, { machineNo: "6171", expectedLocation: "Warehouse", location: "Yard A3" })).toBe("saved");
     expect(await machine("6171")).toMatchObject({ location: "Yard A3", locationOverride: true });

@@ -222,6 +222,10 @@ async function latestUpdates(db: Db, machineNos: string[]): Promise<UpdateRow[]>
       select machine_no, case field when 'sticker_price' then 'stickerPrice' else field end, coalesce(observed_at, changed_at), source, null, null
       from fleet_field_events where applied and field in ('condition','location','diagnosis','sticker_price') and machine_no = any(${nos})
       union all
+      -- A physical check is a location decision even when it confirms the location already shown.
+      select machine_no, 'location', resolved_at, 'verified', null, null
+      from fleet_location_checks where resolved_at is not null and machine_no = any(${nos})
+      union all
       select machine_no, 'part:' || mpn_canonical, coalesce(observed_at, updated_at), 'part_state', state, updated_at::text
       from machine_part_state where machine_no = any(${nos})
       union all

@@ -589,7 +589,10 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         target = a && a !== "keep" ? a.slice(4) : null;
       } else if (statuses.size === 1) {
         const only = [...statuses][0];
-        if (e.status.checked === only && e.status.confidence === "low") {
+        // Any reading that says this status (the entry's or a shared line's, marked or written) and is hard to read: confirm.
+        const unsure = [e.status, ...groups.map((g) => g.status)].some((st) => st.confidence === "low"
+          && (st.checked === only || st.phrases.some((ph) => statusFromPhrase(ph) === only)));
+        if (unsure) {
           const a = ask({
             id: `status:${e.key}`, kind: "status", entry: e.key,
             prompt: `#${no}: the status looks like ${only}, but it is hard to read. Which is it?`,

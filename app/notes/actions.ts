@@ -99,6 +99,7 @@ export async function applyNoteAction(_prev: ActionResult | null, form: FormData
   const reading = normalizeReading(parseJson(form.get("reading")));
   const answers = cleanAnswers(parseJson(form.get("answers")));
   const seen = cleanAnswers(parseJson(form.get("versions")));
+  const seenParts = cleanAnswers(parseJson(form.get("parts")));
   const db = await getDb();
   const note = await getTechNote(db, id);
   if (!note || note.status !== "open") return { ok: false, message: "This note was already applied or discarded." };
@@ -106,6 +107,15 @@ export async function applyNoteAction(_prev: ActionResult | null, form: FormData
   if (plan.unanswered) return { ok: false, message: `Answer the ${plan.unanswered === 1 ? "last question" : `${plan.unanswered} remaining questions`} first.` };
   if (!plan.hasChanges) return { ok: false, message: "Nothing on this note changes a machine. Edit the reading, or discard the note." };
   const changed = plan.entries.filter((e) => e.fact && (e.changes.length || e.history.length) && seen[e.fact.machineNo] !== e.fact.version);
+  // A part edited on the machine page does not touch the machine's version: compare each part record
+  // this write was planned against with the one the reviewer saw (answers were given against that).
+  const changedParts = plan.entries.flatMap((e) => e.partStates)
+    .filter((x) => seenParts[`${x.machineNo}|${x.mpn}`] !== (x.seenToken ?? ""))
+    .map((x) => `#${x.machineNo}'s ${x.mpnDisplay}`);
+  if (changedParts.length) {
+    await saveDraft(db, id, reading, answers);
+    return { ok: false, message: `${[...new Set(changedParts)].join(", ")} changed since this page opened. Your answers are saved: reload to check the current record.` };
+  }
   if (changed.length) {
     await saveDraft(db, id, reading, answers);
     return { ok: false, message: `${changed.map((e) => `#${e.machineNo}`).join(", ")} changed since this page opened. Your answers are saved: reload to check the current record.` };

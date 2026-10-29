@@ -6,7 +6,8 @@ import { eq } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { upsertFleet } from "@/src/db/queries";
+import { saveModelBom, setPartState, upsertFleet } from "@/src/db/queries";
+import { planNote } from "@/src/lib/tech-notes/plan";
 import { getTechNote, loadPlanFacts } from "@/src/db/tech-notes";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { normalizeReading, type NoteReading } from "@/src/lib/tech-notes/reading";
@@ -119,6 +120,32 @@ describe("tech note actions", () => {
     expect(await verifyLocationAction(null, form({ machineNo: "4928", location: "Showroom - WH" }))).toMatchObject({ ok: false });
     expect(await applyNoteAction(null, form({ id, reading: JSON.stringify(r), answers: "{}", versions }))).toMatchObject({ ok: false, message: "This note was already applied or discarded." });
     expect(await discardNoteAction(null, form({ id }))).toMatchObject({ ok: false });
+  });
+
+  it("refuses to apply when a part record changed after the reviewer saw it", async () => {
+    await saveModelBom(db, { brandKey: "FRIGIDAIRE", modelKey: "FFTW4120SW1", brandDisplay: "Frigidaire", modelDisplay: "FFTW4120SW1", result: {
+      status: "found",
+      winner: { supplier: "encompass", status: "found", rows: [{ mpnDisplay: "5304505553", mpnCanonical: "5304505553", description: "Drain Pump", diagramId: "1", supplierPartId: null, newPrice: 40, nla: false }], droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 },
+      attempts: [{ supplier: "encompass", status: "found", droppedRows: 0, sourceUrl: "https://x", visited: [], warnings: [], elapsedMs: 1 }]
+    } });
+    // The pump was marked on the machine page today, before the review; the reviewer says the note is newer.
+    await setPartState(db, "4928", "5304505553", "missing");
+    const today = (await loadFactsAction(idFrom(await redirectOf(startTypedNoteAction())), normalizeReading({}), {})).today;
+    const [y, m, d] = today.split("-");
+    const r = normalizeReading({ date: { text: `${Number(m)}/${Number(d)}/${y.slice(2)}` }, entries: [{ machine: { text: "4928" }, status: { checked: "NEEDS PARTS" },
+      parts: [{ mpn: "5304505553", name: "drain pump", action: "needed", condition: "bad" }] }] });
+    const id = idFrom(await redirectOf(startTypedNoteAction()));
+    const answers = { "order:e0": "apply" };
+    const facts = await loadFactsAction(id, r, answers);
+    const seen = planNote(r, facts, answers);
+    expect(seen.ready).toBe(true);
+    const parts = JSON.stringify(Object.fromEntries(seen.entries.flatMap((e) => e.partStates.map((x) => [`${x.machineNo}|${x.mpn}`, x.seenToken ?? ""]))));
+    const versions = JSON.stringify({ "4928": facts.machines["4928"].version });
+    // Someone changes the pump again after the reviewer answered: the old answer must not cover it.
+    await setPartState(db, "4928", "5304505553", "pulled");
+    expect(await applyNoteAction(null, form({ id, reading: JSON.stringify(r), answers: JSON.stringify(answers), versions, parts })))
+      .toMatchObject({ ok: false, message: expect.stringContaining("#4928's 5304505553 changed since this page opened") });
+    expect((await db.select().from(schema.machinePartState))[0].state).toBe("pulled");
   });
 
   it("starts a typed note and discards it", async () => {

@@ -191,6 +191,16 @@ describe("statuses: only the Fleet options, and only when written", () => {
     expect(changes(p, "e0")).toEqual({ notes: "5/22/26-Being repaired." });
   });
 
+  it("confirms a hard-to-read status from a shared line or written words, not only a marked box", () => {
+    const f = facts([fact("4928", { availability: "NEEDS PARTS" }), fact("5000", { availability: "NEEDS PARTS" })]);
+    const group = plan({ entries: [entry("4928"), entry("5000")], groups: [{ text: "parts only", status: { checked: "PARTS ONLY", phrases: [], confidence: "low" },
+      location: { name: "", text: "", confidence: "high" }, appliesTo: [0, 1], confidence: "high" }] }, f);
+    expect(group.questions.map((q) => q.id)).toEqual(["status:e0", "status:e1"]);
+    expect(group.entries.flatMap((e) => e.changes).some((c) => c.field === "availability")).toBe(false);
+    const words = plan({ entries: [entry("4928", { status: { checked: "", phrases: ["parts machine?"], confidence: "low" } })] }, f);
+    expect(words.questions[0]).toMatchObject({ id: "status:e0", prompt: "#4928: the status looks like PARTS ONLY, but it is hard to read. Which is it?" });
+  });
+
   it("asks when two statuses are written, and uses a written grade and price", () => {
     const f = facts([fact("4928")]);
     const two = plan({ entries: [entry("4928", { status: { checked: "READY TO SALE", phrases: ["Parts machine"], confidence: "high" } })] }, f);

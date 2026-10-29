@@ -374,6 +374,8 @@ function ApplyBar({ noteId, plan, reading, answers, facts, applyAction, saveDraf
   const [result, formAction] = useActionState(applyAction, null);
   const [draft, setDraft] = useState<ActionResult | null>(null);
   const versions = Object.fromEntries(plan.entries.filter((e) => e.fact).map((e) => [e.fact!.machineNo, facts.machines[e.fact!.machineNo]?.version ?? e.fact!.version]));
+  // The part records each state write was planned against: apply refuses if any changed since.
+  const partRecords = Object.fromEntries(plan.entries.flatMap((e) => e.partStates.map((x) => [`${x.machineNo}|${x.mpn}`, x.seenToken ?? ""])));
   const machines = plan.entries.filter((e) => e.changes.length || e.parts.length || e.history.length).length;
   const blocker = plan.unanswered ? `Answer ${plan.unanswered === 1 ? "the last question" : `${plan.unanswered} questions`} to apply.` : !plan.hasChanges ? "Nothing to apply yet." : !plan.date ? "Settle the note's date to apply." : null;
   return (
@@ -383,6 +385,7 @@ function ApplyBar({ noteId, plan, reading, answers, facts, applyAction, saveDraf
         <input type="hidden" name="reading" value={JSON.stringify(reading)} />
         <input type="hidden" name="answers" value={JSON.stringify(answers)} />
         <input type="hidden" name="versions" value={JSON.stringify(versions)} />
+        <input type="hidden" name="parts" value={JSON.stringify(partRecords)} />
         <Submit label={machines ? `Apply to ${machines} machine${machines === 1 ? "" : "s"}` : "Apply"} pendingLabel="Applying…" disabled={!plan.ready} />
         <button type="button" className="btn" onClick={() => startTransition(async () => setDraft(await saveDraftAction(noteId, reading, answers)))}>Save for later</button>
         <span className="text-xs text-muted">{blocker}</span>
