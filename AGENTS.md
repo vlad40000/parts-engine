@@ -13,6 +13,7 @@ Other applications remain authoritative for their domains:
 - **Parts Image Finder:** MPN relationships, compatibility/fitment research, and listing-package research.
 - **Roadrunner Parts Ledger:** physical harvested inventory, SKU lifecycle, publishing, and realized sales/stock.
 - **Appliance Inventory / App 1:** upstream machine identity and fleet intake when connected.
+  Machine operational state set from tech notes in Parts Engine (status, condition, location, diagnosis, repair notes, sticker price) is authoritative here (owner decision 2026-10-29); re-imports must keep it (`local_fields`, `status_override`).
 
 Parts Engine may cache or import facts from those systems, but must preserve provenance and must not silently become their source of truth.
 

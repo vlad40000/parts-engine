@@ -43,6 +43,7 @@ Owns physical harvested inventory, SKU/location state, listing publication lifec
 
 ### Appliance Inventory / App 1
 Upstream authority for machine identity/fleet intake once connected. Parts Engine may retain an operational snapshot needed for scoring.
+Since 2026-10-29 (owner decision), operational fields set from tech notes in Parts Engine are the record and survive re-imports; see `docs/TECH_NOTES.md`.
 
 ## Evidence separation
 Two graph edges that can look similar must remain separate:

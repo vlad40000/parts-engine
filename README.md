@@ -9,6 +9,7 @@ Ledger, EbayDecisions or Image Finder databases. Files move between them as CSV.
 | Step | Page | What happens |
 |---|---|---|
 | 1 Intake | **Intake** | Import the inventory workbook or numbered intake sheets (.xlsx/.csv), or add one machine. Machine IDs and model text are kept exactly. Purchaser columns are never read (allow-list import). |
+| 1a Tech notes | **Tech notes** | Photograph a tech card or note (or type it). Gemini reads it; the app checks every line against the machine records and asks only what it cannot settle; nothing is written until every question is answered. Then status, condition, location, diagnosis, repair notes, sticker price and part states change in one step, with the photo and an event history kept. Printable quarter-sheet Status/Move cards and half-sheet Repair cards come from the same lists. See `docs/TECH_NOTES.md`. |
 | 2 Age band | **Fleet** | Every serial is decoded to *all* its possible build years (App 1 rules, without the newest-year collapse). A machine belongs to every band any candidate year falls in. Bands set research order only, never exclusion. |
 | 3 Parts lists | **Parts lists** | Select a donor status from the imported machine statuses before running up to 10 models; age band/type further narrow the queue. New lookups is the default category; failed lookups appear separately in Retries. Each category has its own totals and pagination, and Select next uses only that category. No status is preselected. UNCHECKED can be selected for inspection-first research. SOLD, SCRAPED and SCRAPPED never qualify. Each model is read once and reused by every machine of that model. HTML only: Encompass → AppliancePartsPros. No AI. |
 | 4 Research queue | **MPNs → Research queue** | Unique MPNs ordered by donor machines. Skipped before research: fasteners/hardware/literature and compressors (always scrap). There is no price prefilter: v7 has no general minimum part price. **Export queue CSV** writes the shared research CSV that EbayDecisions also imports and exports. |
@@ -37,7 +38,7 @@ The old prototype settings (25% all-in fee, $20 cushion, $1 minimum profit, 20% 
 
 ```bash
 npm install
-cp .env.example .env.local        # set DATABASE_URL to a new Neon database
+cp .env.example .env.local        # set DATABASE_URL to a new Neon database (GEMINI_API_KEY turns on the card reader)
 npm run db:migrate
 npm run dev                        # http://localhost:3001
 ```
