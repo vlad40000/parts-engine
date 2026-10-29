@@ -1,5 +1,5 @@
 {
-  "id": "1f31c2d6-423f-4177-b2a8-e815d92d1aa5",
+  "id": "5b51f12c-9481-4af2-919b-002b0bf3595b",
   "prevId": "ac2e2f33-9a01-4cb5-8d25-009eafcb6136",
   "version": "7",
   "dialect": "postgresql",
@@ -50,6 +50,19 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "applied": {
+          "name": "applied",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
         },
         "changed_at": {
           "name": "changed_at",
@@ -116,11 +129,132 @@
       "checkConstraints": {
         "fleet_field_events_field_valid": {
           "name": "fleet_field_events_field_valid",
-          "value": "\"fleet_field_events\".\"field\" in ('condition','location','diagnosis','notes','sticker_price')"
+          "value": "\"fleet_field_events\".\"field\" in ('status','condition','location','diagnosis','notes','sticker_price')"
+        },
+        "fleet_field_events_status_history_only": {
+          "name": "fleet_field_events_status_history_only",
+          "value": "\"fleet_field_events\".\"field\" <> 'status' or not \"fleet_field_events\".\"applied\""
         },
         "fleet_field_events_changed_valid": {
           "name": "fleet_field_events_changed_valid",
           "value": "\"fleet_field_events\".\"previous_value\" is distinct from \"fleet_field_events\".\"next_value\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.fleet_location_checks": {
+      "name": "fleet_location_checks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "machine_no": {
+          "name": "machine_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_location": {
+          "name": "previous_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recorded_location": {
+          "name": "recorded_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tech_note_id": {
+          "name": "tech_note_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_location": {
+          "name": "resolved_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "fleet_location_checks_open_idx": {
+          "name": "fleet_location_checks_open_idx",
+          "columns": [
+            {
+              "expression": "machine_no",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"fleet_location_checks\".\"resolved_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fleet_location_checks_machine_no_fleet_machines_machine_no_fk": {
+          "name": "fleet_location_checks_machine_no_fleet_machines_machine_no_fk",
+          "tableFrom": "fleet_location_checks",
+          "tableTo": "fleet_machines",
+          "columnsFrom": [
+            "machine_no"
+          ],
+          "columnsTo": [
+            "machine_no"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fleet_location_checks_tech_note_id_tech_notes_id_fk": {
+          "name": "fleet_location_checks_tech_note_id_tech_notes_id_fk",
+          "tableFrom": "fleet_location_checks",
+          "tableTo": "tech_notes",
+          "columnsFrom": [
+            "tech_note_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fleet_location_checks_resolution_valid": {
+          "name": "fleet_location_checks_resolution_valid",
+          "value": "(\"fleet_location_checks\".\"resolved_at\" is null) = (\"fleet_location_checks\".\"resolved_location\" is null)"
         }
       },
       "isRLSEnabled": false
@@ -377,6 +511,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_field_update_at": {
+          "name": "last_field_update_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -446,6 +586,149 @@
       },
       "isRLSEnabled": false
     },
+    "public.fleet_part_events": {
+      "name": "fleet_part_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "machine_no": {
+          "name": "machine_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mpn_display": {
+          "name": "mpn_display",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "part_name": {
+          "name": "part_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "other_machine": {
+          "name": "other_machine",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "applied": {
+          "name": "applied",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'tech_note'"
+        },
+        "tech_note_id": {
+          "name": "tech_note_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fleet_part_events_machine_idx": {
+          "name": "fleet_part_events_machine_idx",
+          "columns": [
+            {
+              "expression": "machine_no",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "observed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fleet_part_events_machine_no_fleet_machines_machine_no_fk": {
+          "name": "fleet_part_events_machine_no_fleet_machines_machine_no_fk",
+          "tableFrom": "fleet_part_events",
+          "tableTo": "fleet_machines",
+          "columnsFrom": [
+            "machine_no"
+          ],
+          "columnsTo": [
+            "machine_no"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fleet_part_events_tech_note_id_tech_notes_id_fk": {
+          "name": "fleet_part_events_tech_note_id_tech_notes_id_fk",
+          "tableFrom": "fleet_part_events",
+          "tableTo": "tech_notes",
+          "columnsFrom": [
+            "tech_note_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fleet_part_events_kind_valid": {
+          "name": "fleet_part_events_kind_valid",
+          "value": "\"fleet_part_events\".\"kind\" in ('suspected','needed','failed','missing','replaced','removed')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.fleet_status_events": {
       "name": "fleet_status_events",
       "schema": "",
@@ -484,6 +767,12 @@
         "tech_note_id": {
           "name": "tech_note_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
@@ -757,6 +1046,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -1904,6 +2199,12 @@
         "applied_plan": {
           "name": "applied_plan",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "observed_on": {
+          "name": "observed_on",
+          "type": "date",
           "primaryKey": false,
           "notNull": false
         },
