@@ -1,29 +1,42 @@
 /**
- * Shop vocabulary shared by the printed cards, the card reader prompt and the planner,
- * so a printed card and the reader can never disagree.
+ * Shop vocabulary shared by the printed intake form, the card reader prompt and the planner,
+ * so a printed form and the reader can never disagree.
  */
+import { FLEET_STATUS_OPTIONS } from "@/src/lib/fleet-status";
 
-export const CARD_CODES = { move: "RR-M1", repair: "RR-R1" } as const;
+/**
+ * RR-F1 is the Roadrunner Standardized Field Intake (the form printed today). RR-M1 and RR-R1 are
+ * the earlier Status/Move and Repair cards: no longer printed, still read.
+ */
+export const CARD_CODES = { intake: "RR-F1", move: "RR-M1", repair: "RR-R1" } as const;
 export type CardCode = (typeof CARD_CODES)[keyof typeof CARD_CODES] | "free";
-export const isCardCode = (v: string): v is CardCode => v === "RR-M1" || v === "RR-R1" || v === "free";
+export const isCardCode = (v: string): v is CardCode => v === "RR-F1" || v === "RR-M1" || v === "RR-R1" || v === "free";
+export const CARD_NAMES: Record<CardCode, string> = {
+  "RR-F1": "Field intake", "RR-M1": "Status/Move card (old)", "RR-R1": "Repair card (old)", free: "Handwritten note"
+};
 
-/** Status/Move card: up to this many machines share one status and location. */
+/** The field intake form's printed fields, in order. The reader prompt names the same labels. */
+export const INTAKE_FIELDS = ["Machine #", "Date", "Location", "Status", "Notes"] as const;
+
+/** Old Status/Move card: up to this many machines share one status and location. */
 export const MOVE_CARD_MACHINES = 4;
-/** Repair card: part lines. */
+/** Old Repair card: part lines. */
 export const REPAIR_CARD_PART_LINES = 4;
 
-/** Statuses a tech can set from a card, in printed order. */
-export const CARD_STATUSES = [
-  { status: "BEING REPAIRED", label: "Being repaired" },
-  { status: "NEEDS PARTS", label: "Needs parts" },
-  { status: "PARTS ONLY", label: "Parts machine" },
-  { status: "READY TO SALE", label: "Ready for sale" },
-  { status: "SCRAPPED", label: "Scrap" }
-] as const;
-export type CardStatus = (typeof CARD_STATUSES)[number]["status"];
-export const CARD_STATUS_VALUES: readonly string[] = CARD_STATUSES.map((s) => s.status);
-export const isCardStatus = (v: string): v is CardStatus => CARD_STATUS_VALUES.includes(v);
-export const statusLabel = (status: string) => CARD_STATUSES.find((s) => s.status === status)?.label ?? status;
+/**
+ * Statuses a note can set: exactly the Fleet status options, so a note can never write a status
+ * the Fleet page, donor rules or exports do not know. "Being repaired" and "Ready for clean" are
+ * not Fleet statuses; a note that says them keeps the words in the repair notes and leaves the
+ * status alone.
+ */
+export const NOTE_STATUSES: ReadonlyArray<{ status: string; label: string }> = FLEET_STATUS_OPTIONS.map((status) => ({
+  status, label: status[0] + status.slice(1).toLowerCase()
+}));
+export const NOTE_STATUS_VALUES: readonly string[] = NOTE_STATUSES.map((s) => s.status);
+export const isNoteStatus = (v: string) => NOTE_STATUS_VALUES.includes(v);
+export const statusLabel = (status: string) => NOTE_STATUSES.find((s) => s.status === status)?.label ?? status;
+/** Old card check boxes that are not Fleet statuses: kept as words, never as a status. */
+export const LEGACY_CARD_STATUS_WORDS: Record<string, string> = { "BEING REPAIRED": "Being repaired" };
 
 /** Statuses that mean the machine has left the lot (matches OFF_LOT in queries). */
 export const OFF_LOT_STATUSES = ["SOLD", "SCRAPED", "SCRAPPED"];
@@ -34,7 +47,6 @@ export const OFF_LOT_STATUSES = ["SOLD", "SCRAPED", "SCRAPPED"];
  */
 export const CONDITION_FOR_STATUS: Record<string, string> = {
   "UNCHECKED": "U - Unchecked",
-  "BEING REPAIRED": "X - Being Repaired",
   "NEEDS PARTS": "E - Needs Parts",
   "PARTS ONLY": "F - Parts Only",
   "PARTS PROGRAM": "P - Parts Program",

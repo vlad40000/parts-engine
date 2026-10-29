@@ -38,6 +38,7 @@ describe("reading a card", () => {
     const r = await readCard(cfg, photo, ["Warehouse", "Showroom - Main"], "careful");
     expect(r.model).toBe(DEFAULT_CAREFUL_MODEL);
     expect(r.reading.entries[0]).toMatchObject({ key: "e0", status: { checked: "READY TO SALE" }, note: "call [phone]" });
+    expect(r.reading.card).toBe("RR-M1");
     const req = sdk.generate.mock.calls[0][0];
     expect(req.model).toBe(DEFAULT_CAREFUL_MODEL);
     expect(req.contents[0].parts[0]).toEqual({ inlineData: { data: "AAAA", mimeType: "image/jpeg" } });
@@ -72,13 +73,19 @@ describe("normalizing a reading", () => {
     expect(r.entries[0].parts).toEqual([{ key: "p0", mpn: "WP3406108", name: "", action: "mentioned", otherMachine: "", condition: "", confidence: "high" }]);
     expect(r.groups).toEqual([expect.objectContaining({ key: "g0", appliesTo: ["e0", "e1"] })]);
     expect(normalizeReading(null).entries).toHaveLength(1);
+    expect(normalizeReading({ entries: [{ machine: { text: "1" }, parts: [{ name: "pump", action: "suspected" }] }] }).entries[0].parts[0].action).toBe("suspected");
   });
 
-  it("prints the card codes and statuses the cards use", () => {
+  it("names the intake form and the old cards, the Fleet statuses only, and the part rules", () => {
     const prompt = readerPrompt({ locations: [] });
+    expect(prompt).toContain("Form RR-F1, the Roadrunner Standardized Field Intake");
+    expect(prompt).toContain("Printed labels: Machine #, Date, Location, Status, Notes");
     expect(prompt).toContain("RR-M1");
     expect(prompt).toContain("RR-R1");
-    expect(prompt).toContain('READY TO SALE ("Ready for sale")');
+    expect(prompt).toContain("UNCHECKED, NEEDS PARTS, PARTS ONLY, PARTS PROGRAM, READY TO SALE, SOLD, SCRAPPED");
+    expect(prompt).toContain('Never turn "Ready for clean" into READY TO SALE, and never choose a status from the location.');
+    expect(prompt).toContain('"Needs timer" alone is needed with an empty condition.');
     expect(prompt).toContain("never copy customer or staff names");
+    expect(READING_JSON_SCHEMA.properties.card.enum).toEqual(["RR-F1", "RR-M1", "RR-R1", "free"]);
   });
 });

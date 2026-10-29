@@ -3,10 +3,15 @@
  * The card reader (Gemini) and the review form both produce this shape; the planner turns it
  * into questions and changes. Everything here is plain data so it can cross to the browser.
  */
-import { CARD_STATUS_VALUES, SYMPTOM_KEYS, isCardCode, type CardCode } from "./vocabulary";
+import { LEGACY_CARD_STATUS_WORDS, NOTE_STATUS_VALUES, SYMPTOM_KEYS, isCardCode, type CardCode } from "./vocabulary";
 
 export type Confidence = "high" | "low";
-export const PART_ACTIONS = ["replaced", "needed", "taken", "mentioned"] as const;
+/**
+ * What the note says about a part: replaced (a part was put into this machine), needed (the machine
+ * needs one), taken (removed from this machine), suspected (check / possible / maybe), mentioned.
+ * Only an explicit "bad" or "missing" condition makes a part failed or missing.
+ */
+export const PART_ACTIONS = ["replaced", "needed", "taken", "suspected", "mentioned"] as const;
 export type PartAction = (typeof PART_ACTIONS)[number];
 export const PART_CONDITIONS = ["bad", "missing", ""] as const;
 export type PartCondition = (typeof PART_CONDITIONS)[number];
@@ -21,7 +26,7 @@ export type ReadPart = {
   action: PartAction;
   /** Machine number on the line: "from #" for replaced, "for #" for taken. */
   otherMachine: string;
-  /** For needed parts: bad (failed) or missing. */
+  /** Written explicitly: bad (failed) or missing. Never inferred from "needs". */
   condition: PartCondition;
   confidence: Confidence;
 };
@@ -113,7 +118,11 @@ const texts = (v: unknown, max: number, len = 160) => arr(v).map((x) => cleanTex
 function status(v: unknown): ReadStatus {
   const o = obj(v);
   const checked = cleanCode(o.checked, 30).toUpperCase();
-  return { checked: CARD_STATUS_VALUES.includes(checked) ? checked : "", phrases: texts(o.phrases, 8, 80), confidence: confidence(o.confidence) };
+  const phrases = texts(o.phrases, 8, 80);
+  // An old card's "Being repaired" box is not a Fleet status: keep the words, not a status.
+  const legacy = LEGACY_CARD_STATUS_WORDS[checked];
+  if (legacy && !phrases.includes(legacy)) phrases.unshift(legacy);
+  return { checked: NOTE_STATUS_VALUES.includes(checked) ? checked : "", phrases: phrases.slice(0, 8), confidence: confidence(o.confidence) };
 }
 function location(v: unknown): ReadLocation {
   const o = obj(v);
