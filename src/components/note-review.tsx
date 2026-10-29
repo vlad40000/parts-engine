@@ -3,9 +3,12 @@
 import { startTransition, useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionResult } from "@/app/actions";
-import { planNote, referencedMachineNumbers, machineSummary, type Answers, type FieldChange, type Plan, type PlanFacts, type PlannedEntry, type Question } from "@/src/lib/tech-notes/plan";
+import {
+  FIELD_LABEL as FIELD_WORD, PART_KIND_LABEL, planNote, referencedMachineNumbers, machineSummary,
+  type Answers, type FieldChange, type Plan, type PlanFacts, type PlannedEntry, type Question
+} from "@/src/lib/tech-notes/plan";
 import { emptyEntry, emptyPart, PART_ACTIONS, type NoteReading, type ReadEntry, type ReadPart } from "@/src/lib/tech-notes/reading";
-import { CARD_STATUSES, CARD_SYMPTOMS, SALE_GRADES } from "@/src/lib/tech-notes/vocabulary";
+import { CARD_NAMES, CARD_SYMPTOMS, NOTE_STATUSES, SALE_GRADES, shortDate } from "@/src/lib/tech-notes/vocabulary";
 
 type Action = (prev: ActionResult | null, form: FormData) => Promise<ActionResult>;
 export type NoteReviewProps = {
@@ -24,7 +27,7 @@ export type NoteReviewProps = {
   rereadAction: Action;
   discardAction: Action;
   saveDraftAction: (id: string, reading: unknown, answers: unknown) => Promise<ActionResult>;
-  loadFactsAction: (reading: unknown, answers: unknown) => Promise<PlanFacts>;
+  loadFactsAction: (id: string, reading: unknown, answers: unknown) => Promise<PlanFacts>;
 };
 
 const FIELD_LABEL: Record<FieldChange["field"], string> = {
@@ -49,7 +52,7 @@ export function NoteReview(p: NoteReviewProps) {
     const timer = setTimeout(async () => {
       setLoadingFacts(true);
       try {
-        const next = await p.loadFactsAction(reading, answers);
+        const next = await p.loadFactsAction(p.noteId, reading, answers);
         if (live) { setFacts(next); loadedKey.current = wanted; }
       } finally {
         if (live) setLoadingFacts(false);
@@ -77,7 +80,8 @@ export function NoteReview(p: NoteReviewProps) {
           </a>
         ) : <div className="card p-4 text-sm text-muted">Typed note: no photo.</div>}
         <div className="text-xs text-muted">
-          {p.origin === "photo" ? `Read ${p.readerModel ? `by ${p.readerModel}` : "without the card reader"}` : "Typed by hand"} · started {p.createdAt}
+          {CARD_NAMES[reading.card]} · {p.origin === "photo" ? `read ${p.readerModel ? `by ${p.readerModel}` : "without the card reader"}` : "typed by hand"}
+          <br />Written {plan.date ? shortDate(plan.date) : "(date not settled)"} · uploaded {p.createdAt}
         </div>
         <div className="flex flex-wrap gap-2">
           {p.canReread ? <ActionButton action={p.rereadAction} noteId={p.noteId} label="Re-read carefully" pendingLabel="Reading carefully…" /> : null}
@@ -98,7 +102,7 @@ export function NoteReview(p: NoteReviewProps) {
           <div className="flex flex-col gap-3">
             {plan.questions.map((q) => <QuestionCard key={q.id} q={q} checking={wanted !== loadedKey.current} onAnswer={(v) => setAnswer(q.id, v)} />)}
           </div>
-          {!plan.questions.length ? <p className="text-sm text-muted">Everything on this note matches the machine records.</p> : null}
+          {!plan.questions.length ? <p className="text-sm text-muted">Nothing on this note needs an answer.</p> : null}
         </section>
 
         <section>
@@ -106,7 +110,7 @@ export function NoteReview(p: NoteReviewProps) {
           <div className="flex flex-col gap-3">
             {plan.entries.map((e) => <EntryChanges key={e.key} e={e} />)}
           </div>
-          {plan.locationsToAdd.length ? <p className="mt-2 text-sm">New location{plan.locationsToAdd.length > 1 ? "s" : ""}: {plan.locationsToAdd.map((l) => l.name).join(", ")} (printed on new cards).</p> : null}
+          {plan.locationsToAdd.length ? <p className="mt-2 text-sm">New location{plan.locationsToAdd.length > 1 ? "s" : ""} for the location list: {plan.locationsToAdd.map((l) => l.name).join(", ")}.</p> : null}
           {plan.aliasesToAdd.length ? <p className="mt-1 text-xs text-muted">Remembered wording: {plan.aliasesToAdd.map((a) => `"${a.alias}" = ${a.name}`).join(", ")}.</p> : null}
         </section>
 
@@ -206,11 +210,24 @@ function EntryChanges({ e }: { e: PlannedEntry }) {
             </tbody>
           </table>
         </div>
-      ) : e.machineNo && !e.partStates.length ? <p className="mt-1 text-xs text-muted">Nothing changes for this machine.</p> : null}
-      {e.partStates.length ? (
+      ) : e.machineNo && !e.parts.length && !e.history.length ? <p className="mt-1 text-xs text-muted">Nothing changes for this machine.</p> : null}
+      {e.locationCheck ? (
+        <p className="mt-2 text-xs"><span className="pill pill-stop">VERIFY LOCATION</span> on record: {e.locationCheck.from}; this note: {e.locationCheck.to}. Both stay in the history until someone checks.</p>
+      ) : null}
+      {e.parts.length ? (
         <ul className="mt-2 list-disc pl-5 text-xs">
-          {e.partStates.map((s) => <li key={`${s.machineNo}-${s.mpn}`}>Mark <span className="mono">{s.mpnDisplay}</span> <span className="font-medium">{s.state}</span> on #{s.machineNo}</li>)}
+          {e.parts.map((d, i) => (
+            <li key={`${d.machineNo}-${d.mpn ?? d.name}-${i}`} className={d.applied ? "" : "text-muted"}>
+              {d.name || "Part"}{d.mpnDisplay ? <span className="mono"> {d.mpnDisplay}</span> : null} on #{d.machineNo}: <span className="font-medium">{PART_KIND_LABEL[d.kind]}</span>
+              {d.applied ? (d.kind === "failed" || d.kind === "missing" || d.kind === "removed") && d.mpn ? " · off pick lists" : d.testFirst ? ` · ${d.testFirst} parts marked test first` : "" : " · history only (older note)"}
+            </li>
+          ))}
         </ul>
+      ) : null}
+      {e.history.length ? (
+        <div className="mt-2 text-xs text-muted">
+          Kept as history only, because the record is newer or you chose to keep it: {e.history.map((c) => `${FIELD_WORD[c.field]} ${c.field === "stickerPrice" ? `$${c.to}` : `"${c.to}"`}`).join("; ")}
+        </div>
       ) : null}
       {e.struck.length ? <p className="mt-2 text-xs text-muted">Crossed out on the note, not applied: <span className="line-through">{e.struck.join("; ")}</span></p> : null}
       {e.info.map((i) => <p key={i} className="mt-1 text-xs text-muted">{i}</p>)}
@@ -245,11 +262,11 @@ function ReadingEditor({ reading, onChange, locations }: { reading: NoteReading;
               <input className="input mono" inputMode="numeric" value={e.machine.text}
                 onChange={(ev) => setEntry(e.key, (x) => ({ ...x, machine: { text: ev.target.value, confidence: "high", alternatives: [] } }))} />
             </Field>
-            <Field label="Status marked">
+            <Field label="Status written">
               <select className="input" value={e.status.checked}
                 onChange={(ev) => setEntry(e.key, (x) => ({ ...x, status: { checked: ev.target.value, phrases: [], confidence: "high" } }))}>
-                <option value="">Not marked</option>
-                {CARD_STATUSES.map((s) => <option key={s.status} value={s.status}>{s.label}</option>)}
+                <option value="">None written</option>
+                {NOTE_STATUSES.map((s) => <option key={s.status} value={s.status}>{s.status}</option>)}
               </select>
               {e.status.phrases.length ? <span className="text-xs text-muted">Words on the note: {e.status.phrases.join(", ")}</span> : null}
             </Field>
@@ -320,7 +337,7 @@ function PartsEditor({ parts, onChange }: { parts: ReadPart[]; onChange: (parts:
       {parts.map((p) => (
         <div key={p.key} className="mt-1 flex flex-wrap items-end gap-2">
           <select className="input" value={p.action} aria-label="What happened to the part" onChange={(e) => set(p.key, { action: e.target.value as ReadPart["action"] })}>
-            {PART_ACTIONS.map((a) => <option key={a} value={a}>{{ replaced: "Replaced", needed: "Needed", taken: "Taken out", mentioned: "Mentioned" }[a]}</option>)}
+            {PART_ACTIONS.map((a) => <option key={a} value={a}>{{ replaced: "Replaced", needed: "Needed", taken: "Taken out", suspected: "Suspected (check)", mentioned: "Mentioned" }[a]}</option>)}
           </select>
           <input className="input mono w-36" placeholder="Part #" aria-label="Part number" value={p.mpn} onChange={(e) => set(p.key, { mpn: e.target.value })} />
           <input className="input w-36" placeholder="Part name" aria-label="Part name" value={p.name} onChange={(e) => set(p.key, { name: e.target.value })} />
@@ -328,9 +345,9 @@ function PartsEditor({ parts, onChange }: { parts: ReadPart[]; onChange: (parts:
             <input className="input mono w-28" inputMode="numeric" aria-label={p.action === "replaced" ? "From machine #" : "For machine #"}
               placeholder={p.action === "replaced" ? "from #" : "for #"} value={p.otherMachine} onChange={(e) => set(p.key, { otherMachine: e.target.value.replace(/\D/g, "") })} />
           ) : null}
-          {p.action === "needed" ? (
-            <select className="input" value={p.condition} aria-label="Bad or missing" onChange={(e) => set(p.key, { condition: e.target.value as ReadPart["condition"] })}>
-              <option value="">Bad or missing?</option><option value="bad">Bad</option><option value="missing">Missing</option>
+          {p.action !== "replaced" && p.action !== "taken" ? (
+            <select className="input" value={p.condition} aria-label="Written as bad or missing" onChange={(e) => set(p.key, { condition: e.target.value as ReadPart["condition"] })}>
+              <option value="">Not written bad or missing</option><option value="bad">Written: bad</option><option value="missing">Written: missing</option>
             </select>
           ) : null}
           <button type="button" className="btn px-2 text-xs" onClick={() => onChange(parts.filter((x) => x.key !== p.key))}>Remove</button>
@@ -357,8 +374,8 @@ function ApplyBar({ noteId, plan, reading, answers, facts, applyAction, saveDraf
   const [result, formAction] = useActionState(applyAction, null);
   const [draft, setDraft] = useState<ActionResult | null>(null);
   const versions = Object.fromEntries(plan.entries.filter((e) => e.fact).map((e) => [e.fact!.machineNo, facts.machines[e.fact!.machineNo]?.version ?? e.fact!.version]));
-  const machines = plan.entries.filter((e) => e.changes.length || e.partStates.length).length;
-  const blocker = plan.unanswered ? `Answer ${plan.unanswered === 1 ? "the last question" : `${plan.unanswered} questions`} to apply.` : !plan.hasChanges ? "Nothing to apply yet." : null;
+  const machines = plan.entries.filter((e) => e.changes.length || e.parts.length || e.history.length).length;
+  const blocker = plan.unanswered ? `Answer ${plan.unanswered === 1 ? "the last question" : `${plan.unanswered} questions`} to apply.` : !plan.hasChanges ? "Nothing to apply yet." : !plan.date ? "Settle the note's date to apply." : null;
   return (
     <div className="sticky bottom-0 -mx-1 border-t border-line bg-paper/95 px-1 py-3 backdrop-blur">
       <form action={formAction} className="flex flex-wrap items-center gap-2">

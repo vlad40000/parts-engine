@@ -4,7 +4,8 @@ import { getDb, hasDatabase } from "@/src/db";
 import { getTechNote, loadPlanFacts } from "@/src/db/tech-notes";
 import { readerConfig } from "@/src/lib/tech-notes/reader";
 import { emptyReading } from "@/src/lib/tech-notes/reading";
-import type { Plan } from "@/src/lib/tech-notes/plan";
+import { PART_KIND_LABEL, type Plan } from "@/src/lib/tech-notes/plan";
+import { shortDate } from "@/src/lib/tech-notes/vocabulary";
 import { NoDatabase, PageTitle } from "@/src/components/ui";
 import { NoteReview } from "@/src/components/note-review";
 import { applyNoteAction, discardNoteAction, loadFactsAction, rereadNoteAction, saveDraftAction } from "../actions";
@@ -27,7 +28,7 @@ export default async function NotePage({ params, searchParams }: {
 
   if (note.status === "open") {
     const reading = note.reading ?? emptyReading();
-    const facts = await loadPlanFacts(db, reading, note.answers);
+    const facts = await loadPlanFacts(db, reading, note.answers, new Date(), note.uploadedOn);
     return (
       <>
         <PageTitle title="Review tech note" sub={<><Link className="text-accent underline" href="/notes">Tech notes</Link> · Answer the questions, check what will change, then apply.</>} />
@@ -56,10 +57,13 @@ export default async function NotePage({ params, searchParams }: {
               <img src={`/notes/${note.id}/photo`} alt="Photo of the tech note" className="max-h-[70vh] w-full object-contain" />
             </a>
           ) : <div className="card p-4 text-sm text-muted">Typed note: no photo.</div>}
-          <p className="mt-2 text-xs text-muted">{note.status === "applied" ? `Applied ${note.appliedAt}` : "Discarded: nothing was applied."}</p>
+          <p className="mt-2 text-xs text-muted">
+            {note.observedOn ? <>Written {shortDate(note.observedOn)} · </> : null}uploaded {note.createdAt}
+            <br />{note.status === "applied" ? `Applied ${note.appliedAt}` : "Discarded: nothing was applied."}
+          </p>
         </aside>
         <div className="flex min-w-0 flex-col gap-3">
-          {plan?.entries.filter((e) => e.machineNo && (e.changes.length || e.partStates.length)).map((e) => (
+          {plan?.entries.filter((e) => e.machineNo && (e.changes.length || e.parts?.length || e.history?.length)).map((e) => (
             <div key={e.key} className="card p-3">
               <Link className="mono font-semibold text-accent hover:underline" href={`/machines/${encodeURIComponent(e.machineNo!)}`}>#{e.machineNo}</Link>
               <table className="mt-2 w-full text-sm">
@@ -69,7 +73,13 @@ export default async function NotePage({ params, searchParams }: {
                   ))}
                 </tbody>
               </table>
-              {e.partStates.length ? <ul className="mt-2 list-disc pl-5 text-xs">{e.partStates.map((s) => <li key={`${s.machineNo}-${s.mpn}`}>{s.mpnDisplay} marked {s.state} on #{s.machineNo}</li>)}</ul> : null}
+              {e.locationCheck ? <p className="mt-2 text-xs"><span className="pill pill-stop">VERIFY LOCATION</span> raised: on record {e.locationCheck.from}, this note {e.locationCheck.to}.</p> : null}
+              {e.parts?.length ? (
+                <ul className="mt-2 list-disc pl-5 text-xs">
+                  {e.parts.map((d, i) => <li key={i} className={d.applied ? "" : "text-muted"}>{d.name || "Part"} {d.mpnDisplay} on #{d.machineNo}: {PART_KIND_LABEL[d.kind]}{d.applied ? "" : " (history only)"}</li>)}
+                </ul>
+              ) : null}
+              {e.history?.length ? <p className="mt-2 text-xs text-muted">Kept as history only: {e.history.map((c) => `${FIELD[c.field]} ${c.to}`).join("; ")}</p> : null}
             </div>
           ))}
           {plan?.locationsToAdd.length ? <p className="text-sm">Added location{plan.locationsToAdd.length > 1 ? "s" : ""}: {plan.locationsToAdd.map((l) => l.name).join(", ")}.</p> : null}
