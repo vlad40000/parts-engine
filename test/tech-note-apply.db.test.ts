@@ -253,16 +253,20 @@ describe("tech note apply", () => {
     expect(p.entries[0].partStates).toEqual([]);
   });
 
-  it("never writes over a part record changed after the plan was made", async () => {
+  it("writes nothing at all when a part record changed after the plan was made", async () => {
     const reading = normalizeReading({ date: { text: "5/14/26" }, entries: [{
       machine: { text: "6171" }, status: { checked: "NEEDS PARTS" }, parts: [{ mpn: "WP3948891", name: "timer", action: "needed", condition: "bad" }]
     }] });
     const id = await createTechNote(db, { origin: "manual", reading });
     const plan = planNote(reading, await loadPlanFacts(db, reading, {}, NOW), {});
+    // A machine-page edit between the plan and the write: the machine's version does not move.
     await setPartState(db, "6171", "3948891", "pulled");
-    expect(await applyTechNote(db, id, plan, reading, {})).toBe("applied");
+    expect(await applyTechNote(db, id, plan, reading, {})).toBe("conflict");
     const [ps] = await db.select().from(schema.machinePartState).where(eq(schema.machinePartState.machineNo, "6171"));
     expect(ps.state).toBe("pulled");
+    expect(await machine("6171")).toMatchObject({ availability: "UNCHECKED", diagnosis: null });
+    expect(await db.select().from(schema.fleetPartEvents).where(eq(schema.fleetPartEvents.techNoteId, id))).toEqual([]);
+    expect((await getTechNote(db, id))?.status).toBe("open");
   });
 
   it("clears VERIFY LOCATION only when someone records where the machine physically is", async () => {

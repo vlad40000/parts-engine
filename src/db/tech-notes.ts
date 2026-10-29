@@ -362,8 +362,22 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
       where f.updated_at = m.version::timestamptz
       for update of f
     ),
+    part_input as (
+      select * from jsonb_to_recordset(${JSON.stringify(parts)}::jsonb) as p(machine_no text, mpn text, state text, note text, seen text)
+    ),
+    -- Part edits on the machine page do not move the machine's version: lock and check each part record
+    -- this note writes. One changed since the plan (newer than the record seen, or than the note when
+    -- there was none) stops the whole note, like a machine conflict.
+    part_locked as (
+      select s.machine_no, s.mpn_canonical, s.updated_at from machine_part_state s
+      join part_input p on p.machine_no = s.machine_no and p.mpn = s.mpn_canonical
+      for update of s
+    ),
     ok as (
       select (select count(*) from locked) = (select count(*) from input)
+        and not exists (
+          select 1 from part_locked l join part_input p on p.machine_no = l.machine_no and p.mpn = l.mpn_canonical
+          where l.updated_at > coalesce(p.seen::timestamptz, ${obs}))
         and exists (select 1 from tech_notes where id = ${id}::uuid and status = 'open') as ok
     ),
     upd as (
@@ -408,7 +422,7 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     part_states as (
       insert into machine_part_state (machine_no, mpn_canonical, state, note, updated_at, observed_at)
       select p.machine_no, p.mpn, p.state, p.note, now(), ${obs}
-      from jsonb_to_recordset(${JSON.stringify(parts)}::jsonb) as p(machine_no text, mpn text, state text, note text, seen text), ok
+      from part_input p, ok
       where ok.ok
       on conflict (machine_no, mpn_canonical) do update set state = excluded.state, note = excluded.note, updated_at = now(), observed_at = excluded.observed_at
         -- Only over the part record the reviewer saw (the planner already settled precedence, including a
