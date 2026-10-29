@@ -22,11 +22,16 @@ This file records decisions evidenced by the current source and the owner's curr
 - API integration should become primary while CSV remains a fallback.
 
 ## Tech notes (owner decisions 2026-10-29)
-- Parts Engine is the record for machine status, condition, location, diagnosis, repair notes and sticker price once a tech note sets them. A workbook re-import keeps those fields (`fleet_machines.local_fields`, plus the existing `status_override` for status) and still refreshes every other field. Part-family flags follow whichever diagnosis and notes are kept.
+- Parts Engine is the record for machine status, condition, location, diagnosis, repair notes and sticker price once a tech note sets them. A workbook re-import keeps those fields (`local_fields`, `status_override`, and #31's `location_override`) and still refreshes every other field. Part-family flags only grow.
 - Tech notes are read from a photo by Gemini, server-side. Owner model rule: OCR on `gemini-3.1-flash-lite`, "Re-read carefully" on `gemini-3.5-flash`, both overridable by environment variable. Typing a note by hand is the fallback when no API key is set or a read fails.
 - The planner is deterministic code, not the model. Anything the reading and the record cannot settle becomes a question; nothing is written until every question is answered. Answers that map wording to a location are remembered as aliases.
 - A note is applied in one SQL statement: every changed machine must still carry the version the reviewer saw, otherwise nothing is written.
-- Card statuses: Being repaired, Needs parts, Parts machine, Ready for sale, Scrap, plus "Ready for clean" (READY TO SALE on a showroom, otherwise asked). Conditions follow the inventory's pairs (E - Needs Parts, F - Parts Only, X - Being Repaired, S - Scraped; A-D for sale).
+- Statuses: only the Fleet status options, only when written. No status from a location; "Ready for clean" is never READY TO SALE. Off-lot statuses are confirmed.
+- Parts: suspected, needed, failed, missing, replaced, removed. Needed is not failed; suspected and needed stay on pick lists marked test first.
+- Chronology: the written date is the observation date. An older note never reverses a newer decision (kept as history); same-day or otherwise uncertain precedence is asked. `last_field_update_at` records the newest accepted decision.
+- VERIFY LOCATION: a recorded location that conflicts with the record opens a check that only a physical verification clears; both locations stay in the history.
+- Printed form: Roadrunner Standardized Field Intake (RR-F1), half sheet, one machine. Old RR-M1/RR-R1 cards and free notes are still read, no longer printed.
+- Open: the layout of RR-F1 was built from the five named fields (Machine #, Date, Location, Status, Notes); no earlier approved artwork was found. Symptom rules still do not know timer, pressure sensor, damper or inner tub (part decisions mark those families test first instead). Fleet has no BEING REPAIRED status; imported machines that carry it keep it.
 
 ## Economic qualification: Store Economics v7 (PE-4)
 - Roadrunner Store Economics v7 is the current qualification model (`src/lib/economics.ts`), replacing the prototype GREENLIGHT rule (25% all-in fee, $20 cushion, $1 minimum profit, 20% sell-through, sold/active share ranking and pull cap). Those columns stay in `settings` for compatibility and drive nothing.

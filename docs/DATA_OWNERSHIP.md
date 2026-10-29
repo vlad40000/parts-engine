@@ -5,8 +5,9 @@ Parts Engine uses its own database. Cross-application integration is through exp
 | Data | Authority | Parts Engine role |
 |---|---|---|
 | Machine identity / fleet intake | Appliance Inventory / App 1 when connected | Operational imported snapshot |
-| Machine physical location | Fleet import, Fleet UI manual override, or tech note | Operational location per machine ID; a manual or note-set location survives subsequent imports (`location_override`) |
-| Machine operational state set from tech notes (status, condition, diagnosis, repair notes, sticker price) | Parts Engine (owner decision 2026-10-29) | Record of truth once set here; a workbook re-import fills only fields not set here (`local_fields`, `status_override`) |
+| Machine physical location | Fleet import, Fleet UI manual override, tech note, or physical location check | Operational location per machine ID; a manual or note-set location survives subsequent imports (`location_override`); a conflicting recorded location raises VERIFY LOCATION until physically checked |
+| Machine operational state set from tech notes (status, condition, diagnosis, repair notes, sticker price) | Parts Engine (owner decision 2026-10-29) | Record of truth once set here; a workbook re-import fills only fields not set here (`local_fields`, `status_override`); an older note never reverses a newer decision (`last_field_update_at`, history rows) |
+| Part decisions from tech notes (suspected, needed, failed, missing, replaced, removed) | Parts Engine | `fleet_part_events`; only failed, missing and removed change pick-list availability |
 | Location list and its learned wordings | Parts Engine | Seeded from imported locations; tech notes add locations and aliases |
 | Serial age candidates | Evidence-qualified resolver / imported machine record | Preserve candidates, confidence and reason |
 | Supplier model BOM | Parts Engine supplier research | Authoritative for the captured supplier observation |
