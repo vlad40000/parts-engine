@@ -2,6 +2,7 @@ import {
   boolean,
   bigserial,
   check,
+  customType,
   date,
   index,
   integer,
@@ -14,6 +15,8 @@ import {
   timestamp
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 /**
  * Parts Engine owns its own Neon database. It never writes to Ledger,
@@ -93,6 +96,13 @@ export const fleetMachines = pgTable("fleet_machines", {
   ageConfidence: text("age_confidence").notNull().default("none"),
   ageNote: text("age_note"),
   source: text("source").notNull().default("import"),
+  /**
+   * Operational fields last set in Parts Engine (tech notes): condition, location, diagnosis,
+   * notes, sticker_price. A workbook re-import keeps these values (owner decision 2026-10-29).
+   * Status uses status_override for the same purpose.
+   */
+  localFields: text("local_fields").array().notNull().default(sql`'{}'::text[]`),
+  stickerPrice: numeric("sticker_price", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
@@ -109,10 +119,68 @@ export const fleetStatusEvents = pgTable("fleet_status_events", {
   previousStatus: text("previous_status").notNull(),
   nextStatus: text("next_status").notNull(),
   source: text("source").notNull().default("fleet_ui"),
+  /** Set when the change came from an applied tech note. */
+  techNoteId: uuid("tech_note_id").references(() => techNotes.id),
   changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
   index("fleet_status_events_machine_time_idx").on(t.machineNo, t.changedAt),
   check("fleet_status_events_changed_valid", sql`${t.previousStatus} <> ${t.nextStatus}`)
+]);
+
+/** Where machines can be. Seeded from imported locations; tech notes can add new ones and aliases. */
+export const fleetLocations = pgTable("fleet_locations", {
+  name: text("name").primaryKey(),
+  /** Other ways the shop writes this place (normalized: lower case, words only). */
+  aliases: text("aliases").array().notNull().default(sql`'{}'::text[]`),
+  /** Printed on the tech-note cards. Off-lot pseudo-locations ($$$SOLD$$$, Scraped) are not. */
+  onCard: boolean("on_card").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(100),
+  source: text("source").notNull().default("import"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [check("fleet_locations_name_valid", sql`btrim(${t.name}) <> ''`)]);
+
+/**
+ * One photographed (or typed) tech note. The reading is what the card says; nothing reaches
+ * fleet_machines until every clarifying question is answered and the note is applied.
+ */
+export const techNotes = pgTable("tech_notes", {
+  id: uuid("id").primaryKey(),
+  status: text("status").notNull().default("open"),
+  origin: text("origin").notNull(),
+  card: text("card"),
+  photoType: text("photo_type"),
+  photo: bytea("photo"),
+  photoSha256: text("photo_sha256"),
+  photoBytes: integer("photo_bytes"),
+  readerModel: text("reader_model"),
+  readerError: text("reader_error"),
+  reading: jsonb("reading"),
+  /** Answers given so far (saved with "Save for later"). */
+  answers: jsonb("answers").notNull().default(sql`'{}'::jsonb`),
+  appliedPlan: jsonb("applied_plan"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  appliedAt: timestamp("applied_at", { withTimezone: true })
+}, (t) => [
+  index("tech_notes_created_idx").on(t.createdAt),
+  check("tech_notes_status_check", sql`${t.status} in ('open','applied','discarded')`),
+  check("tech_notes_origin_check", sql`${t.origin} in ('photo','manual')`)
+]);
+
+/** Append-only history of operational field changes made in Parts Engine. */
+export const fleetFieldEvents = pgTable("fleet_field_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  field: text("field").notNull(),
+  previousValue: text("previous_value"),
+  nextValue: text("next_value"),
+  source: text("source").notNull().default("tech_note"),
+  techNoteId: uuid("tech_note_id").references(() => techNotes.id),
+  changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  index("fleet_field_events_machine_time_idx").on(t.machineNo, t.changedAt),
+  check("fleet_field_events_field_valid", sql`${t.field} in ('condition','location','diagnosis','notes','sticker_price')`),
+  check("fleet_field_events_changed_valid", sql`${t.previousValue} is distinct from ${t.nextValue}`)
 ]);
 
 // ---------------------------------------------------------------------------
