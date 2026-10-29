@@ -21,6 +21,13 @@ This file records decisions evidenced by the current source and the owner's curr
 - Removal minutes replace a synthetic 1-5 complexity score.
 - API integration should become primary while CSV remains a fallback.
 
+## Tech notes (owner decisions 2026-10-29)
+- Parts Engine is the record for machine status, condition, location, diagnosis, repair notes and sticker price once a tech note sets them. A workbook re-import keeps those fields (`fleet_machines.local_fields`, plus the existing `status_override` for status) and still refreshes every other field. Part-family flags follow whichever diagnosis and notes are kept.
+- Tech notes are read from a photo by Gemini, server-side. Owner model rule: OCR on `gemini-3.1-flash-lite`, "Re-read carefully" on `gemini-3.5-flash`, both overridable by environment variable. Typing a note by hand is the fallback when no API key is set or a read fails.
+- The planner is deterministic code, not the model. Anything the reading and the record cannot settle becomes a question; nothing is written until every question is answered. Answers that map wording to a location are remembered as aliases.
+- A note is applied in one SQL statement: every changed machine must still carry the version the reviewer saw, otherwise nothing is written.
+- Card statuses: Being repaired, Needs parts, Parts machine, Ready for sale, Scrap, plus "Ready for clean" (READY TO SALE on a showroom, otherwise asked). Conditions follow the inventory's pairs (E - Needs Parts, F - Parts Only, X - Being Repaired, S - Scraped; A-D for sale).
+
 ## Economic qualification: Store Economics v7 (PE-4)
 - Roadrunner Store Economics v7 is the current qualification model (`src/lib/economics.ts`), replacing the prototype GREENLIGHT rule (25% all-in fee, $20 cushion, $1 minimum profit, 20% sell-through, sold/active share ranking and pull cap). Those columns stay in `settings` for compatibility and drive nothing.
 - There is no general minimum part price; the floor is the per-part break-even.
@@ -46,3 +53,5 @@ The delivered baseline currently excludes compressors before eBay research. Leav
 - Model-production/Wayback evidence does not yet narrow age candidates.
 - Automatic whole-machine vs harvest vs scrap disposition is not implemented.
 - App 1 source has not been integrated into this repository.
+- Fleet status editing (dropdown) still offers no BEING REPAIRED; tech notes can set it. Decide whether the dropdown should match.
+- Symptom rules do not yet recognize shop words such as timer, pressure sensor, damper or inner tub; tech notes mark those parts on the machine instead (failed / missing) when the part is in the model's parts list.
