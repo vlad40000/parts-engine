@@ -16,7 +16,7 @@ export const CARD_NAMES: Record<CardCode, string> = {
 };
 
 /** The field intake form's printed fields, in order. The reader prompt names the same labels. */
-export const INTAKE_FIELDS = ["Machine #", "Date", "Location", "Status", "Notes"] as const;
+export const INTAKE_FIELDS = ["Machine #", "Date", "Location", "Current status", "Notes"] as const;
 
 /** Old Status/Move card: up to this many machines share one status and location. */
 export const MOVE_CARD_MACHINES = 4;
@@ -72,7 +72,7 @@ export const CARD_SYMPTOMS = [
   { key: "no_power", label: "No power", phrase: "No power." },
   { key: "no_heat", label: "No heat", phrase: "No heat." },
   { key: "not_cooling", label: "Not cooling", phrase: "Not cooling." },
-  // Written without the word "gas", which the symptom rules read as gas-burner trouble.
+  // Refrigeration service need; this does not diagnose a failed compressor.
   { key: "needs_refrigerant", label: "Needs gassing", phrase: "Needs refrigerant (sealed system)." },
   { key: "wont_drain", label: "Won't drain", phrase: "Won't drain." },
   { key: "wont_spin", label: "Won't spin", phrase: "Won't spin." },

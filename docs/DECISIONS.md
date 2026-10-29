@@ -30,8 +30,9 @@ This file records decisions evidenced by the current source and the owner's curr
 - Parts: suspected, needed, failed, missing, replaced, removed. Needed is not failed; suspected and needed stay on pick lists marked test first.
 - Chronology: the written date is the observation date. An older note never reverses a newer decision (kept as history); same-day or otherwise uncertain precedence is asked. `last_field_update_at` records the newest accepted decision.
 - VERIFY LOCATION: a recorded location that conflicts with the record opens a check that only a physical verification clears; both locations stay in the history.
-- Printed form: Roadrunner Standardized Field Intake (RR-F1), half sheet, one machine. Old RR-M1/RR-R1 cards and free notes are still read, no longer printed.
-- Open: the layout of RR-F1 was built from the five named fields (Machine #, Date, Location, Status, Notes); no earlier approved artwork was found. Symptom rules still do not know timer, pressure sensor, damper or inner tub (part decisions mark those families test first instead). Fleet has no BEING REPAIRED status; imported machines that carry it keep it.
+- Printed form: the owner's approved Roadrunner Machine Service Update PDF (half sheet, two per letter page), served unchanged from `public/forms/roadrunner-machine-service-update.pdf`. Its fields are Machine #, Date, Location, Current status and Notes. The reader recognizes this layout as RR-F1 without a printed code. Old RR-M1/RR-R1 cards and free notes are still accepted.
+- Gassing, gassed and regassing are refrigeration service words, not gas-burner faults or proof of a failed compressor. The gas symptom rule matches the word "gas" rather than those words or "gasket".
+- Open: symptom rules still do not know timer, pressure sensor, damper or inner tub (part decisions mark those families test first instead). Fleet has no BEING REPAIRED status; imported machines that carry it keep it.
 
 ## Economic qualification: Store Economics v7 (PE-4)
 - Roadrunner Store Economics v7 is the current qualification model (`src/lib/economics.ts`), replacing the prototype GREENLIGHT rule (25% all-in fee, $20 cushion, $1 minimum profit, 20% sell-through, sold/active share ranking and pull cap). Those columns stay in `settings` for compatibility and drive nothing.

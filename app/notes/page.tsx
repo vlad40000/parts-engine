@@ -31,7 +31,7 @@ export default async function NotesPage() {
       />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <section className="card p-4">
-          <h2 className="mb-3 font-semibold">Read a card</h2>
+          <h2 className="mb-3 font-semibold">Read a form or note</h2>
           <NoteUpload action={readCardAction} readerReady={Boolean(readerConfig())} />
           <form action={startTypedNoteAction} className="mt-4 border-t border-line pt-3">
             <button className="btn">Type a note instead</button>
@@ -39,9 +39,9 @@ export default async function NotesPage() {
         </section>
         <aside className="card p-4 text-sm">
           <h2 className="mb-2 font-semibold">Printable form</h2>
-          <p className="mb-3 text-xs text-muted">The Roadrunner Standardized Field Intake: Machine #, Date, Location, Status and Notes with open writing space. One machine per form reads faster and with fewer questions.</p>
-          <Link className="text-accent underline" href="/notes/cards">Field intake form</Link> <span className="text-xs text-muted">half sheet, 2 per page</span>
-          <p className="mt-3 text-xs text-muted">Old Status/Move and Repair cards and free handwritten notes are still read.</p>
+          <p className="mb-3 text-xs text-muted">Roadrunner Machine Service Update: Machine #, Date, Location, Current status and Notes.</p>
+          <Link className="text-accent underline" href="/notes/cards" prefetch={false}>Standard form PDF</Link> <span className="text-xs text-muted">half sheet, 2 per page</span>
+          <p className="mt-3 text-xs text-muted">Handwritten tech notes and the old cards are also accepted. The standard form is optional.</p>
         </aside>
       </div>
 

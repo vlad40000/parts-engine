@@ -60,9 +60,11 @@ When a note records a location that differs from the machine's location on recor
 
 ## Field intake form
 
-*Tech notes → Field intake form* prints the **Roadrunner Standardized Field Intake (RR-F1)**: two half-sheet forms per letter page, one machine per form, solid black text and lines, open writing space for Machine #, Date, Location, Status and Notes. The Fleet status names are printed small under Status as a reference. Print at 100% (Actual size) and cut on the center line.
+*Tech notes → Standard form PDF* opens the owner's approved **Roadrunner Machine Service Update** unchanged: `public/forms/roadrunner-machine-service-update.pdf`. It has two half-sheet forms per letter page and open fields for Machine #, Date, Location, Current status and Notes (Problems / Parts needed / Work performed / Testing). Print at 100% (Actual size) and cut on the center line. The reader recognizes this layout as RR-F1 without needing that code printed on the form; the printed 1 OF 2 / 2 OF 2 markers are not machine numbers.
 
 The reader still reads the old RR-M1 Status/Move and RR-R1 Repair cards and free handwritten notes; those cards are no longer printed.
+
+Refrigeration words such as "gassing", "gassed" and "regassing" stay service observations. They do not flag a gas-burner fault or prove a failed compressor. Genuine gas-appliance symptoms such as "no gas" and "bad gas valve" still receive the gas-family flag.
 
 ## Record of truth
 
@@ -96,4 +98,4 @@ GEMINI_API_KEY=… OCR_TRIAL_DIR=/path/to/photos OCR_TRIAL_OUT=trial.json npx vi
 
 ## Privacy
 
-Photos are stored in this database as the record of each change. The form has no customer fields and says so. The reader is told not to copy names, phone numbers or addresses, and phone numbers are stripped from every reading. Uploading the same photo twice opens the existing note, so one form cannot be applied twice.
+Photos are stored in this database as the record of each change. The form has no customer fields. The reader is told not to copy names, phone numbers or addresses, and phone numbers are stripped from every reading. Uploading the same photo twice opens the existing note, so one form cannot be applied twice.

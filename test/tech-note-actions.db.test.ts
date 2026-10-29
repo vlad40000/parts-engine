@@ -54,6 +54,43 @@ beforeEach(async () => {
 });
 
 describe("tech note actions", () => {
+  it.each(["RR-F1", "free"])("reviews and saves a %s photo reading without treating gassing as a gas fault", async (card) => {
+    // Synthetic fleet identity; the words follow the shop's standard form and handwritten notes.
+    await upsertFleet(db, mapFleetRows([{
+      ID: "9001", Availability: "NEEDS PARTS", ApplianceType: "Refrigerator", Brand: "GE",
+      ModelNumber: "TESTFRIDGE1", SerialNumber: "TEST0001", Location: "Shop"
+    }], NOW).rows);
+    const r = normalizeReading({
+      card, date: { text: "5/21/26", confidence: "high" }, entries: [{
+        machine: { text: "9001", confidence: "low", alternatives: ["9007"] },
+        status: { checked: "NEEDS PARTS", confidence: "high" },
+        location: { name: "Shop", confidence: "high" },
+        problem: "Needs gassing", workDone: "Checked cooling. Fans working."
+      }]
+    });
+    holder.read = vi.fn(async () => ({ reading: r, model: "quick-model" }));
+    const id = idFrom(await redirectOf(readCardAction(null, form({ photo: photo() }))));
+    expect(await getTechNote(db, id)).toMatchObject({ card, status: "open", hasPhoto: true });
+    const facts = await loadFactsAction(id, r, {});
+    const versions = JSON.stringify({ "9001": facts.machines["9001"].version });
+    const unanswered = planNote(r, facts, {});
+    expect(unanswered.ready).toBe(false);
+    expect(unanswered.questions).toEqual(expect.arrayContaining([expect.objectContaining({ id: "machine:e0" })]));
+    expect(await applyNoteAction(null, form({ id, reading: JSON.stringify(r), answers: "{}", versions })))
+      .toMatchObject({ ok: false, message: "Answer the last question first." });
+    expect((await db.select().from(schema.fleetMachines).where(eq(schema.fleetMachines.machineNo, "9001")))[0].diagnosis).toBeNull();
+    const answers = { "machine:e0": "use:9001" };
+    expect(planNote(r, facts, answers).ready).toBe(true);
+    expect(await redirectOf(applyNoteAction(null, form({ id, reading: JSON.stringify(r), answers: JSON.stringify(answers), versions })))).toBe(`/notes/${id}`);
+    const [m] = await db.select().from(schema.fleetMachines).where(eq(schema.fleetMachines.machineNo, "9001"));
+    expect(m).toMatchObject({ availability: "NEEDS PARTS", location: "Shop", diagnosis: "Needs gassing." });
+    expect(m.notes).toContain("Checked cooling. Fans working.");
+    expect(m.suspectFamilies).not.toContain("gas");
+    expect(m.suspectFamilies).not.toContain("compressor");
+    expect(await db.select().from(schema.machinePartState)).toEqual([]);
+    expect(await getTechNote(db, id)).toMatchObject({ status: "applied", observedOn: "2026-05-21" });
+  });
+
   it("reads a photo, stores it with its reading, and opens the note", async () => {
     const url = await redirectOf(readCardAction(null, form({ photo: photo() })));
     expect(url).toMatch(/^\/notes\/[0-9a-f-]{36}$/);

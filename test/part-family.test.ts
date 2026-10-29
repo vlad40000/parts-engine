@@ -45,6 +45,24 @@ describe("failure symptoms", () => {
     expect(suspectFamilies("No power, dead")).toContain("control_board");
     expect(suspectFamilies("")).toEqual([]);
   });
+
+  it.each(["Needs gassing", "Needs re-gassing", "Fridge was gassed", "Needs regassing", "Bad door gasket"])(
+    "does not interpret %s as a gas-burner fault", (note) => {
+      expect(suspectFamilies(note)).not.toContain("gas");
+      expect(suspectFamilies(note)).not.toContain("compressor");
+    }
+  );
+
+  it.each(["No gas", "Gas valve is bad", "Won't ignite", "No flame", "Igniter failed"])(
+    "keeps genuine gas-appliance symptoms: %s", (note) => {
+      expect(suspectFamilies(note)).toContain("gas");
+    }
+  );
+
+  it("still flags a separate gas fault alongside a refrigeration service note", () => {
+    expect(suspectFamilies("Needs gassing", "Bad gas valve")).toContain("gas");
+    expect(suspectFamilies("Needs gassing", "Won't drain")).toEqual(["pump"]);
+  });
 });
 
 describe("word-boundary family rules", () => {

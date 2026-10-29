@@ -66,8 +66,8 @@ export function NoteUpload({ action, readerReady }: {
       <div className="flex flex-wrap gap-2">
         <button type="button" className="btn btn-primary" onClick={() => camera.current?.click()} disabled={busy}>Take photo</button>
         <button type="button" className="btn" onClick={() => library.current?.click()} disabled={busy}>Choose photo</button>
-        <input ref={camera} type="file" accept="image/*" capture="environment" className="sr-only" onChange={pick} aria-label="Take a photo of the card" />
-        <input ref={library} type="file" accept="image/*" className="sr-only" onChange={pick} aria-label="Choose a photo of the card" />
+        <input ref={camera} type="file" accept="image/*" capture="environment" className="sr-only" onChange={pick} aria-label="Take a photo of a form or note" />
+        <input ref={library} type="file" accept="image/*" className="sr-only" onChange={pick} aria-label="Choose a photo of a form or note" />
       </div>
       {preview ? (
         <div className="flex flex-col gap-2">
@@ -75,13 +75,13 @@ export function NoteUpload({ action, readerReady }: {
           <img src={preview} alt="The photo to read" className="max-h-80 w-auto self-start rounded border border-line object-contain" />
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="btn btn-primary" onClick={read} disabled={busy}>
-              {preparing ? "Preparing photo…" : pending ? "Reading the card…" : readerReady ? "Read this card" : "Save photo and type it"}
+              {preparing ? "Preparing photo…" : pending ? "Reading the note…" : readerReady ? "Read this photo" : "Save photo and type it"}
             </button>
             <span className="text-xs text-muted">{busy ? "This takes a few seconds." : file?.name}</span>
           </div>
         </div>
       ) : (
-        <p className="text-xs text-muted">Fill the whole frame with one card, flat and in good light.</p>
+        <p className="text-xs text-muted">Photograph a completed half-sheet form or handwritten tech note, flat and in good light.</p>
       )}
       {!readerReady ? <p className="text-xs text-wait">The card reader is not set up on this server (GEMINI_API_KEY), so photos are kept and you type what they say.</p> : null}
       {tooBig ? <p role="alert" className="rounded border border-stop/30 bg-red-50 p-3 text-sm">This photo is too large to send (over 4 MB) and could not be shrunk here. Take it with the Take photo button, or save it as a JPEG first.</p> : null}

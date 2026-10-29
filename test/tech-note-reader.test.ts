@@ -79,12 +79,16 @@ describe("normalizing a reading", () => {
   it("names the intake form and the old cards, the Fleet statuses only, and the part rules", () => {
     const prompt = readerPrompt({ locations: [] });
     expect(prompt).toContain("Form RR-F1, the Roadrunner Standardized Field Intake");
-    expect(prompt).toContain("Printed labels: Machine #, Date, Location, Status, Notes");
+    expect(prompt).toContain("Printed labels: Machine #, Date, Location, Current status, Notes");
+    expect(prompt).toContain('"MACHINE SERVICE UPDATE"');
+    expect(prompt).toContain("does not need a printed RR-F1 code");
     expect(prompt).toContain("RR-M1");
     expect(prompt).toContain("RR-R1");
     expect(prompt).toContain("UNCHECKED, NEEDS PARTS, PARTS ONLY, PARTS PROGRAM, READY TO SALE, SOLD, SCRAPPED");
     expect(prompt).toContain('Never turn "Ready for clean" into READY TO SALE, and never choose a status from the location.');
     expect(prompt).toContain('"Needs timer" alone is needed with an empty condition.');
+    expect(prompt).toContain('"needs gassing" is a refrigeration service need');
+    expect(prompt).toContain("never infer a failed compressor");
     expect(prompt).toContain("never copy customer or staff names");
     expect(READING_JSON_SCHEMA.properties.card.enum).toEqual(["RR-F1", "RR-M1", "RR-R1", "free"]);
   });
