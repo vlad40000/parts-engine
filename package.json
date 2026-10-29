@@ -15,6 +15,7 @@
     "capture": "node scripts/capture-fixture.mjs"
   },
   "dependencies": {
+    "@google/genai": "2.24.0",
     "@neondatabase/serverless": "^1.2.0",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.44.7",
