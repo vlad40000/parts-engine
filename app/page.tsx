@@ -84,12 +84,13 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
       </form>
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Serial</th><th>Possible years</th><th>Symptom flags</th><th>Parts list</th></tr></thead>
+          <thead><tr><th>#</th><th>Status</th><th>Location</th><th>Type</th><th>Brand</th><th>Model</th><th>Serial</th><th>Possible years</th><th>Symptom flags</th><th>Parts list</th></tr></thead>
           <tbody>
             {list.rows.map((m) => (
               <tr key={m.machine_no}>
                 <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(m.machine_no)}`}>{m.machine_no}</Link></td>
                 <td><StatusEditCell machineNo={m.machine_no} status={m.availability} action={updateMachineStatusAction}/></td>
+                <td className="text-xs">{m.location ?? ""}</td>
                 <td className="text-xs">{m.appliance_type}</td>
                 <td>{m.brand}</td>
                 <td><ModelEditCell machineNo={m.machine_no} model={m.model_raw} brand={m.brand} serial={m.serial} identityStatus={m.identity_status} action={updateMachineModelAction} /></td>
