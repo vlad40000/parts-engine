@@ -52,8 +52,11 @@ export type MachineFact = {
   lastUpdate: Observed | null;
   /** Newest accepted decision per field. */
   fieldUpdates: Partial<Record<TrackedField, Observed>>;
-  /** Newest accepted decision per part (canonical MPN), with its availability state if any. */
-  partUpdates: Record<string, Observed & { state: string | null }>;
+  /**
+   * Newest accepted decision per part (canonical MPN), with its availability state if any and the
+   * part record's updated_at as Postgres text: apply refuses to write over a part record changed since.
+   */
+  partUpdates: Record<string, Observed & { state: string | null; token?: string | null }>;
   /** A VERIFY LOCATION check is already open. */
   openLocationCheck: boolean;
 };
@@ -97,7 +100,11 @@ export type PartDecision = {
   testFirst: string | null;
   note: string;
 };
-export type PartStateChange = { machineNo: string; mpn: string; mpnDisplay: string; state: "pulled" | "failed" | "missing"; note: string };
+export type PartStateChange = {
+  machineNo: string; mpn: string; mpnDisplay: string; state: "pulled" | "failed" | "missing"; note: string;
+  /** The part record this plan was built on (updated_at as Postgres text), or null when there was none. */
+  seenToken: string | null;
+};
 export type LocationCheck = { from: string; to: string };
 export type QuestionKind = "date" | "machine" | "duplicate" | "group" | "status" | "grade" | "location" | "part" | "other_machine" | "price" | "order";
 export type QuestionOption = { value: string; label: string; detail?: string; recommended?: boolean };
@@ -803,12 +810,12 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       const { diagnosisBit: _d, noteBit: _n, precedence: _p, ...decision } = d;
       planned.parts.push({ ...decision, applied: ok });
       const state = STATE_FOR_KIND[d.kind];
-      if (ok && state && d.mpn) planned.partStates.push({ machineNo: no, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state, note: d.note });
+      if (ok && state && d.mpn) planned.partStates.push({ machineNo: no, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state, note: d.note, seenToken: fact.partUpdates[d.mpn]?.token ?? null });
       if (ok && d.testFirst && !planned.testFirst.includes(d.testFirst)) planned.testFirst.push(d.testFirst);
     }
     for (const d of donorParts) {
       planned.parts.push(d);
-      if (d.applied && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note });
+      if (d.applied && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note, seenToken: known(d.machineNo)?.partUpdates[d.mpn]?.token ?? null });
       if (!d.applied) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} has a newer record, so it is not marked removed there.`);
     }
 
@@ -875,6 +882,34 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     if (notesLine) {
       const currentNotes = (fact.notes ?? "").trim();
       planned.changes.push({ field: "notes", from: fact.notes, to: [currentNotes, notesLine].filter(Boolean).join(" ") });
+    }
+  }
+
+  // One part on one machine gets one availability state per note. The same state written twice is
+  // written once; different states (a part "taken" on one line and "missing" on another) are asked.
+  const byPart = new Map<string, Array<{ entry: PlannedEntry; change: PartStateChange }>>();
+  for (const entry of entries) for (const change of entry.partStates) {
+    const k = `${change.machineNo}|${change.mpn}`;
+    byPart.set(k, [...(byPart.get(k) ?? []), { entry, change }]);
+  }
+  for (const [k, list] of byPart) {
+    if (list.length < 2) continue;
+    const states = [...new Set(list.map((x) => x.change.state))];
+    let keepState: string | null = states[0];
+    if (states.length > 1) {
+      const [machineNo] = k.split("|");
+      const a = ask({
+        id: `partstate:${k}`, kind: "part", entry: null,
+        prompt: `#${machineNo}: this note marks ${list[0].change.mpnDisplay} as ${states.join(" and as ")}. Which is right?`,
+        options: [...states.map((st) => ({ value: `set:${st}`, label: st === "pulled" ? "removed" : st })), { value: "none", label: "Neither: leave the part as it is" }]
+      });
+      keepState = a == null || a === "none" ? null : a.slice(4);
+    }
+    let kept = false;
+    for (const { entry, change } of list) {
+      const keep = !kept && change.state === keepState;
+      if (keep) kept = true;
+      else entry.partStates = entry.partStates.filter((x) => x !== change);
     }
   }
 

@@ -1252,8 +1252,9 @@ export async function setPartState(db: Db, machineNo: string, mpnCanonical: stri
     await db.delete(t.machinePartState).where(and(eq(t.machinePartState.machineNo, machineNo), eq(t.machinePartState.mpnCanonical, mpnCanonical)));
     return;
   }
-  await db.insert(t.machinePartState).values({ machineNo, mpnCanonical, state, note: note ?? null, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date() } });
+  // A hand edit is observed now: clear any tech note's observation date so chronology dates it by updated_at.
+  await db.insert(t.machinePartState).values({ machineNo, mpnCanonical, state, note: note ?? null, updatedAt: new Date(), observedAt: null })
+    .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date(), observedAt: null } });
 }
 
 export async function researchQueueCsvRows(db: Db) {

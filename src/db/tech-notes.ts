@@ -172,7 +172,11 @@ const MACHINE_SELECT = sql`
   left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key`;
 
 const SOURCE_LABEL: Record<string, string> = { tech_note: "tech note", fleet_ui: "Fleet edit", verified: "location check", part_state: "part record" };
-type UpdateRow = { machine_no: string; key: string; epoch: number; day: string; date: string; time: string; source: string; state: string | null };
+type UpdateRow = {
+  machine_no: string; key: string; epoch: number; day: string; date: string; time: string; source: string; state: string | null;
+  /** For parts: machine_part_state.updated_at as text (the concurrency token on apply), null without a state row. */
+  state_token: string | null;
+};
 const observed = (r: UpdateRow): Observed & { epoch: number } => ({
   day: r.day, epoch: r.epoch,
   // A tech note records a day, not a time.
@@ -186,7 +190,7 @@ const toFact = (r: MachineRow, bomParts: BomPart[] = [], updates: UpdateRow[] = 
     ? { day: r.last_day, epoch: r.last_epoch, label: `on ${r.last_label}` } : null;
   for (const u of updates) {
     const o = observed(u);
-    if (u.key.startsWith("part:")) partUpdates[u.key.slice(5)] = { day: o.day, label: o.label, state: u.state };
+    if (u.key.startsWith("part:")) partUpdates[u.key.slice(5)] = { day: o.day, label: o.label, state: u.state, token: u.state_token };
     else fieldUpdates[u.key as TrackedField] = { day: o.day, label: o.label };
     if (!last || o.epoch >= last.epoch) last = { ...o, label: `${o.label}, ${u.key.startsWith("part:") ? `part ${u.key.slice(5)}` : u.key === "availability" ? "status" : u.key === "stickerPrice" ? "sticker price" : u.key}` };
   }
@@ -207,21 +211,21 @@ async function latestUpdates(db: Db, machineNos: string[]): Promise<UpdateRow[]>
   if (!machineNos.length) return [];
   const nos = textArray(machineNos);
   return q<UpdateRow>(db, sql`
-    select distinct on (machine_no, key) machine_no, key, extract(epoch from at)::float8 epoch,
+    select distinct on (machine_no, key) machine_no, key, extract(epoch from at)::float8 epoch, state_token,
       to_char(at at time zone ${SHOP_TIME_ZONE}, 'YYYY-MM-DD') "day",
       to_char(at at time zone ${SHOP_TIME_ZONE}, 'FMMM/FMDD/YY') "date",
       to_char(at at time zone ${SHOP_TIME_ZONE}, 'FMHH12:MI AM') "time", source, state
     from (
-      select machine_no, 'availability' key, coalesce(observed_at, changed_at) at, source, null::text state
+      select machine_no, 'availability' key, coalesce(observed_at, changed_at) at, source, null::text state, null::text state_token
       from fleet_status_events where machine_no = any(${nos})
       union all
-      select machine_no, case field when 'sticker_price' then 'stickerPrice' else field end, coalesce(observed_at, changed_at), source, null
+      select machine_no, case field when 'sticker_price' then 'stickerPrice' else field end, coalesce(observed_at, changed_at), source, null, null
       from fleet_field_events where applied and field in ('condition','location','diagnosis','sticker_price') and machine_no = any(${nos})
       union all
-      select machine_no, 'part:' || mpn_canonical, coalesce(observed_at, updated_at), 'part_state', state
+      select machine_no, 'part:' || mpn_canonical, coalesce(observed_at, updated_at), 'part_state', state, updated_at::text
       from machine_part_state where machine_no = any(${nos})
       union all
-      select e.machine_no, 'part:' || e.mpn_canonical, e.observed_at, e.source, s.state
+      select e.machine_no, 'part:' || e.mpn_canonical, e.observed_at, e.source, s.state, s.updated_at::text
       from fleet_part_events e
       left join machine_part_state s on s.machine_no = e.machine_no and s.mpn_canonical = e.mpn_canonical
       where e.applied and e.mpn_canonical is not null and e.machine_no = any(${nos})
@@ -332,7 +336,9 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     ...e.changes.filter((c) => c.field !== "availability").map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.from, next: c.to, applied: true })),
     ...e.history.map((c) => ({ machine_no: e.fact!.machineNo, field: FIELD_COLUMN[c.field], prev: c.from, next: c.to, applied: false }))
   ]);
-  const parts = live.flatMap((e) => e.partStates.map((p) => ({ machine_no: p.machineNo, mpn: p.mpn, state: p.state, note: p.note })));
+  // One row per machine and part (the planner already settled conflicts): a bulk upsert cannot touch a row twice.
+  const parts = [...new Map(live.flatMap((e) => e.partStates).map((p) => [`${p.machineNo}|${p.mpn}`,
+    { machine_no: p.machineNo, mpn: p.mpn, state: p.state, note: p.note, seen: p.seenToken ?? null }])).values()];
   const partEvents = live.flatMap((e) => e.parts.map((p) => ({
     machine_no: p.machineNo, mpn: p.mpn, display: p.mpnDisplay || null, name: p.name, kind: p.kind, other: p.otherMachine, applied: p.applied
   })));
@@ -398,11 +404,15 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
     part_states as (
       insert into machine_part_state (machine_no, mpn_canonical, state, note, updated_at, observed_at)
       select p.machine_no, p.mpn, p.state, p.note, now(), ${obs}
-      from jsonb_to_recordset(${JSON.stringify(parts)}::jsonb) as p(machine_no text, mpn text, state text, note text), ok
+      from jsonb_to_recordset(${JSON.stringify(parts)}::jsonb) as p(machine_no text, mpn text, state text, note text, seen text), ok
       where ok.ok
       on conflict (machine_no, mpn_canonical) do update set state = excluded.state, note = excluded.note, updated_at = now(), observed_at = excluded.observed_at
-        -- Never over a newer part record written since the plan was made.
-        where coalesce(machine_part_state.observed_at, machine_part_state.updated_at) <= excluded.observed_at
+        -- Only over the part record the reviewer saw (the planner already settled precedence, including a
+        -- same-day "apply"), or over an older one when there was none: never over a record written since.
+        where machine_part_state.updated_at <= coalesce(
+          (select p2.seen::timestamptz from jsonb_to_recordset(${JSON.stringify(parts)}::jsonb) as p2(machine_no text, mpn text, seen text)
+            where p2.machine_no = excluded.machine_no and p2.mpn = excluded.mpn_canonical),
+          excluded.observed_at)
       returning 1
     ),
     part_events as (

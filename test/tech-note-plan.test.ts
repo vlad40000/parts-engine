@@ -276,7 +276,7 @@ describe("parts: needed is not failed", () => {
   it("marks a part failed only when the note says it is bad", () => {
     const r = { entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", condition: "bad" })] })] };
     const p = plan(r, facts([laundry]));
-    expect(p.entries[0].partStates).toEqual([{ machineNo: "6171", mpn: "WP3948891", mpnDisplay: "WP3948891", state: "failed", note: "tech note" }]);
+    expect(p.entries[0].partStates).toEqual([{ machineNo: "6171", mpn: "WP3948891", mpnDisplay: "WP3948891", state: "failed", note: "tech note", seenToken: null }]);
     expect(p.entries[0].testFirst).toEqual([]);
     expect(changes(p, "e0").diagnosis).toBe("Bad timer (WP3948891).");
   });
@@ -301,11 +301,25 @@ describe("parts: needed is not failed", () => {
     const r = { entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", action: "replaced", otherMachine: "5000" })] })] };
     const p = plan(r, facts([laundry, donor]));
     expect(p.entries[0].parts.map((d) => [d.machineNo, d.kind, d.applied])).toEqual([["6171", "replaced", true], ["5000", "removed", true]]);
-    expect(p.entries[0].partStates).toEqual([{ machineNo: "5000", mpn: "WP3948891", mpnDisplay: "WP3948891", state: "pulled", note: "for #6171" }]);
+    expect(p.entries[0].partStates).toEqual([{ machineNo: "5000", mpn: "WP3948891", mpnDisplay: "WP3948891", state: "pulled", note: "for #6171", seenToken: null }]);
     expect(changes(p, "e0").notes).toBe("5/22/26-Replaced timer (WP3948891) from #5000.");
     const sold = plan(r, facts([laundry, { ...donor, availability: "SOLD" }]));
     expect(sold.entries[0].partStates).toEqual([]);
     expect(sold.entries[0].info).toContain("#5000 is SOLD, so no part is marked removed there.");
+  });
+
+  it("writes one state per part: the same state once, different states asked", () => {
+    const donor = fact("5000", { availability: "PARTS ONLY", modelRaw: "LTE5243DZ0", bomStatus: "found", bomParts });
+    const replaced = entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", action: "replaced", otherMachine: "5000" })] });
+    const same = plan({ entries: [replaced, entry("5000", { parts: [line({ mpn: "WP3948891", name: "timer", action: "taken", otherMachine: "6171" })] })] }, facts([laundry, donor]));
+    expect(same.questions).toEqual([]);
+    expect(same.entries.flatMap((e) => e.partStates).map((x) => [x.machineNo, x.state])).toEqual([["5000", "pulled"]]);
+    const r = { entries: [replaced, entry("5000", { parts: [line({ mpn: "WP3948891", name: "timer", condition: "missing" })] })] };
+    const q = plan(r, facts([laundry, donor])).questions.find((x) => x.id === "partstate:5000|WP3948891")!;
+    expect(q.options.map((o) => o.value)).toEqual(["set:pulled", "set:missing", "none"]);
+    expect(plan(r, facts([laundry, donor])).ready).toBe(false);
+    expect(plan(r, facts([laundry, donor]), { [q.id]: "set:missing" }).entries.flatMap((e) => e.partStates).map((x) => [x.machineNo, x.state])).toEqual([["5000", "missing"]]);
+    expect(plan(r, facts([laundry, donor]), { [q.id]: "none" }).entries.flatMap((e) => e.partStates)).toEqual([]);
   });
 
   it("asks about a part line's machine number that is not in the fleet", () => {

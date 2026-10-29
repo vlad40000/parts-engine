@@ -218,6 +218,40 @@ describe("tech note apply", () => {
     expect(facts.machines["6171"].partUpdates["3948891"]).toMatchObject({ state: "pulled" });
   });
 
+  it("dates a hand-made part edit now, and applies a same-day note the reviewer confirms over it", async () => {
+    await applyReading(reading6171(), ANSWERS);
+    // A hand edit after the 5/14 note is a new decision, not the note's.
+    await setPartState(db, "6171", "3948891", "pulled");
+    const today = (await loadPlanFacts(db, normalizeReading({ entries: [{ machine: { text: "6171" } }] }), {}, new Date())).today;
+    const [y, m, d] = today.split("-");
+    const sameDay = normalizeReading({ date: { text: `${Number(m)}/${Number(d)}/${y.slice(2)}` }, entries: [{
+      machine: { text: "6171" }, parts: [{ mpn: "WP3948891", name: "timer", action: "needed", condition: "missing" }]
+    }] });
+    const facts = await loadPlanFacts(db, sameDay, {}, new Date());
+    expect(facts.machines["6171"].partUpdates["3948891"]).toMatchObject({ day: today, state: "pulled" });
+    const asked = planNote(sameDay, facts, {});
+    expect(asked.questions.map((q) => q.id)).toContain("order:e0");
+    const answers = { "order:e0": "apply" };
+    const id = await createTechNote(db, { origin: "manual", reading: sameDay });
+    const plan = planNote(sameDay, facts, answers);
+    expect(plan.ready).toBe(true);
+    expect(await applyTechNote(db, id, plan, sameDay, answers)).toBe("applied");
+    const [ps] = await db.select().from(schema.machinePartState).where(eq(schema.machinePartState.machineNo, "6171"));
+    expect(ps.state).toBe("missing");
+  });
+
+  it("never writes over a part record changed after the plan was made", async () => {
+    const reading = normalizeReading({ date: { text: "5/14/26" }, entries: [{
+      machine: { text: "6171" }, status: { checked: "NEEDS PARTS" }, parts: [{ mpn: "WP3948891", name: "timer", action: "needed", condition: "bad" }]
+    }] });
+    const id = await createTechNote(db, { origin: "manual", reading });
+    const plan = planNote(reading, await loadPlanFacts(db, reading, {}, NOW), {});
+    await setPartState(db, "6171", "3948891", "pulled");
+    expect(await applyTechNote(db, id, plan, reading, {})).toBe("applied");
+    const [ps] = await db.select().from(schema.machinePartState).where(eq(schema.machinePartState.machineNo, "6171"));
+    expect(ps.state).toBe("pulled");
+  });
+
   it("clears VERIFY LOCATION only when someone records where the machine physically is", async () => {
     await applyReading(reading6171(), ANSWERS);
     // A Fleet edit is not a physical check: the alert stays and both moves are in the history.
