@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
 import { fleetFacets, fleetSummary, getSettings, listFleet } from "@/src/db/queries";
+import { openLocationCheckCount } from "@/src/db/tech-notes";
 import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
@@ -17,9 +18,11 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const db = await getDb();
   const offset = Number(sp.offset ?? 0) || 0;
-  const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort };
-  const [summary, facets, list, settings] = await Promise.all([fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset), getSettings(db)]);
-  const base = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort };
+  const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort, verify: sp.verify };
+  const [summary, facets, list, settings, toVerify] = await Promise.all([
+    fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset), getSettings(db), openLocationCheckCount(db)
+  ]);
+  const base = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort, verify: sp.verify };
 
   if (!summary.totals?.machines) {
     return (
@@ -66,7 +69,16 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
         <p className="mt-2 text-xs text-muted">Click a band count to open those models in Parts lists.</p>
       </section>
 
+      {toVerify || sp.verify === "1" ? (
+        <div role="status" className="mb-3 rounded border border-stop/30 bg-red-50 p-2 text-sm">
+          <span className="pill pill-stop">VERIFY LOCATION</span>{" "}
+          {sp.verify === "1"
+            ? <>Showing the {toVerify} machine{toVerify === 1 ? "" : "s"} whose recorded location conflicts with the record. <Link className="text-accent underline" href="/">Show all</Link></>
+            : <><Link className="text-accent underline" href="/?verify=1">{toVerify} machine{toVerify === 1 ? "" : "s"}</Link> need someone to check where {toVerify === 1 ? "it is" : "they are"}.</>}
+        </div>
+      ) : null}
       <form className="mb-3 flex flex-wrap items-end gap-2 text-sm">
+        {sp.verify === "1" ? <input type="hidden" name="verify" value="1" /> : null}
         <input name="q" defaultValue={sp.q ?? ""} placeholder="Machine #, model, serial or location" className="input w-64" />
         <input name="location" defaultValue={sp.location ?? ""} placeholder="Filter location" aria-label="Filter by location" className="input w-44" />
         <select name="availability" defaultValue={sp.availability ?? ""} className="input">
@@ -101,7 +113,10 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 <td>{m.brand}</td>
                 <td><ModelEditCell machineNo={m.machine_no} model={m.model_raw} brand={m.brand} serial={m.serial} identityStatus={m.identity_status} action={updateMachineModelAction} /></td>
                 <td className="mono text-xs">{m.serial}</td>
-                <td><LocationEditCell machineNo={m.machine_no} location={m.location} action={updateMachineLocationAction} /></td>
+                <td>
+                  <LocationEditCell machineNo={m.machine_no} location={m.location} action={updateMachineLocationAction} />
+                  {m.verify_location ? <Link className="pill pill-stop mt-1 inline-block" href={`/machines/${encodeURIComponent(m.machine_no)}`}>VERIFY LOCATION</Link> : null}
+                </td>
                 <td className="text-xs"><Years years={m.age_candidate_years} /></td>
                 <td className="text-xs text-muted">{m.suspect_families.join(", ")}</td>
                 <td>{m.bom_status === "found"

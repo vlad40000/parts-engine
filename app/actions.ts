@@ -7,6 +7,7 @@ import {
   addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartState, updateMpnManual, upsertBaseline,
   updateMachineLocation, updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
+import { verifyLocation } from "@/src/db/tech-notes";
 import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
 import { legacyResearchHeaders, mapMarketRows, MARKET_IMPORT_SOURCE } from "@/src/lib/market-import";
@@ -92,6 +93,24 @@ export async function updateMachineLocationAction(_prev: ActionResult | null, fo
     return { ok: false, message: "Location changed since this page loaded. Refresh and try again." };
   } catch {
     return { ok: false, message: "Could not save location. No change confirmed." };
+  }
+}
+
+/** Physical check of a machine flagged VERIFY LOCATION: the only way the alert clears. */
+export async function verifyLocationAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const machineNo = String(form.get("machineNo") ?? "").trim();
+  const choice = String(form.get("location") ?? "");
+  const location = choice === "__other" ? String(form.get("other") ?? "") : choice;
+  try {
+    const outcome = await verifyLocation(await getDb(), { machineNo, location });
+    if (outcome === "verified") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: `Verified: #${machineNo} is at ${location.trim()}.` };
+    }
+    if (outcome === "invalid") return { ok: false, message: "Enter where the machine is (120 characters or fewer)." };
+    return { ok: false, message: "There is no open location check for this machine. Refresh the page." };
+  } catch {
+    return { ok: false, message: "Could not save the check. Nothing changed." };
   }
 }
 

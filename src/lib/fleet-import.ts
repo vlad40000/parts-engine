@@ -24,7 +24,8 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   diagnosis: ["diagnosis", "failure", "symptom", "primary failure"],
   repairNotes: ["repairnotes", "repair notes"],
   notes: ["notes", "review note", "review notes", "note"],
-  listPrice: ["listprice", "list price", "retailprice", "retail price"]
+  listPrice: ["listprice", "list price", "retailprice", "retail price"],
+  stickerPrice: ["stickerprice", "sticker price", "sticker"]
 };
 
 export type FleetRow = {
@@ -43,6 +44,7 @@ export type FleetRow = {
   diagnosis: string | null;
   notes: string | null;
   listPrice: string | null;
+  stickerPrice: string | null;
   acquiredAt: string | null;
   identityStatus: "ok" | "needs_nameplate";
   suspectFamilies: string[];
@@ -153,6 +155,7 @@ export function mapFleetRows(records: Array<Record<string, unknown>>, now: Date 
       diagnosis,
       notes,
       listPrice: money(get(r, "listPrice")),
+      stickerPrice: money(get(r, "stickerPrice")),
       acquiredAt: isoDate(get(r, "acquiredAt")),
       identityStatus: unreadable ? "needs_nameplate" : "ok",
       suspectFamilies: suspectFamilies(diagnosis, repairNotes),

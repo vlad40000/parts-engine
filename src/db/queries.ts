@@ -13,6 +13,7 @@ import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
 import { isEditableFleetStatus } from "@/src/lib/fleet-status";
+import { OFF_CARD_LOCATIONS } from "@/src/lib/tech-notes/vocabulary";
 import * as t from "./schema";
 import type { Db } from "./types";
 
@@ -117,6 +118,10 @@ function chunks<T>(rows: T[], size: number): T[][] {
   return out;
 }
 
+/** Keep a field set in Parts Engine (tech notes); otherwise take the imported value. */
+const localOr = (column: string) =>
+  sql.raw(`case when '${column}' = any(fleet_machines.local_fields) then fleet_machines.${column} else excluded.${column} end`);
+
 export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
   for (const part of chunks(rows, 400)) {
     const values = part.map((r) => ({ ...r, source: "import", updatedAt: new Date() }));
@@ -132,14 +137,18 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         modelKey: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.model_key else excluded.model_key end`,
         serial: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.serial else excluded.serial end`,
         color: sql`excluded.color`,
-        condition: sql`excluded.condition`,
+        // Operational fields a tech note set in Parts Engine are the record (owner decision 2026-10-29).
+        // Location keeps #31's rule: a hand-set or note-set location (location_override) survives imports.
+        condition: localOr("condition"),
         location: sql`case when fleet_machines.location_override or excluded.location is null then fleet_machines.location else excluded.location end`,
-        diagnosis: sql`excluded.diagnosis`,
-        notes: sql`excluded.notes`,
+        diagnosis: localOr("diagnosis"),
+        notes: localOr("notes"),
+        stickerPrice: localOr("sticker_price"),
         listPrice: sql`excluded.list_price`,
         acquiredAt: sql`excluded.acquired_at`,
         identityStatus: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.identity_status else excluded.identity_status end`,
-        suspectFamilies: sql`excluded.suspect_families`,
+        // Part-family flags follow whichever diagnosis and notes are kept.
+        suspectFamilies: sql`case when fleet_machines.local_fields && array['diagnosis','notes']::text[] then fleet_machines.suspect_families else excluded.suspect_families end`,
         ageFamily: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_family else excluded.age_family end`,
         ageCandidateYears: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_candidate_years else excluded.age_candidate_years end`,
         ageMonth: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_month else excluded.age_month end`,
@@ -149,6 +158,14 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         updatedAt: sql`now()`
       }
     });
+  }
+  // Every imported location joins the location list printed on the tech-note cards.
+  const locations = [...new Set(rows.map((r) => r.location?.trim()).filter((l): l is string => Boolean(l)))];
+  if (locations.length) {
+    await db.execute(sql`
+      insert into fleet_locations (name, on_card, source)
+      select l, l <> all(${sql.raw(pgTextArray(OFF_CARD_LOCATIONS))}), 'import' from unnest(${sql.raw(pgTextArray(locations))}) l
+      on conflict (name) do nothing`);
   }
   return rows.length;
 }
@@ -164,11 +181,25 @@ export async function updateMachineLocation(
   if (!current) return "not_found";
   if ((current.location ?? "") !== input.expectedLocation) return "conflict";
   if ((current.location ?? "") === location) return "unchanged";
-  const saved = await db.update(t.fleetMachines)
-    .set({ location: location || null, locationOverride: true, updatedAt: new Date() })
-    .where(and(eq(t.fleetMachines.machineNo, input.machineNo),
-      sql`coalesce(${t.fleetMachines.location}, '') = ${input.expectedLocation}`))
-    .returning({ machineNo: t.fleetMachines.machineNo });
+  // One statement: the move, its history row and the location list land together (Neon HTTP has no transactions).
+  const saved = await q<{ machine_no: string }>(db, sql`
+    with changed as (
+      update fleet_machines
+      set location = ${location || null}, location_override = true, updated_at = now(),
+        last_field_update_at = greatest(last_field_update_at, now())
+      where machine_no = ${input.machineNo} and coalesce(location, '') = ${input.expectedLocation}
+      returning machine_no
+    ), logged as (
+      insert into fleet_field_events (machine_no, field, previous_value, next_value, source)
+      select machine_no, 'location', ${input.expectedLocation || null}, ${location || null}, 'fleet_ui' from changed
+      returning 1
+    ), listed as (
+      insert into fleet_locations (name, source)
+      select ${location}, 'fleet_ui' from changed where ${location} <> ''
+      on conflict (name) do nothing
+      returning 1
+    )
+    select machine_no, (select count(*) from logged) + (select count(*) from listed) touched from changed`);
   return saved.length ? "saved" : "conflict";
 }
 
@@ -239,7 +270,8 @@ export async function updateMachineStatus(
   const saved = await q<{ machine_no: string }>(db, sql`
     with changed as (
       update fleet_machines
-      set availability = ${input.status}, status_override = true, updated_at = now()
+      set availability = ${input.status}, status_override = true, updated_at = now(),
+        last_field_update_at = greatest(last_field_update_at, now())
       where machine_no = ${input.machineNo} and availability = ${input.expectedStatus}
       returning machine_no
     ), logged as (
@@ -255,7 +287,7 @@ export async function updateMachineStatus(
   return current ? "conflict" : "not_found";
 }
 
-export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string; location?: string; sort?: string };
+export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string; location?: string; sort?: string; verify?: string };
 
 function fleetWhere(f: FleetFilter) {
   const parts = [sql`true`];
@@ -263,6 +295,7 @@ function fleetWhere(f: FleetFilter) {
   if (f.type) parts.push(sql`f.appliance_type = ${f.type}`);
   if (f.brand) parts.push(sql`f.brand_key = ${f.brand}`);
   if (f.location?.trim()) parts.push(sql`coalesce(f.location, '') ilike ${"%" + f.location.trim() + "%"}`);
+  if (f.verify === "1") parts.push(sql`exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null)`);
   if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"})`);
   if (f.band) {
     const band = DEFAULT_AGE_BANDS.find((b) => b.key === f.band);
@@ -320,9 +353,11 @@ export async function listFleet(db: Db, f: FleetFilter, limit = 100, offset = 0)
   const rows = await q<{
     machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; serial: string; location: string | null;
     identity_status: string; age_candidate_years: number[]; age_confidence: string; suspect_families: string[]; bom_status: string | null;
+    verify_location: boolean;
   }>(db, sql`
     select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.location, f.identity_status,
-      f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status
+      f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status,
+      exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null) verify_location
     from fleet_machines f
     left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
     where ${fleetWhere(f)}
@@ -1214,11 +1249,21 @@ export async function machineDetail(db: Db, machineNo: string) {
 
 export async function setPartState(db: Db, machineNo: string, mpnCanonical: string, state: "pulled" | "failed" | "missing" | "skip" | null, note?: string) {
   if (state === null) {
-    await db.delete(t.machinePartState).where(and(eq(t.machinePartState.machineNo, machineNo), eq(t.machinePartState.mpnCanonical, mpnCanonical)));
+    // Undo is a decision too: the delete and a dated "cleared" event land together, so an older
+    // tech note uploaded later cannot quietly put the state back.
+    await db.execute(sql`
+      with del as (
+        delete from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}
+        returning machine_no, mpn_canonical
+      )
+      insert into fleet_part_events (machine_no, mpn_canonical, part_name, kind, applied, source, observed_at)
+      select d.machine_no, d.mpn_canonical, '', 'cleared', true, 'fleet_ui', now() from del d
+      where exists (select 1 from fleet_machines f where f.machine_no = d.machine_no)`);
     return;
   }
-  await db.insert(t.machinePartState).values({ machineNo, mpnCanonical, state, note: note ?? null, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date() } });
+  // A hand edit is observed now: clear any tech note's observation date so chronology dates it by updated_at.
+  await db.insert(t.machinePartState).values({ machineNo, mpnCanonical, state, note: note ?? null, updatedAt: new Date(), observedAt: null })
+    .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date(), observedAt: null } });
 }
 
 export async function researchQueueCsvRows(db: Db) {

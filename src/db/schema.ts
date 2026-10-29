@@ -2,6 +2,7 @@ import {
   boolean,
   bigserial,
   check,
+  customType,
   date,
   index,
   integer,
@@ -14,6 +15,8 @@ import {
   timestamp
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 /**
  * Parts Engine owns its own Neon database. It never writes to Ledger,
@@ -95,6 +98,19 @@ export const fleetMachines = pgTable("fleet_machines", {
   ageConfidence: text("age_confidence").notNull().default("none"),
   ageNote: text("age_note"),
   source: text("source").notNull().default("import"),
+  /**
+   * Operational fields last set in Parts Engine (tech notes): condition, diagnosis, notes,
+   * sticker_price. A workbook re-import keeps these values (owner decision 2026-10-29).
+   * Status uses status_override and location uses location_override for the same purpose.
+   */
+  localFields: text("local_fields").array().notNull().default(sql`'{}'::text[]`),
+  stickerPrice: numeric("sticker_price", { precision: 10, scale: 2 }),
+  /**
+   * When the newest accepted decision on this machine was observed (status, condition, location,
+   * diagnosis, sticker price or a part): a tech note's written date, or the moment of a Fleet edit
+   * or location check. An older note never overrides a newer decision; see docs/TECH_NOTES.md.
+   */
+  lastFieldUpdateAt: timestamp("last_field_update_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
@@ -111,11 +127,131 @@ export const fleetStatusEvents = pgTable("fleet_status_events", {
   previousStatus: text("previous_status").notNull(),
   nextStatus: text("next_status").notNull(),
   source: text("source").notNull().default("fleet_ui"),
+  /** Set when the change came from an applied tech note. */
+  techNoteId: uuid("tech_note_id").references(() => techNotes.id),
+  /** When the status was observed (a tech note's written date). Null: the change time. */
+  observedAt: timestamp("observed_at", { withTimezone: true }),
   changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
   index("fleet_status_events_machine_time_idx").on(t.machineNo, t.changedAt),
   check("fleet_status_events_changed_valid", sql`${t.previousStatus} <> ${t.nextStatus}`)
 ]);
+
+/** Where machines can be. Seeded from imported locations; tech notes can add new ones and aliases. */
+export const fleetLocations = pgTable("fleet_locations", {
+  name: text("name").primaryKey(),
+  /** Other ways the shop writes this place (normalized: lower case, words only). */
+  aliases: text("aliases").array().notNull().default(sql`'{}'::text[]`),
+  /** Printed on the tech-note cards. Off-lot pseudo-locations ($$$SOLD$$$, Scraped) are not. */
+  onCard: boolean("on_card").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(100),
+  source: text("source").notNull().default("import"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [check("fleet_locations_name_valid", sql`btrim(${t.name}) <> ''`)]);
+
+/**
+ * One photographed (or typed) tech note. The reading is what the card says; nothing reaches
+ * fleet_machines until every clarifying question is answered and the note is applied.
+ */
+export const techNotes = pgTable("tech_notes", {
+  id: uuid("id").primaryKey(),
+  status: text("status").notNull().default("open"),
+  origin: text("origin").notNull(),
+  card: text("card"),
+  photoType: text("photo_type"),
+  photo: bytea("photo"),
+  photoSha256: text("photo_sha256"),
+  photoBytes: integer("photo_bytes"),
+  readerModel: text("reader_model"),
+  readerError: text("reader_error"),
+  reading: jsonb("reading"),
+  /** Answers given so far (saved with "Save for later"). */
+  answers: jsonb("answers").notNull().default(sql`'{}'::jsonb`),
+  appliedPlan: jsonb("applied_plan"),
+  /** The date written on the note (observation), as applied. created_at is the upload time. */
+  observedOn: date("observed_on"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  appliedAt: timestamp("applied_at", { withTimezone: true })
+}, (t) => [
+  index("tech_notes_created_idx").on(t.createdAt),
+  check("tech_notes_status_check", sql`${t.status} in ('open','applied','discarded')`),
+  check("tech_notes_origin_check", sql`${t.origin} in ('photo','manual')`)
+]);
+
+/** Append-only history of operational field changes made in Parts Engine. */
+export const fleetFieldEvents = pgTable("fleet_field_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  field: text("field").notNull(),
+  previousValue: text("previous_value"),
+  nextValue: text("next_value"),
+  source: text("source").notNull().default("tech_note"),
+  techNoteId: uuid("tech_note_id").references(() => techNotes.id),
+  /** When the value was observed (a tech note's written date). Null: the change time. */
+  observedAt: timestamp("observed_at", { withTimezone: true }),
+  /**
+   * False: history only. An older note's value that was not applied because a newer decision
+   * already set the field (status rows of this kind live here, not in fleet_status_events).
+   */
+  applied: boolean("applied").notNull().default(true),
+  /**
+   * True: the note confirmed the value already on record (same before and after). Kept so a later
+   * upload of an older note cannot override an observation that was newer.
+   */
+  confirmation: boolean("confirmation").notNull().default(false),
+  changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  index("fleet_field_events_machine_time_idx").on(t.machineNo, t.changedAt),
+  check("fleet_field_events_field_valid", sql`${t.field} in ('status','condition','location','diagnosis','notes','sticker_price')`),
+  // Status changes live in fleet_status_events; here only history-only rows and confirmations.
+  check("fleet_field_events_status_valid", sql`${t.field} <> 'status' or not ${t.applied} or ${t.confirmation}`),
+  check("fleet_field_events_changed_valid", sql`(${t.previousValue} is distinct from ${t.nextValue}) <> ${t.confirmation}`)
+]);
+/**
+ * Every part decision a tech note records, applied or history only. Only failed, missing and
+ * removed change availability (machine_part_state); suspected and needed parts stay on pick lists
+ * marked test first, and replaced records a swap.
+ */
+export const fleetPartEvents = pgTable("fleet_part_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  /** Null when the note names a part without a number that matches the parts list. */
+  mpnCanonical: text("mpn_canonical"),
+  mpnDisplay: text("mpn_display"),
+  partName: text("part_name").notNull().default(""),
+  kind: text("kind").notNull(),
+  otherMachine: text("other_machine"),
+  applied: boolean("applied").notNull().default(true),
+  source: text("source").notNull().default("tech_note"),
+  techNoteId: uuid("tech_note_id").references(() => techNotes.id),
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  index("fleet_part_events_machine_idx").on(t.machineNo, t.observedAt),
+  // "cleared": a part state removed by hand (machine page undo), kept so chronology remembers it.
+  check("fleet_part_events_kind_valid", sql`${t.kind} in ('suspected','needed','failed','missing','replaced','removed','cleared')`)
+]);
+
+/**
+ * VERIFY LOCATION: a recorded location that conflicts with the machine's location on record.
+ * Open until someone checks where the machine physically is (resolved_at).
+ */
+export const fleetLocationChecks = pgTable("fleet_location_checks", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  previousLocation: text("previous_location"),
+  recordedLocation: text("recorded_location").notNull(),
+  techNoteId: uuid("tech_note_id").references(() => techNotes.id),
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  resolvedLocation: text("resolved_location")
+}, (t) => [
+  index("fleet_location_checks_open_idx").on(t.machineNo).where(sql`${t.resolvedAt} is null`),
+  check("fleet_location_checks_resolution_valid", sql`(${t.resolvedAt} is null) = (${t.resolvedLocation} is null)`)
+]);
+
 
 // ---------------------------------------------------------------------------
 // One parts list per brand+model, reused by every machine of that model
@@ -252,7 +388,9 @@ export const machinePartState = pgTable("machine_part_state", {
   mpnCanonical: text("mpn_canonical").notNull(),
   state: text("state").notNull(),
   note: text("note"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** When a tech note observed this state (its written date). Null: updated_at. */
+  observedAt: timestamp("observed_at", { withTimezone: true })
 }, (t) => [
   primaryKey({ columns: [t.machineNo, t.mpnCanonical] }),
   check("part_state_check", sql`${t.state} in ('pulled','failed','missing','skip')`)

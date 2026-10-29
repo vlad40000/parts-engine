@@ -21,6 +21,19 @@ This file records decisions evidenced by the current source and the owner's curr
 - Removal minutes replace a synthetic 1-5 complexity score.
 - API integration should become primary while CSV remains a fallback.
 
+## Tech notes (owner decisions 2026-10-29)
+- Parts Engine is the record for machine status, condition, location, diagnosis, repair notes and sticker price once a tech note sets them. A workbook re-import keeps those fields (`local_fields`, `status_override`, and #31's `location_override`) and still refreshes every other field. Part-family flags only grow.
+- Tech notes are read from a photo by Gemini, server-side. Owner model rule: OCR on `gemini-3.1-flash-lite`, "Re-read carefully" on `gemini-3.5-flash`, both overridable by environment variable. Typing a note by hand is the fallback when no API key is set or a read fails.
+- The planner is deterministic code, not the model. Anything the reading and the record cannot settle becomes a question; nothing is written until every question is answered. Answers that map wording to a location are remembered as aliases.
+- A note is applied in one SQL statement: every changed machine must still carry the version the reviewer saw, otherwise nothing is written.
+- Statuses: only the Fleet status options, only when written. No status from a location; "Ready for clean" is never READY TO SALE. Off-lot statuses are confirmed.
+- Parts: suspected, needed, failed, missing, replaced, removed. Needed is not failed; suspected and needed stay on pick lists marked test first.
+- Chronology: the written date is the observation date. An older note never reverses a newer decision (kept as history); same-day or otherwise uncertain precedence is asked. `last_field_update_at` records the newest accepted decision.
+- VERIFY LOCATION: a recorded location that conflicts with the record opens a check that only a physical verification clears; both locations stay in the history.
+- Printed form: the owner's approved Roadrunner Machine Service Update PDF (half sheet, two per letter page), served unchanged from `public/forms/roadrunner-machine-service-update.pdf`. Its fields are Machine #, Date, Location, Current status and Notes. The reader recognizes this layout as RR-F1 without a printed code. Old RR-M1/RR-R1 cards and free notes are still accepted.
+- Gassing, gassed and regassing are refrigeration service words, not gas-burner faults or proof of a failed compressor. The gas symptom rule matches the word "gas" rather than those words or "gasket".
+- Open: symptom rules still do not know timer, pressure sensor, damper or inner tub (part decisions mark those families test first instead). Fleet has no BEING REPAIRED status; imported machines that carry it keep it.
+
 ## Economic qualification: Store Economics v7 (PE-4)
 - Roadrunner Store Economics v7 is the current qualification model (`src/lib/economics.ts`), replacing the prototype GREENLIGHT rule (25% all-in fee, $20 cushion, $1 minimum profit, 20% sell-through, sold/active share ranking and pull cap). Those columns stay in `settings` for compatibility and drive nothing.
 - There is no general minimum part price; the floor is the per-part break-even.
@@ -46,3 +59,5 @@ The delivered baseline currently excludes compressors before eBay research. Leav
 - Model-production/Wayback evidence does not yet narrow age candidates.
 - Automatic whole-machine vs harvest vs scrap disposition is not implemented.
 - App 1 source has not been integrated into this repository.
+- Fleet status editing (dropdown) still offers no BEING REPAIRED; tech notes can set it. Decide whether the dropdown should match.
+- Symptom rules do not yet recognize shop words such as timer, pressure sensor, damper or inner tub; tech notes mark those parts on the machine instead (failed / missing) when the part is in the model's parts list.

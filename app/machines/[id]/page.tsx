@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { machineDetail } from "@/src/db/queries";
+import { machineHistory, openLocationChecks } from "@/src/db/tech-notes";
+import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
-import { setPartStateAction, updateMachineLocationAction } from "../../actions";
+import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +36,9 @@ function BomStatus({ bom, identityOk }: { bom: Bom; identityOk: boolean }) {
 export default async function MachinePage({ params }: { params: Promise<{ id: string }> }) {
   if (!hasDatabase()) return <NoDatabase />;
   const { id } = await params;
-  const d = await machineDetail(await getDb(), decodeURIComponent(id));
+  const db = await getDb();
+  const machineNo = decodeURIComponent(id);
+  const [d, history, checks] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo)]);
   if (!d) notFound();
   const { machine: m, bom, parts } = d;
   const qualified = parts.filter((p) => p.qualification?.result === "QUALIFIED" && !p.state);
@@ -43,9 +47,13 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   return (
     <>
       <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
+      {checks.length ? <VerifyLocation machineNo={m.machineNo} current={m.location} checks={checks} action={verifyLocationAction} /> : null}
       <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
-        <div className="card p-3"><div className="text-xs text-muted">Serial</div><div className="mono">{m.serial || "—"}</div>
-          <div className="mt-2 text-xs text-muted">Physical location</div><LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
+        <div className="card p-3"><div className="text-xs text-muted">Physical location</div><LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
+          <div className="mt-2 text-xs text-muted">Condition</div>
+          <div>{m.condition || "—"}{m.stickerPrice ? ` · sticker $${Number(m.stickerPrice).toFixed(0)}` : ""}</div>
+          {m.localFields.length ? <div className="mt-1 text-xs text-muted">Set from tech notes, kept on re-import: {m.localFields.join(", ").replace("sticker_price", "sticker price")}</div> : null}
+          <div className="mt-2 text-xs text-muted">Serial</div><div className="mono">{m.serial || "—"}</div>
           <div className="mt-2 text-xs text-muted">Possible build years</div><Years years={m.ageCandidateYears} /><div className="text-xs text-muted">{m.ageNote}</div></div>
         <div className="card p-3"><div className="text-xs text-muted">Failure symptom</div><div>{m.diagnosis || "—"}</div>
           <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
@@ -54,6 +62,26 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           <div className="mt-2 text-xs text-muted">Qualified parts still inside</div>
           <div className="text-lg font-semibold">{setRule ? <Link className="text-sm text-accent underline" href="/settings">Set qualification rules</Link> : qualified.length}</div></div>
       </div>
+      {history.length ? (
+        <details className="card mb-5 p-3 text-sm">
+          <summary className="cursor-pointer font-semibold">History ({history.length})</summary>
+          <table className="mt-2 w-full text-xs">
+            <thead><tr><th>Recorded</th><th>Observed</th><th>Field</th><th>Before</th><th>After</th><th>From</th></tr></thead>
+            <tbody>
+              {history.map((h, i) => (
+                <tr key={i} className={h.applied ? "" : "text-muted"}>
+                  <td className="whitespace-nowrap">{h.changed_at}</td>
+                  <td className="whitespace-nowrap">{h.observed ?? ""}</td>
+                  <td>{h.field.replace("_", " ")}{h.applied ? "" : " (history only: older than the record)"}</td>
+                  <td className="text-muted">{h.previous_value ?? "—"}</td>
+                  <td>{h.next_value ?? "—"}</td>
+                  <td>{h.tech_note_id ? <Link className="text-accent underline" href={`/notes/${h.tech_note_id}`}>tech note</Link> : h.source === "fleet_ui" ? "Fleet edit" : h.source === "verified" ? "location check" : h.source}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ) : null}
       {m.identityStatus !== "ok" ? <div className="card mb-5 p-3 text-sm text-wait">Model is unreadable. Read the nameplate and update this machine on Intake before it can be matched.</div> : null}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">

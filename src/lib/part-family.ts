@@ -327,7 +327,8 @@ const SYMPTOM_RULES: Array<[RegExp, PartFamily[]]> = [
   [/lid|door (lock|latch)|won'?t lock|locked/i, ["lock_latch"]],
   [/won'?t fill|no water|not fill|water (valve|inlet)/i, ["valve", "sensor_switch"]],
   [/ice|dispens/i, ["ice_water"]],
-  [/igniter|ignit|won'?t light|no flame|gas/i, ["gas"]],
+  // "Gassing" is a refrigeration service, and "gasket" is a part, not a gas-burner fault.
+  [/igniter|ignit|won'?t light|no flame|\bgas\b/i, ["gas"]],
   [/burn|smoke|melt|fire|short/i, ["wiring", "control_board", "heating"]],
   [/motor/i, ["motor"]],
   [/belt/i, ["drive"]],
