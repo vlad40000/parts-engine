@@ -5,19 +5,33 @@
  *
  * It never guesses. Anything the reading and the machine record cannot settle on their own
  * becomes a question, and nothing is ready to apply until every question has an answer.
+ *
+ * Rules the owner set (2026-10-29):
+ * - A note sets only Fleet statuses, and only when it says one. Location never implies a status;
+ *   "Ready for clean" never becomes READY TO SALE.
+ * - "Needs X" is not "X failed". Only a part written as bad is failed; suspected and needed parts
+ *   stay on pick lists marked test first.
+ * - The date written on a note is when it was observed. An older note never reverses a newer
+ *   decision: its values are kept as history. When the dates cannot settle it, ask.
+ * - A recorded location that differs from the location on record raises VERIFY LOCATION.
  */
 import { canonicalizeMpn } from "@/src/lib/mpn";
 import { modelKey } from "@/src/lib/model-key";
+import { classifyFamily } from "@/src/lib/part-family";
 import {
-  CONDITION_FOR_STATUS, CARD_STATUS_VALUES, CARD_SYMPTOMS, OFF_LOT_STATUSES, SALE_GRADES,
-  gradeCondition, isSaleCondition, normalizeLocation, parseCardDate, shortDate, statusLabel, titleCaseLocation
+  CONDITION_FOR_STATUS, CARD_SYMPTOMS, NOTE_STATUS_VALUES, OFF_LOT_STATUSES, SALE_GRADES,
+  gradeCondition, isNoteStatus, isSaleCondition, normalizeLocation, parseCardDate, shortDate, statusLabel, titleCaseLocation
 } from "./vocabulary";
 import { machineDigits, type NoteReading, type ReadEntry, type ReadGroup, type ReadLocation, type ReadPart } from "./reading";
 
 // ---------------------------------------------------------------------------
 // Facts: the fleet records the planner may consult.
 // ---------------------------------------------------------------------------
-export type BomPart = { mpn: string; display: string; description: string };
+export type BomPart = { mpn: string; display: string; description: string; family: string };
+/** When a decision was observed: the shop day (YYYY-MM-DD) and how to show it. */
+export type Observed = { day: string; label: string };
+/** Fields whose newest decision an older note must not reverse. Repair notes are a log, not a decision. */
+export type TrackedField = "availability" | "condition" | "location" | "diagnosis" | "stickerPrice";
 export type MachineFact = {
   machineNo: string;
   availability: string;
@@ -34,6 +48,14 @@ export type MachineFact = {
   version: string;
   bomStatus: string | null;
   bomParts: BomPart[];
+  /** Newest accepted decision on the machine (last_field_update_at, or any field or part decision). */
+  lastUpdate: Observed | null;
+  /** Newest accepted decision per field. */
+  fieldUpdates: Partial<Record<TrackedField, Observed>>;
+  /** Newest accepted decision per part (canonical MPN), with its availability state if any. */
+  partUpdates: Record<string, Observed & { state: string | null }>;
+  /** A VERIFY LOCATION check is already open. */
+  openLocationCheck: boolean;
 };
 export type LocationFact = { name: string; aliases: string[] };
 export type PlanFacts = {
@@ -41,6 +63,10 @@ export type PlanFacts = {
   locations: LocationFact[];
   /** Shop calendar day, YYYY-MM-DD. */
   today: string;
+  /** Shop day the note was uploaded (offered when no date is written). */
+  uploadedOn: string;
+  /** Statuses whose machines are parts donors (Settings). */
+  donorStatuses: string[];
 };
 /** Question id → chosen option value ("use:6146", "set:READY TO SALE", "keep", "text:…", "e0,e2"). */
 export type Answers = Record<string, string>;
@@ -48,10 +74,32 @@ export type Answers = Record<string, string>;
 // ---------------------------------------------------------------------------
 // Output
 // ---------------------------------------------------------------------------
-export type FieldName = "availability" | "condition" | "location" | "diagnosis" | "notes" | "stickerPrice";
+export type FieldName = TrackedField | "notes";
 export type FieldChange = { field: FieldName; from: string | null; to: string | null };
+export const PART_KINDS = ["suspected", "needed", "failed", "missing", "replaced", "removed"] as const;
+export type PartKind = (typeof PART_KINDS)[number];
+export const PART_KIND_LABEL: Record<PartKind, string> = {
+  suspected: "suspected (test first)", needed: "needed (test first)", failed: "failed", missing: "missing", replaced: "replaced", removed: "removed"
+};
+/** What a part decision does to availability on pick lists (machine_part_state). */
+const STATE_FOR_KIND: Partial<Record<PartKind, "failed" | "missing" | "pulled">> = { failed: "failed", missing: "missing", removed: "pulled" };
+export type PartDecision = {
+  machineNo: string;
+  /** Canonical MPN from the parts list, or null when the note names a part that is not matched. */
+  mpn: string | null;
+  mpnDisplay: string;
+  name: string;
+  kind: PartKind;
+  otherMachine: string | null;
+  /** False: an older note; kept as history only. */
+  applied: boolean;
+  /** Part family flagged test first (suspected or needed). */
+  testFirst: string | null;
+  note: string;
+};
 export type PartStateChange = { machineNo: string; mpn: string; mpnDisplay: string; state: "pulled" | "failed" | "missing"; note: string };
-export type QuestionKind = "date" | "machine" | "duplicate" | "group" | "status" | "grade" | "location" | "part" | "other_machine" | "price";
+export type LocationCheck = { from: string; to: string };
+export type QuestionKind = "date" | "machine" | "duplicate" | "group" | "status" | "grade" | "location" | "part" | "other_machine" | "price" | "order";
 export type QuestionOption = { value: string; label: string; detail?: string; recommended?: boolean };
 export type Question = {
   id: string;
@@ -74,13 +122,24 @@ export type PlannedEntry = {
   machineNo: string | null;
   skipped: boolean;
   fact: MachineFact | null;
+  /** Written to the machine. */
   changes: FieldChange[];
+  /** What the note said that an older date keeps out of the record: history only. */
+  history: FieldChange[];
+  parts: PartDecision[];
+  /** Availability states written to machine_part_state (applied failed, missing, removed). */
   partStates: PartStateChange[];
+  /** Part families flagged test first. */
+  testFirst: string[];
+  /** VERIFY LOCATION raised by this note. */
+  locationCheck: LocationCheck | null;
   struck: string[];
   info: string[];
 };
 export type Plan = {
-  date: string;
+  /** Observation date written on the note (YYYY-MM-DD), once settled. */
+  date: string | null;
+  uploadedOn: string;
   entries: PlannedEntry[];
   questions: Question[];
   locationsToAdd: Array<{ name: string; aliases: string[] }>;
@@ -157,25 +216,24 @@ const modelsAgree = (a: string, b: string) => a === b || a.startsWith(b) || b.st
 const isOffLot = (status: string) => OFF_LOT_STATUSES.includes(status.trim().toUpperCase());
 export const machineSummary = (f: MachineFact) =>
   [`${f.brand} ${f.modelRaw || "(no model on record)"}`.trim(), f.applianceType, f.availability, f.location].filter(Boolean).join(" · ");
+export const FIELD_LABEL: Record<FieldName, string> = {
+  availability: "status", condition: "condition", location: "location", diagnosis: "diagnosis", notes: "repair notes", stickerPrice: "sticker price"
+};
 
-// Status words written on free notes.
+/** Status words written on notes, mapped to Fleet statuses. Order matters: the first match wins per phrase. */
 const STATUS_PHRASES: Array<[RegExp, string]> = [
   [/ready\s*(for|to)\s*(\$|s)\s*ale|\bfor\s*(\$|s)ale\b/i, "READY TO SALE"],
+  [/parts?\s*program/i, "PARTS PROGRAM"],
   [/parts?\s*(machine|only|unit)|\bfor parts\b|\bharvest/i, "PARTS ONLY"],
-  [/\bicu\b|needs?\s*parts|waiting (on|for) parts/i, "NEEDS PARTS"],
-  [/being repaired|in (the )?shop|on the bench/i, "BEING REPAIRED"],
-  [/\bscrap/i, "SCRAPPED"]
+  [/needs?\s*parts|waiting (on|for) parts/i, "NEEDS PARTS"],
+  [/\bscrap/i, "SCRAPPED"],
+  [/\bsold\b/i, "SOLD"],
+  [/\bunchecked\b/i, "UNCHECKED"]
 ];
 const READY_FOR_CLEAN = /ready\s*(for|to)\s*clean/i;
-
-/** Where a machine usually sits for a status, as the inventory pairs them. */
-function statusForLocation(name: string): string | null {
-  if (/^showroom/i.test(name)) return "READY TO SALE";
-  if (name === "ICU") return "NEEDS PARTS";
-  if (name === "Graveyard") return "PARTS ONLY";
-  if (name === "Shop") return "BEING REPAIRED";
-  return null;
-}
+const statusFromPhrase = (p: string) => STATUS_PHRASES.find(([re]) => re.test(p))?.[1] ?? null;
+/** A part family worth flagging ("other" is not). */
+const flaggable = (family: string | null | undefined) => (family && family !== "other" ? family : null);
 
 // Words on a note that only make sense for one kind of appliance.
 const APPLIANCE_WORDS: Array<{ words: RegExp; label: string; fits: RegExp }> = [
@@ -214,6 +272,30 @@ function partsByName(bom: BomPart[], name: string): BomPart[] {
   return bom.filter((b) => words.every((w) => b.description.toLowerCase().includes(w))).slice(0, 6);
 }
 
+/**
+ * What a part line means. Taken out → removed; replaced → replaced; written bad → failed;
+ * written missing → missing; "needs" alone → needed; "check / maybe" → suspected.
+ * A part only mentioned (no action, no condition) is not a decision.
+ */
+export function partKind(p: Pick<ReadPart, "action" | "condition">): PartKind | null {
+  if (p.action === "taken") return "removed";
+  if (p.action === "replaced") return "replaced";
+  if (p.condition === "bad") return "failed";
+  if (p.condition === "missing") return "missing";
+  if (p.action === "needed") return "needed";
+  if (p.action === "suspected") return "suspected";
+  return null;
+}
+
+/** Precedence of a note dated `day` over a field or part decided at `own`, given the machine's newest decision. */
+type Precedence = "apply" | "older" | "uncertain";
+function precedence(day: string, own: Observed | undefined, last: Observed | null): Precedence {
+  if (own && own.day > day) return "older";
+  if (own && own.day === day) return "uncertain";
+  if (last && last.day > day) return "uncertain";
+  return "apply";
+}
+
 // ---------------------------------------------------------------------------
 // Planner
 // ---------------------------------------------------------------------------
@@ -244,27 +326,34 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     return answer;
   }
 
-  // --- Date -------------------------------------------------------------------------
-  let date = facts.today;
+  // --- Date: when the note was written (observation), not when it was uploaded ------------
+  let date: string | null = null;
   const readDate = reading.date.text.trim();
-  if (readDate) {
-    const parsed = parseCardDate(readDate);
-    const why = !parsed ? `The date reads "${readDate}", which is not a date.`
-      : parsed > facts.today ? `The date reads ${shortDate(parsed)}, which is after today.`
-      : reading.date.confidence === "low" ? `The date reads ${shortDate(parsed)}, but it is hard to read.` : null;
-    if (!why) date = parsed!;
-    else {
-      const a = ask({
-        id: "date", kind: "date", entry: null, prompt: `${why} Which date goes in the repair notes?`,
-        options: [
-          ...(parsed && parsed <= facts.today ? [{ value: `set:${parsed}`, label: shortDate(parsed) }] : []),
-          { value: `set:${facts.today}`, label: `Today (${shortDate(facts.today)})` }
-        ],
-        allowText: { label: "Date", placeholder: "5/12/26" }
-      }, (v) => (v.startsWith("text:") && !parseCardDate(v.slice(5)) ? "Enter a date like 5/12/26." : null));
-      if (a) date = a.startsWith("set:") ? a.slice(4) : parseCardDate(a.slice(5))!;
-    }
+  const parsed = readDate ? parseCardDate(readDate) : null;
+  const why = !readDate ? "No date is written on this note."
+    : !parsed ? `The date reads "${readDate}", which is not a date.`
+    : parsed > facts.today ? `The date reads ${shortDate(parsed)}, which is after today.`
+    : reading.date.confidence === "low" ? `The date reads ${shortDate(parsed)}, but it is hard to read.` : null;
+  if (!why) date = parsed;
+  else {
+    const offered = [...new Set([...(parsed && parsed <= facts.today ? [parsed] : []), facts.uploadedOn, facts.today])];
+    const a = ask({
+      id: "date", kind: "date", entry: null,
+      prompt: `${why} On what date were these observations made? An older date never overrides a newer record.`,
+      options: offered.map((d) => ({
+        value: `set:${d}`,
+        label: d === parsed ? shortDate(d) : d === facts.uploadedOn ? `Upload date (${shortDate(d)})` : `Today (${shortDate(d)})`
+      })),
+      allowText: { label: "Date", placeholder: "5/12/26" }
+    }, (v) => {
+      if (!v.startsWith("text:")) return null;
+      const d = parseCardDate(v.slice(5));
+      return !d ? "Enter a date like 5/12/26." : d > facts.today ? "That date is after today." : null;
+    });
+    if (a) date = a.startsWith("set:") ? a.slice(4) : parseCardDate(a.slice(5))!;
   }
+  // Until the date is settled, changes are previewed as of the upload date (nothing applies without it).
+  const day = date ?? facts.uploadedOn;
 
   // --- Group lines (one line written for several machines) -----------------------------
   const groupMembers = new Map<string, ReadGroup[]>();
@@ -385,7 +474,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     .slice(0, 3)
     .map((s) => s.name);
 
-  /** Location named by a card or note: { name, detail } or "keep" (leave unchanged) or null (unanswered). */
+  /** Location named by a note: { name, detail } or "keep" (leave unchanged) or null (unanswered). */
   function resolveLocation(loc: ReadLocation, entryKey: string): { name: string; detail: string | null } | "keep" | null | undefined {
     const fromName = loc.name ? exactName(loc.name) : null;
     const text = loc.text.trim();
@@ -416,7 +505,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       prompt: `"${text}" is not one of the shop's locations yet. Where is that?`,
       options: [
         ...close.map((n, j) => ({ value: `use:${n}`, label: `Use ${n}`, detail: `Remember "${text}" as ${n}`, recommended: j === 0 })),
-        { value: `add:${proposed}`, label: `Add "${proposed}" as a new location`, detail: "It will be printed on new cards" },
+        { value: `add:${proposed}`, label: `Add "${proposed}" as a new location` },
         { value: "keep", label: "Leave location unchanged" }
       ],
       allowText: { label: "New location name", placeholder: proposed }
@@ -441,7 +530,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     const fact = known(r.machineNo);
     const planned: PlannedEntry = {
       key: e.key, label: `Entry ${i + 1}`, machineNo: r.machineNo, skipped: r.skipped, fact,
-      changes: [], partStates: [], struck: e.struck, info: []
+      changes: [], history: [], parts: [], partStates: [], testFirst: [], locationCheck: null, struck: e.struck, info: []
     };
     entries.push(planned);
     if (r.skipped || !fact) continue;
@@ -459,19 +548,26 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     const nextLocation = location && location !== "keep" ? location.name : null;
     const locationChanged = nextLocation != null && nextLocation !== (fact.location ?? "");
 
-    // Status
+    // Status: only a Fleet status the note actually says. Never from the location.
     const phrases = [...e.status.phrases, ...groups.flatMap((g) => g.status.phrases)];
     const statuses = new Set<string>();
-    for (const c of [e.status.checked, ...groups.map((g) => g.status.checked)]) if (c && CARD_STATUS_VALUES.includes(c)) statuses.add(c);
-    for (const p of phrases) for (const [re, s] of STATUS_PHRASES) if (re.test(p)) statuses.add(s);
+    for (const c of [e.status.checked, ...groups.map((g) => g.status.checked)]) if (c && isNoteStatus(c)) statuses.add(c);
+    const otherWords: string[] = [];
+    for (const p of phrases) {
+      const s = statusFromPhrase(p);
+      if (s) statuses.add(s);
+      else if (!READY_FOR_CLEAN.test(p) && (!nextLocation || normalizeLocation(p) !== normalizeLocation(nextLocation))) otherWords.push(p);
+    }
     const readyForClean = e.readyForClean || phrases.some((p) => READY_FOR_CLEAN.test(p));
     const keep = { value: "keep", label: `Leave status as ${fact.availability}` };
+    const statusOptions = (recommended?: string | null) => NOTE_STATUS_VALUES.filter((s) => s !== fact.availability)
+      .map((s) => ({ value: `set:${s}`, label: s, recommended: s === recommended }));
     let target: string | null = null;
     if (statuses.size > 1) {
       const a = ask({
         id: `status:${e.key}`, kind: "status", entry: e.key,
-        prompt: `#${no}: the note marks more than one status (${[...statuses].map(statusLabel).join(", ")}). Which one is right?`,
-        options: [...[...statuses].map((s) => ({ value: `set:${s}`, label: statusLabel(s) })), keep]
+        prompt: `#${no}: the note says more than one status (${[...statuses].join(", ")}). Which one is right?`,
+        options: [...[...statuses].map((s) => ({ value: `set:${s}`, label: s })), keep]
       });
       target = a && a !== "keep" ? a.slice(4) : null;
     } else if (statuses.size === 1) {
@@ -479,57 +575,38 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       if (e.status.checked === only && e.status.confidence === "low") {
         const a = ask({
           id: `status:${e.key}`, kind: "status", entry: e.key,
-          prompt: `#${no}: the marked status looks like ${statusLabel(only)}, but it is hard to read. Which is it?`,
-          options: [...CARD_STATUS_VALUES.map((s) => ({ value: `set:${s}`, label: statusLabel(s), recommended: s === only })), keep]
+          prompt: `#${no}: the status looks like ${only}, but it is hard to read. Which is it?`,
+          options: [...statusOptions(only), keep]
         });
         target = a && a !== "keep" ? a.slice(4) : null;
       } else target = only;
-    } else if (readyForClean) {
-      if (nextLocation && /^showroom/i.test(nextLocation)) {
-        target = "READY TO SALE";
-        planned.info.push(`"Ready for clean" on the showroom floor is read as READY TO SALE.`);
-      } else {
-        const a = ask({
-          id: `status:${e.key}`, kind: "status", entry: e.key,
-          prompt: `#${no} is marked "Ready for clean". What is its status now?`,
-          options: [
-            { value: "set:READY TO SALE", label: "Ready for sale" },
-            { value: "set:BEING REPAIRED", label: "Being repaired (not cleaned yet)" },
-            keep
-          ]
-        });
-        target = a && a !== "keep" ? a.slice(4) : null;
-      }
-    } else {
-      const usual = locationChanged ? statusForLocation(nextLocation!) : null;
-      const needed = e.parts.some((x) => x.action === "needed");
+    } else if (fact.availability === "UNCHECKED") {
+      const needed = e.parts.some((x) => partKind(x) === "needed" || partKind(x) === "failed" || partKind(x) === "missing");
       const describes = needed || e.symptoms.length > 0 || Boolean(e.problem || e.workDone);
-      if (usual && usual !== fact.availability) {
-        const a = ask({
-          id: `status:${e.key}`, kind: "status", entry: e.key,
-          prompt: `#${no} is moving to ${nextLocation}. Machines there are usually ${usual}. Change its status?`,
-          options: [{ value: `set:${usual}`, label: `Yes, ${statusLabel(usual)}`, recommended: true }, keep]
-        });
-        target = a && a !== "keep" ? a.slice(4) : null;
-      } else if (fact.availability === "UNCHECKED" && describes) {
+      if (describes) {
         // Checked by a tech but still UNCHECKED: the status is the part of the note that is missing.
         const a = ask({
           id: `status:${e.key}`, kind: "status", entry: e.key,
           prompt: `#${no} is still UNCHECKED, but the note says what is wrong with it. What is its status now?`,
-          options: [
-            { value: "set:NEEDS PARTS", label: "Needs parts", recommended: needed },
-            { value: "set:BEING REPAIRED", label: "Being repaired" },
-            { value: "set:PARTS ONLY", label: "Parts machine" },
-            keep
-          ]
+          options: [...["NEEDS PARTS", "PARTS ONLY", "PARTS PROGRAM", "READY TO SALE"].map((s) => ({ value: `set:${s}`, label: s, recommended: needed && s === "NEEDS PARTS" })),
+            { value: "keep", label: "Leave it UNCHECKED" }]
         });
         target = a && a !== "keep" ? a.slice(4) : null;
       }
     }
+    if (target && target !== fact.availability && isOffLot(target) && !isOffLot(fact.availability)) {
+      // Leaving the lot takes the machine off every donor list: confirm it.
+      const a = ask({
+        id: `offlot-status:${e.key}`, kind: "status", entry: e.key,
+        prompt: `#${no} would be marked ${target}. That takes it off the lot and off every donor list. Is that right?`,
+        options: [{ value: "yes", label: `Yes, mark it ${target}` }, keep]
+      });
+      if (a !== "yes") target = null;
+    }
     const statusChanged = target != null && target !== fact.availability;
     const effectiveStatus = statusChanged ? target! : fact.availability;
 
-    // Condition
+    // Condition: follows the status (grade when for sale).
     let condition: string | null = null;
     if (effectiveStatus === "READY TO SALE") {
       if (e.grade) condition = gradeCondition(e.grade);
@@ -563,15 +640,17 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
 
     // Parts
     const bom = fact.bomStatus === "found" ? fact.bomParts : null;
-    const resolvePart = (p: ReadPart): { mpn: string | null; display: string } | "drop" => {
+    const resolvePart = (p: ReadPart, kind: PartKind | null): { mpn: string | null; display: string; family: string | null } | "drop" => {
       const canonical = canonicalizeMpn(p.mpn);
+      const byName = p.name ? classifyFamily(p.name) : "other";
+      const nameFamily = byName === "other" ? null : byName;
       if (canonical) {
         if (!bom) {
           planned.info.push(`No parts list is cached for ${fact.brand} ${fact.modelRaw || "this model"}, so ${p.mpn} goes in the notes only.`);
-          return { mpn: null, display: p.mpn };
+          return { mpn: null, display: p.mpn, family: nameFamily };
         }
         const hit = bomLookup(bom, canonical);
-        if (hit) return { mpn: hit.mpn, display: hit.display };
+        if (hit) return { mpn: hit.mpn, display: hit.display, family: flaggable(hit.family) ?? nameFamily };
         const near = nearMpns(bom, canonical);
         const a = ask({
           id: `part:${e.key}:${p.key}`, kind: "part", entry: e.key,
@@ -582,12 +661,12 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
             { value: "drop", label: "Leave this part out" }
           ]
         });
-        if (a == null || a === "keep") return { mpn: null, display: p.mpn };
+        if (a == null || a === "keep") return { mpn: null, display: p.mpn, family: nameFamily };
         if (a === "drop") return "drop";
         const chosen = bom.find((b) => b.mpn === a.slice(4))!;
-        return { mpn: chosen.mpn, display: chosen.display };
+        return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
       }
-      if (bom && (p.action === "needed" || p.action === "taken")) {
+      if (bom && kind && kind !== "suspected" && kind !== "replaced") {
         const cands = partsByName(bom, p.name);
         if (cands.length) {
           const a = ask({
@@ -600,11 +679,11 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
           });
           if (a && a.startsWith("use:")) {
             const chosen = bom.find((b) => b.mpn === a.slice(4))!;
-            return { mpn: chosen.mpn, display: chosen.display };
+            return { mpn: chosen.mpn, display: chosen.display, family: flaggable(chosen.family) ?? nameFamily };
           }
         }
       }
-      return { mpn: null, display: p.mpn };
+      return { mpn: null, display: p.mpn, family: nameFamily };
     };
     const resolveOther = (p: ReadPart): { no: string | null; label: string } => {
       const raw = p.otherMachine;
@@ -626,75 +705,190 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       const n = a.startsWith("use:") ? a.slice(4) : machineDigits(a.slice(5));
       return { no: n, label: `#${n}` };
     };
-    const diagnosisBits: string[] = [];
-    const noteBits: string[] = [];
+
+    type DraftPart = PartDecision & { diagnosisBit: string; noteBit: string; precedence: Precedence };
+    const draftParts: DraftPart[] = [];
+    const donorParts: PartDecision[] = [];
+    const mentionBits: string[] = [];
     for (const p of e.parts) {
-      const part = resolvePart(p);
+      const kind = partKind(p);
+      const part = resolvePart(p, kind);
       if (part === "drop") continue;
       const label = `${p.name || "part"}${part.display ? ` (${part.display})` : ""}`;
       const other = p.otherMachine ? resolveOther(p) : null;
-      if (p.action === "needed") {
-        // "need inner tub" in the problem text already says it unless the line adds a part number.
-        const alreadySaid = !part.display && p.name && e.problem.toLowerCase().includes(p.name.toLowerCase());
-        if (!alreadySaid) diagnosisBits.push(p.condition === "missing" ? sentence(`${label} missing`) : sentence(`Needs ${label}`));
-        if (part.mpn) planned.partStates.push({ machineNo: no, mpn: part.mpn, mpnDisplay: part.display, state: p.condition === "missing" ? "missing" : "failed", note: "tech note" });
-      } else if (p.action === "taken") {
-        noteBits.push(sentence(`Took ${label}${other ? ` for ${other.label}` : ""}`));
-        if (part.mpn) planned.partStates.push({ machineNo: no, mpn: part.mpn, mpnDisplay: part.display, state: "pulled", note: other?.no ? `for #${other.no}` : "tech note" });
-      } else if (p.action === "replaced") {
-        noteBits.push(sentence(`Replaced ${label}${other ? ` from ${other.label}` : ""}`));
+      if (!kind) { mentionBits.push(sentence(label)); continue; }
+      const alreadySaid = !part.display && p.name && e.problem.toLowerCase().includes(p.name.toLowerCase());
+      const diagnosisBit = alreadySaid ? "" : kind === "needed" ? sentence(`Needs ${label}`) : kind === "suspected" ? sentence(`Check ${label}`)
+        : kind === "failed" ? sentence(`Bad ${label}`) : kind === "missing" ? sentence(`${label} missing`) : "";
+      const noteBit = kind === "removed" ? sentence(`Took ${label}${other ? ` for ${other.label}` : ""}`)
+        : kind === "replaced" ? sentence(`Replaced ${label}${other ? ` from ${other.label}` : ""}`) : "";
+      draftParts.push({
+        machineNo: no, mpn: part.mpn, mpnDisplay: part.display, name: p.name, kind, otherMachine: other?.no ?? null, applied: true,
+        testFirst: kind === "needed" || kind === "suspected" ? part.family : null,
+        note: other?.no ? (kind === "removed" ? `for #${other.no}` : `from #${other.no}`) : "tech note",
+        diagnosisBit, noteBit, precedence: "apply"
+      });
+      if (kind === "replaced" && part.mpn) {
         const donor = known(other?.no);
-        if (part.mpn && donor) {
-          if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked pulled there.`);
-          else if (donor.bomStatus === "found" && !bomLookup(donor.bomParts, part.mpn)) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked pulled there.`);
-          else planned.partStates.push({ machineNo: donor.machineNo, mpn: part.mpn, mpnDisplay: part.display, state: "pulled", note: `for #${no}` });
+        if (donor) {
+          if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked removed there.`);
+          else if (donor.bomStatus === "found" && !bomLookup(donor.bomParts, part.mpn)) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
+          else {
+            const ownDonor = donor.partUpdates[part.mpn];
+            donorParts.push({
+              machineNo: donor.machineNo, mpn: part.mpn, mpnDisplay: part.display, name: p.name, kind: "removed", otherMachine: no,
+              applied: !(ownDonor && ownDonor.day > day), testFirst: null, note: `for #${no}`
+            });
+          }
         }
-      } else noteBits.push(sentence(label));
+      }
+    }
+
+    // --- Precedence: an older note never reverses a newer decision -------------------------
+    const symptomBits = [...e.symptoms.map((k) => CARD_SYMPTOMS.find((s) => s.key === k)?.phrase ?? ""), sentence(e.problem)].filter(Boolean);
+    const wants: Partial<Record<TrackedField, boolean>> = {
+      availability: statusChanged,
+      condition: condition != null && condition !== (fact.condition ?? ""),
+      location: locationChanged,
+      stickerPrice: price != null && !sameMoney(price, fact.stickerPrice),
+      diagnosis: symptomBits.length > 0 || draftParts.some((d) => d.diagnosisBit)
+    };
+    const fieldPrecedence: Partial<Record<TrackedField, Precedence>> = {};
+    for (const f of Object.keys(wants) as TrackedField[]) if (wants[f]) fieldPrecedence[f] = precedence(day, fact.fieldUpdates[f], fact.lastUpdate);
+    // Condition is written with the status: it never outlives a status kept as history.
+    if (fieldPrecedence.availability && fieldPrecedence.condition) {
+      const rank = { older: 2, uncertain: 1, apply: 0 } as const;
+      if (rank[fieldPrecedence.availability] > rank[fieldPrecedence.condition]) fieldPrecedence.condition = fieldPrecedence.availability;
+    }
+    // A part with a parts-list number has its own record; a named part follows the diagnosis.
+    for (const d of draftParts) {
+      d.precedence = d.mpn ? precedence(day, fact.partUpdates[d.mpn], fact.lastUpdate)
+        : fieldPrecedence.diagnosis ?? precedence(day, fact.fieldUpdates.diagnosis, fact.lastUpdate);
+    }
+    // When part of this note is certainly older than the record, the note as a whole predates it:
+    // fields the record has not set since are history too, not a question. Same-day ties still ask.
+    if (Object.values(fieldPrecedence).includes("older") || draftParts.some((d) => d.mpn && d.precedence === "older")) {
+      for (const f of Object.keys(fieldPrecedence) as TrackedField[]) {
+        if (fieldPrecedence[f] === "uncertain" && fact.fieldUpdates[f]?.day !== day) fieldPrecedence[f] = "older";
+      }
+      for (const d of draftParts) if (d.precedence === "uncertain" && (!d.mpn || fact.partUpdates[d.mpn]?.day !== day)) d.precedence = "older";
+    }
+    const uncertainFields = (Object.keys(fieldPrecedence) as TrackedField[]).filter((f) => fieldPrecedence[f] === "uncertain");
+    const uncertainParts = draftParts.filter((d) => d.mpn && d.precedence === "uncertain");
+    let uncertainApplies = false;
+    if (uncertainFields.length || uncertainParts.length) {
+      const what = [...uncertainFields.map((f) => FIELD_LABEL[f]), ...uncertainParts.map((d) => `${d.name || "part"} (${d.mpnDisplay || "no number"}) as ${d.kind}`)];
+      const sameDay = [...uncertainFields.filter((f) => fact.fieldUpdates[f]?.day === day).map((f) => `${FIELD_LABEL[f]} was set ${fact.fieldUpdates[f]!.label}`),
+        ...uncertainParts.filter((d) => d.mpn && fact.partUpdates[d.mpn]?.day === day).map((d) => `${d.mpnDisplay} was set ${fact.partUpdates[d.mpn!]!.label}`)];
+      const newer = fact.lastUpdate && fact.lastUpdate.day > day;
+      const reason = [
+        ...(sameDay.length ? [`On the same day, ${sameDay.join("; ")}.`] : []),
+        ...(newer ? [`#${no} was updated ${fact.lastUpdate!.label}, after this note's date.`] : [])
+      ].join(" ");
+      const a = ask({
+        id: `order:${e.key}`, kind: "order", entry: e.key,
+        prompt: `#${no}: this note is dated ${shortDate(day)}. ${reason} Is this note the latest word on its ${what.join(", ")}?`,
+        options: [
+          { value: "apply", label: "Yes, apply them", detail: "This note is newer than the record" },
+          { value: "history", label: "No, keep the current record", detail: "Save what this note says as history only", recommended: Boolean(newer) }
+        ]
+      });
+      uncertainApplies = a === "apply";
+    }
+    const applies = (p: Precedence | undefined) => p === "apply" || (p === "uncertain" && uncertainApplies);
+
+    // Parts: applied decisions change availability; older ones are history.
+    for (const d of draftParts) {
+      const ok = applies(d.precedence);
+      const { diagnosisBit: _d, noteBit: _n, precedence: _p, ...decision } = d;
+      planned.parts.push({ ...decision, applied: ok });
+      const state = STATE_FOR_KIND[d.kind];
+      if (ok && state && d.mpn) planned.partStates.push({ machineNo: no, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state, note: d.note });
+      if (ok && d.testFirst && !planned.testFirst.includes(d.testFirst)) planned.testFirst.push(d.testFirst);
+    }
+    for (const d of donorParts) {
+      planned.parts.push(d);
+      if (d.applied && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note });
+      if (!d.applied) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} has a newer record, so it is not marked removed there.`);
     }
 
     // Diagnosis: what is wrong, appended to what the record already says.
     const current = (fact.diagnosis ?? "").trim();
-    const bits = [
-      ...e.symptoms.map((k) => CARD_SYMPTOMS.find((s) => s.key === k)?.phrase ?? ""),
-      sentence(e.problem),
-      ...diagnosisBits
-    ].filter((b) => b && !current.toLowerCase().includes(b.toLowerCase().replace(/\.$/, "")));
+    const said = [...new Set([...symptomBits, ...draftParts.map((d) => d.diagnosisBit).filter(Boolean)])];
+    const bits = [...symptomBits, ...draftParts.filter((d) => d.diagnosisBit && applies(d.precedence)).map((d) => d.diagnosisBit)]
+      .filter((b) => b && !current.toLowerCase().includes(b.toLowerCase().replace(/\.$/, "")));
     const diagnosis = bits.length ? [current, ...new Set(bits)].filter(Boolean).join(" ") : null;
 
-    // Repair notes: one dated line, the inventory's "5/12/26-…" style.
+    const want: Array<[TrackedField, string | null, string | null]> = [
+      ["availability", fact.availability, statusChanged ? target : null],
+      ["condition", fact.condition, condition],
+      ["location", fact.location, nextLocation],
+      ["diagnosis", fact.diagnosis, diagnosis],
+      ["stickerPrice", fact.stickerPrice, price && !sameMoney(price, fact.stickerPrice) ? price : null]
+    ];
+    const historyNotes: string[] = [];
+    for (const [field, from, to] of want) {
+      if (to == null || (from ?? "") === to) continue;
+      const p = fieldPrecedence[field] ?? "apply";
+      if (applies(p)) planned.changes.push({ field, from, to });
+      else {
+        // History keeps what the note said, not the merged text.
+        planned.history.push({ field, from, to: field === "diagnosis" ? said.join(" ") : to });
+        historyNotes.push(FIELD_LABEL[field]);
+      }
+    }
+    if (said.length && !planned.changes.some((c) => c.field === "diagnosis") && !planned.history.some((c) => c.field === "diagnosis")
+      && fieldPrecedence.diagnosis && !applies(fieldPrecedence.diagnosis)) {
+      planned.history.push({ field: "diagnosis", from: fact.diagnosis, to: said.join(" ") });
+      historyNotes.push(FIELD_LABEL.diagnosis);
+    }
+    const applied = (field: TrackedField) => planned.changes.some((c) => c.field === field);
+
+    // VERIFY LOCATION: a recorded location that differs from the one on record.
+    if (applied("location") && (fact.location ?? "").trim()) {
+      planned.locationCheck = { from: fact.location!, to: nextLocation! };
+      planned.info.push(`#${no} was recorded at ${fact.location}; this note says ${nextLocation}. VERIFY LOCATION stays on until someone checks where it is.`);
+    }
+    // Donor pool consequence of a status change.
+    if (applied("availability")) {
+      const was = facts.donorStatuses.includes(fact.availability);
+      const will = facts.donorStatuses.includes(target!);
+      if (!was && will) planned.info.push(`#${no} joins the donor pool: ${target} is a donor status in Settings.`);
+      if (was && !will) planned.info.push(`#${no} leaves the donor pool.`);
+    }
+
+    // Repair notes: one dated line, the inventory's "5/12/26-…" style. Always appended: it is the log.
     const line: string[] = [];
-    if (locationChanged) line.push(`Moved to ${nextLocation}${location && location !== "keep" && location.detail ? ` (${location.detail})` : ""}.`);
-    if (statusChanged) line.push(`${statusLabel(target!)}.`);
-    if (readyForClean && effectiveStatus !== "READY TO SALE") line.push("Ready for clean.");
+    if (locationChanged) line.push(`Location: ${nextLocation}${location && location !== "keep" && location.detail ? ` (${location.detail})` : ""}.`);
+    if (statusChanged) line.push(`${target}.`);
+    if (otherWords.length) line.push(...otherWords.map(sentence));
+    if (readyForClean) line.push("Ready for clean.");
     if (e.workDone) line.push(sentence(e.workDone));
-    line.push(...noteBits);
+    line.push(...draftParts.map((d) => d.noteBit).filter(Boolean), ...mentionBits);
     if (price && !sameMoney(price, fact.stickerPrice)) line.push(`Sticker $${Number(price).toFixed(2).replace(/\.00$/, "")}.`);
     if (e.note) line.push(sentence(e.note));
-    const notesLine = line.length ? `${shortDate(date)}-${line.join(" ")}` : "";
-    const currentNotes = (fact.notes ?? "").trim();
-    const notes = notesLine ? [currentNotes, notesLine].filter(Boolean).join(" ") : null;
-
-    const change = (field: FieldName, from: string | null, to: string | null) => {
-      if (to != null && (from ?? "") !== to) planned.changes.push({ field, from, to });
-    };
-    if (statusChanged) change("availability", fact.availability, target);
-    if (condition) change("condition", fact.condition, condition);
-    if (locationChanged) change("location", fact.location, nextLocation);
-    if (diagnosis) change("diagnosis", fact.diagnosis, diagnosis);
-    if (notes) change("notes", fact.notes, notes);
-    if (price && !sameMoney(price, fact.stickerPrice)) change("stickerPrice", fact.stickerPrice, price);
+    if (historyNotes.length || planned.parts.some((d) => !d.applied)) {
+      if (!applies(fieldPrecedence.diagnosis ?? "apply")) line.push(...said);
+      line.push("(Older than the current record: kept as history.)");
+    }
+    const notesLine = line.length ? `${shortDate(day)}-${line.join(" ")}` : "";
+    if (notesLine) {
+      const currentNotes = (fact.notes ?? "").trim();
+      planned.changes.push({ field: "notes", from: fact.notes, to: [currentNotes, notesLine].filter(Boolean).join(" ") });
+    }
   }
 
   const unanswered = questions.filter((q) => q.answer == null).length;
-  const hasChanges = entries.some((e) => e.changes.length || e.partStates.length);
+  const hasChanges = entries.some((e) => e.changes.length || e.history.length || e.parts.length);
   return {
     date,
+    uploadedOn: facts.uploadedOn,
     entries,
     questions,
     locationsToAdd: [...locationsToAdd].map(([name, aliases]) => ({ name, aliases: [...aliases] })),
     aliasesToAdd: [...aliasesToAdd.values()],
     unanswered,
     hasChanges,
-    ready: unanswered === 0 && hasChanges
+    ready: unanswered === 0 && hasChanges && date != null
   };
 }
