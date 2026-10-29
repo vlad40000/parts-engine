@@ -287,12 +287,16 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
 
   // --- Machines ------------------------------------------------------------------------
   const resolved = new Map<string, { machineNo: string | null; skipped: boolean }>();
+  const hasContent = (e: ReadEntry) => Boolean(e.status.checked || e.status.phrases.length || e.location.name || e.location.text || e.readyForClean
+    || e.grade || e.price.text || e.symptoms.length || e.problem || e.workDone || e.note || e.parts.length || e.model || e.serial);
   for (const [i, e] of reading.entries.entries()) {
     const raw = machineDigits(e.machine.text);
+    // A blank line (typed note not filled in yet) is not a question.
+    if (!raw && !hasContent(e)) { resolved.set(e.key, { machineNo: null, skipped: true }); continue; }
     const f = known(raw);
     const reasons: string[] = [];
     const candidates: string[] = [];
-    if (!raw) reasons.push("No machine number could be read.");
+    if (!raw) reasons.push("No machine number is written for it.");
     else if (!f) {
       reasons.push(`There is no machine #${raw}.`);
       candidates.push(...e.machine.alternatives.filter((a) => known(a)), ...nearMachineNumbers(raw).filter((n) => known(n)));
@@ -321,7 +325,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     let resolvedNo: string | null = null;
     const a = ask({
       id: `machine:${e.key}`, kind: "machine", entry: e.key, prompt: `Entry ${i + 1}: ${reasons.join(" ")} Which machine is it?`,
-      options, allowText: { label: "Machine #", placeholder: "6146" }
+      options, allowText: { label: "Machine #", placeholder: "number" }
     }, (v) => {
       if (v === "skip") return null;
       const no = v.startsWith("use:") ? v.slice(4) : machineDigits(v.slice(5));
@@ -329,6 +333,17 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     });
     if (a === "skip") { resolved.set(e.key, { machineNo: null, skipped: true }); continue; }
     if (a) resolvedNo = a.startsWith("use:") ? a.slice(4) : machineDigits(a.slice(5));
+    // A typed or suggested number that turns out to be sold or scrapped is confirmed separately.
+    const chosen = known(resolvedNo);
+    if (chosen && resolvedNo !== raw && isOffLot(chosen.availability)) {
+      const b = ask({
+        id: `offlot:${e.key}:${resolvedNo}`, kind: "machine", entry: e.key,
+        prompt: `#${resolvedNo} is recorded as ${chosen.availability}. Apply this note to it anyway?`,
+        options: [{ value: "yes", label: `Yes, #${resolvedNo} is back on the lot` }, { value: "skip", label: "Skip this entry" }]
+      });
+      if (b === "skip") { resolved.set(e.key, { machineNo: null, skipped: true }); continue; }
+      if (b == null) resolvedNo = null;
+    }
     resolved.set(e.key, { machineNo: resolvedNo, skipped: false });
   }
 
@@ -485,13 +500,28 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         });
         target = a && a !== "keep" ? a.slice(4) : null;
       }
-    } else if (locationChanged) {
-      const usual = statusForLocation(nextLocation!);
+    } else {
+      const usual = locationChanged ? statusForLocation(nextLocation!) : null;
+      const needed = e.parts.some((x) => x.action === "needed");
+      const describes = needed || e.symptoms.length > 0 || Boolean(e.problem || e.workDone);
       if (usual && usual !== fact.availability) {
         const a = ask({
           id: `status:${e.key}`, kind: "status", entry: e.key,
           prompt: `#${no} is moving to ${nextLocation}. Machines there are usually ${usual}. Change its status?`,
           options: [{ value: `set:${usual}`, label: `Yes, ${statusLabel(usual)}`, recommended: true }, keep]
+        });
+        target = a && a !== "keep" ? a.slice(4) : null;
+      } else if (fact.availability === "UNCHECKED" && describes) {
+        // Checked by a tech but still UNCHECKED: the status is the part of the note that is missing.
+        const a = ask({
+          id: `status:${e.key}`, kind: "status", entry: e.key,
+          prompt: `#${no} is still UNCHECKED, but the note says what is wrong with it. What is its status now?`,
+          options: [
+            { value: "set:NEEDS PARTS", label: "Needs parts", recommended: needed },
+            { value: "set:BEING REPAIRED", label: "Being repaired" },
+            { value: "set:PARTS ONLY", label: "Parts machine" },
+            keep
+          ]
         });
         target = a && a !== "keep" ? a.slice(4) : null;
       }
@@ -586,7 +616,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
           ...nearMachineNumbers(raw).filter((n) => known(n)).slice(0, 4).map((n) => ({ value: `use:${n}`, label: `#${n}`, detail: machineSummary(known(n)!) })),
           { value: "keep", label: `Keep "#${raw}" in the notes only` }
         ],
-        allowText: { label: "Machine #", placeholder: "4261" }
+        allowText: { label: "Machine #", placeholder: "number" }
       }, (v) => {
         if (v === "keep") return null;
         const n = v.startsWith("use:") ? v.slice(4) : machineDigits(v.slice(5));
@@ -604,7 +634,9 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       const label = `${p.name || "part"}${part.display ? ` (${part.display})` : ""}`;
       const other = p.otherMachine ? resolveOther(p) : null;
       if (p.action === "needed") {
-        diagnosisBits.push(p.condition === "missing" ? sentence(`${label} missing`) : sentence(`Needs ${label}`));
+        // "need inner tub" in the problem text already says it unless the line adds a part number.
+        const alreadySaid = !part.display && p.name && e.problem.toLowerCase().includes(p.name.toLowerCase());
+        if (!alreadySaid) diagnosisBits.push(p.condition === "missing" ? sentence(`${label} missing`) : sentence(`Needs ${label}`));
         if (part.mpn) planned.partStates.push({ machineNo: no, mpn: part.mpn, mpnDisplay: part.display, state: p.condition === "missing" ? "missing" : "failed", note: "tech note" });
       } else if (p.action === "taken") {
         noteBits.push(sentence(`Took ${label}${other ? ` for ${other.label}` : ""}`));

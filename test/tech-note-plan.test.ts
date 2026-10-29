@@ -113,6 +113,20 @@ describe("machine number checks", () => {
     expect(changes(answered, "e1").diagnosis).toBe("Noisy.");
   });
 
+  it("ignores a blank line and confirms a typed number that is sold", () => {
+    const f = facts([fact("4261", { availability: "SOLD" })]);
+    expect(plan({ entries: [entry("")] }, f)).toMatchObject({ questions: [], hasChanges: false, ready: false });
+    const r = { entries: [entry("", { problem: "timer worn" })] };
+    const q = plan(r, f).questions[0];
+    expect(q.prompt).toBe("Entry 1: No machine number is written for it. Which machine is it?");
+    const p2 = plan(r, f, { [q.id]: "text:4261" });
+    expect(p2.questions.map((x) => [x.id, x.answer])).toEqual([[q.id, "text:4261"], ["offlot:e0:4261", null]]);
+    expect(p2.entries[0].machineNo).toBeNull();
+    const p3 = plan(r, f, { [q.id]: "text:4261", "offlot:e0:4261": "yes" });
+    expect(p3.entries[0].machineNo).toBe("4261");
+    expect(plan(r, f, { [q.id]: "text:4261", "offlot:e0:4261": "skip" }).entries[0].skipped).toBe(true);
+  });
+
   it("lists every number to load, including answers and part-line machines", () => {
     const r = normalizeReading({ entries: [entry("611", { machine: { text: "#611", confidence: "low", alternatives: ["6611"] }, parts: [{ name: "control", action: "replaced", otherMachine: "4261" }] })] });
     expect(referencedMachineNumbers(r, { "machine:e0": "text:612" }).sort()).toEqual(["4261", "611", "612", "6611"]);
@@ -218,7 +232,7 @@ describe("parts", () => {
 
   it("matches a named part to the parts list and records missing parts", () => {
     const r = { entries: [entry("6171", { parts: [{ mpn: "", name: "lid switch", action: "needed", otherMachine: "", condition: "missing", confidence: "high" }] })] };
-    const q = plan(r, facts([laundry])).questions[0];
+    const q = plan(r, facts([laundry])).questions.find((x) => x.kind === "part")!;
     expect(q.options.map((o) => o.value)).toEqual(["use:WP3355806", "keep"]);
     expect(plan(r, facts([laundry]), { [q.id]: "use:WP3355806" }).entries[0].partStates[0]).toMatchObject({ state: "missing", mpn: "WP3355806" });
   });
@@ -240,6 +254,24 @@ describe("parts", () => {
     const q = p.questions.find((x) => x.kind === "other_machine")!;
     expect(q.options.map((o) => o.value)).toEqual(["use:2143", "keep"]);
     expect(changes(plan(r, facts([laundry, fact("2143")]), { [q.id]: "use:2143" }), "e0").notes).toBe("5/22/26-Took pressure switch for #2143.");
+  });
+});
+
+describe("status of a machine a tech has looked at", () => {
+  it("asks for a status when a machine is still UNCHECKED but the note says what is wrong", () => {
+    const f = facts([fact("6068", { modelRaw: "WTW8200YW0" })], { locations: [...LOCATIONS, { name: "Red Building", aliases: [] }] });
+    const r = { date: { text: "5/12/26", confidence: "high" }, entries: [entry("6068", { problem: "need inner tub", location: { name: "Red Building", text: "Red building", confidence: "high" },
+      parts: [{ mpn: "", name: "inner tub", action: "needed", otherMachine: "", condition: "", confidence: "high" }] })] };
+    const p = plan(r, f);
+    const q = p.questions.find((x) => x.kind === "status")!;
+    expect(q.prompt).toBe("#6068 is still UNCHECKED, but the note says what is wrong with it. What is its status now?");
+    expect(q.options.find((o) => o.recommended)?.value).toBe("set:NEEDS PARTS");
+    expect(changes(plan(r, f, { [q.id]: "set:NEEDS PARTS" }), "e0")).toEqual({
+      availability: "NEEDS PARTS", condition: "E - Needs Parts", location: "Red Building",
+      diagnosis: "Need inner tub.", notes: "5/12/26-Moved to Red Building. Needs parts."
+    });
+    // A machine that already has a working status is not asked about again.
+    expect(plan(r, facts([fact("6068", { availability: "NEEDS PARTS" })], { locations: [...LOCATIONS, { name: "Red Building", aliases: [] }] })).questions).toEqual([]);
   });
 });
 

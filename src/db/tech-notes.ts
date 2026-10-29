@@ -5,12 +5,14 @@ import { suspectFamilies } from "@/src/lib/part-family";
 import { modelKey } from "@/src/lib/model-key";
 import { nearMachineNumbers, referencedMachineNumbers, type Answers, type BomPart, type MachineFact, type Plan, type PlanFacts } from "@/src/lib/tech-notes/plan";
 import { normalizeReading, type NoteReading } from "@/src/lib/tech-notes/reading";
-import { shopToday } from "@/src/lib/tech-notes/vocabulary";
+import { SHOP_TIME_ZONE, shopToday } from "@/src/lib/tech-notes/vocabulary";
 
 type Rows<T> = { rows: T[] };
 async function q<T>(db: Db, query: ReturnType<typeof sql>): Promise<T[]> {
   return ((await db.execute(query)) as unknown as Rows<T>).rows;
 }
+/** A timestamp as the shop reads it: "2026-05-14 09:12" in shop time. */
+const shopTime = (column: string) => sql.raw(`to_char(${column} at time zone '${SHOP_TIME_ZONE}', 'YYYY-MM-DD HH24:MI')`);
 const textArray = (values: string[]) => sql`${`{${values.map((v) => `"${v.replace(/(["\\])/g, "\\$1")}"`).join(",")}}`}::text[]`;
 
 export type TechNoteStatus = "open" | "applied" | "discarded";
@@ -65,7 +67,7 @@ export async function getTechNote(db: Db, id: string): Promise<TechNote | null> 
     created_at: string; updated_at: string; applied_at: string | null;
   }>(db, sql`
     select id, status, origin, card, photo is not null has_photo, reader_model, reader_error, reading, answers, applied_plan,
-      created_at::text created_at, updated_at::text updated_at, applied_at::text applied_at
+      ${shopTime("created_at")} created_at, updated_at::text updated_at, ${shopTime("applied_at")} applied_at
     from tech_notes where id = ${id}::uuid`);
   if (!r) return null;
   const json = (v: unknown) => (typeof v === "string" ? JSON.parse(v) : v);
@@ -122,8 +124,8 @@ export async function discardTechNote(db: Db, id: string): Promise<boolean> {
 export type TechNoteListRow = { id: string; status: TechNoteStatus; origin: string; card: string | null; created_at: string; applied_at: string | null; machines: string[]; reader_error: string | null };
 export async function listTechNotes(db: Db, limit = 30): Promise<TechNoteListRow[]> {
   const rows = await q<Omit<TechNoteListRow, "machines"> & { reading: unknown }>(db, sql`
-    select id, status, origin, card, created_at::text created_at, applied_at::text applied_at, reader_error, reading
-    from tech_notes order by created_at desc limit ${Math.max(1, Math.min(200, limit))}`);
+    select id, status, origin, card, ${shopTime("created_at")} created_at, ${shopTime("applied_at")} applied_at, reader_error, reading
+    from tech_notes order by tech_notes.created_at desc limit ${Math.max(1, Math.min(200, limit))}`);
   return rows.map(({ reading, ...r }) => {
     const parsed = reading == null ? null : normalizeReading(typeof reading === "string" ? JSON.parse(reading) : reading);
     return { ...r, machines: parsed ? parsed.entries.map((e) => e.machine.text.replace(/\D/g, "")).filter(Boolean) : [] };
@@ -327,10 +329,10 @@ export type HistoryRow = { changed_at: string; field: string; previous_value: st
 export async function machineHistory(db: Db, machineNo: string, limit = 40): Promise<HistoryRow[]> {
   return q<HistoryRow>(db, sql`
     select * from (
-      select changed_at::text changed_at, 'status' field, previous_status previous_value, next_status next_value, source, tech_note_id::text tech_note_id, changed_at sort
+      select ${shopTime("changed_at")} changed_at, 'status' field, previous_status previous_value, next_status next_value, source, tech_note_id::text tech_note_id, changed_at sort
       from fleet_status_events where machine_no = ${machineNo}
       union all
-      select changed_at::text, field, previous_value, next_value, source, tech_note_id::text, changed_at
+      select ${shopTime("changed_at")}, field, previous_value, next_value, source, tech_note_id::text, changed_at
       from fleet_field_events where machine_no = ${machineNo}
     ) h order by sort desc limit ${limit}`);
 }

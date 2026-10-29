@@ -94,7 +94,7 @@ export function readerPrompt({ locations }: { locations: string[] }): string {
 
 The photo shows one of:
 - Card RR-M1, the Status/Move card (quarter sheet): up to ${MOVE_CARD_MACHINES} machine numbers written one digit per box, which all share ONE status and ONE location; date; tech initials; optional grade and price; a note line. Return one entry per filled machine number and give each the card's status and location.
-- Card RR-R1, the Repair card (half sheet): one machine number; date; tech initials; model number (optional, for checking); status; location; symptom boxes; up to ${REPAIR_CARD_PART_LINES} part lines (Replaced / Needed / Taken out, part number one character per box, a machine number, bad or missing); grade; price; notes.
+- Card RR-R1, the Repair card (half sheet): one machine number; date; tech initials; model number (optional, for checking); status; location; symptom boxes; up to ${REPAIR_CARD_PART_LINES} part lines (Replaced / Needed / Taken out, part number one character per box, part name, a machine number, Bad or Missing); grade; price; notes.
 - free: any other handwritten note, for example a legal pad. Machine numbers are written at the left margin and are usually 3 to 5 digits.
 
 Reply with JSON only, matching the schema. Rules:
