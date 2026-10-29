@@ -308,6 +308,29 @@ describe("parts: needed is not failed", () => {
     expect(sold.entries[0].info).toContain("#5000 is SOLD, so no part is marked removed there.");
   });
 
+  it("records the donor's removal under the donor's own parts-list number, by the same chronology rules", () => {
+    const recipient = fact("6171", { availability: "NEEDS PARTS", bomStatus: "found", bomParts: [{ mpn: "3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" }] });
+    const donorBom = [{ mpn: "WP3948891", display: "WP3948891", description: "Timer", family: "sensor_switch" }];
+    const r = { entries: [entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", action: "replaced", otherMachine: "5000" })] })] };
+    const donor = fact("5000", { availability: "PARTS ONLY", bomStatus: "found", bomParts: donorBom });
+    expect(plan(r, facts([recipient, donor])).entries[0].partStates).toMatchObject([{ machineNo: "5000", mpn: "WP3948891", state: "pulled" }]);
+
+    // The donor's part was marked failed the same day: ask which came last.
+    const sameDay = { day: "2026-05-22", label: "on 5/22/26 9:05 AM (part record)" };
+    const marked = fact("5000", { availability: "PARTS ONLY", bomStatus: "found", bomParts: donorBom, partUpdates: { WP3948891: { ...sameDay, state: "failed", token: "t1" } } });
+    const q = plan(r, facts([recipient, marked])).questions.find((x) => x.id === "order:e0")!;
+    expect(q.prompt).toContain("#5000's WP3948891 was set on 5/22/26 9:05 AM (part record)");
+    expect(plan(r, facts([recipient, marked]), { "order:e0": "history" }).entries[0].partStates).toEqual([]);
+    expect(plan(r, facts([recipient, marked]), { "order:e0": "apply" }).entries[0].partStates).toMatchObject([{ machineNo: "5000", state: "pulled", seenToken: "t1" }]);
+
+    // A newer donor record is kept, with no question.
+    const newer = fact("5000", { availability: "PARTS ONLY", bomStatus: "found", bomParts: donorBom, partUpdates: { WP3948891: { day: "2026-05-23", label: "on 5/23/26", state: "failed" } } });
+    const kept = plan(r, facts([recipient, newer]));
+    expect(kept.questions).toEqual([]);
+    expect(kept.entries[0].partStates).toEqual([]);
+    expect(kept.entries[0].parts.find((d) => d.machineNo === "5000")).toMatchObject({ kind: "removed", applied: false });
+  });
+
   it("writes one state per part: the same state once, different states asked", () => {
     const donor = fact("5000", { availability: "PARTS ONLY", modelRaw: "LTE5243DZ0", bomStatus: "found", bomParts });
     const replaced = entry("6171", { parts: [line({ mpn: "WP3948891", name: "timer", action: "replaced", otherMachine: "5000" })] });

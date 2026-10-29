@@ -715,7 +715,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
 
     type DraftPart = PartDecision & { diagnosisBit: string; noteBit: string; precedence: Precedence };
     const draftParts: DraftPart[] = [];
-    const donorParts: PartDecision[] = [];
+    const donorParts: Array<PartDecision & { donor: MachineFact; precedence: Precedence }> = [];
     const mentionBits: string[] = [];
     for (const p of e.parts) {
       const kind = partKind(p);
@@ -738,13 +738,15 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       if (kind === "replaced" && part.mpn) {
         const donor = known(other?.no);
         if (donor) {
+          // The donor's own parts-list identity (WP3948891 and 3948891 are different keys), when it has a list.
+          const donorHit = donor.bomStatus === "found" ? bomLookup(donor.bomParts, part.mpn) : null;
           if (isOffLot(donor.availability)) planned.info.push(`#${donor.machineNo} is ${donor.availability}, so no part is marked removed there.`);
-          else if (donor.bomStatus === "found" && !bomLookup(donor.bomParts, part.mpn)) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
+          else if (donor.bomStatus === "found" && !donorHit) planned.info.push(`${part.display} is not in #${donor.machineNo}'s parts list, so it is not marked removed there.`);
           else {
-            const ownDonor = donor.partUpdates[part.mpn];
+            const mpn = donorHit?.mpn ?? part.mpn;
             donorParts.push({
-              machineNo: donor.machineNo, mpn: part.mpn, mpnDisplay: part.display, name: p.name, kind: "removed", otherMachine: no,
-              applied: !(ownDonor && ownDonor.day > day), testFirst: null, note: `for #${no}`
+              machineNo: donor.machineNo, mpn, mpnDisplay: donorHit?.display ?? part.display, name: p.name, kind: "removed", otherMachine: no,
+              applied: true, testFirst: null, note: `for #${no}`, donor, precedence: precedence(day, donor.partUpdates[mpn], donor.lastUpdate)
             });
           }
         }
@@ -782,22 +784,28 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
     }
     const uncertainFields = (Object.keys(fieldPrecedence) as TrackedField[]).filter((f) => fieldPrecedence[f] === "uncertain");
     const uncertainParts = draftParts.filter((d) => d.mpn && d.precedence === "uncertain");
+    // A donor's part has its own record: the same rules, the same question.
+    const uncertainDonors = donorParts.filter((d) => d.precedence === "uncertain");
     let uncertainApplies = false;
-    if (uncertainFields.length || uncertainParts.length) {
-      const what = [...uncertainFields.map((f) => FIELD_LABEL[f]), ...uncertainParts.map((d) => `${d.name || "part"} (${d.mpnDisplay || "no number"}) as ${d.kind}`)];
+    if (uncertainFields.length || uncertainParts.length || uncertainDonors.length) {
+      const what = [...uncertainFields.map((f) => FIELD_LABEL[f]), ...uncertainParts.map((d) => `${d.name || "part"} (${d.mpnDisplay || "no number"}) as ${d.kind}`),
+        ...uncertainDonors.map((d) => `#${d.machineNo}'s ${d.name || "part"} (${d.mpnDisplay}) as removed`)];
       const sameDay = [...uncertainFields.filter((f) => fact.fieldUpdates[f]?.day === day).map((f) => `${FIELD_LABEL[f]} was set ${fact.fieldUpdates[f]!.label}`),
-        ...uncertainParts.filter((d) => d.mpn && fact.partUpdates[d.mpn]?.day === day).map((d) => `${d.mpnDisplay} was set ${fact.partUpdates[d.mpn!]!.label}`)];
-      const newer = fact.lastUpdate && fact.lastUpdate.day > day;
+        ...uncertainParts.filter((d) => d.mpn && fact.partUpdates[d.mpn]?.day === day).map((d) => `${d.mpnDisplay} was set ${fact.partUpdates[d.mpn!]!.label}`),
+        ...uncertainDonors.filter((d) => d.donor.partUpdates[d.mpn!]?.day === day).map((d) => `#${d.machineNo}'s ${d.mpnDisplay} was set ${d.donor.partUpdates[d.mpn!]!.label}`)];
+      const newer = (uncertainFields.length || uncertainParts.length) && fact.lastUpdate && fact.lastUpdate.day > day;
+      const newerDonors = [...new Set(uncertainDonors.filter((d) => d.donor.lastUpdate && d.donor.lastUpdate.day > day).map((d) => d.donor))];
       const reason = [
         ...(sameDay.length ? [`On the same day, ${sameDay.join("; ")}.`] : []),
-        ...(newer ? [`#${no} was updated ${fact.lastUpdate!.label}, after this note's date.`] : [])
+        ...(newer ? [`#${no} was updated ${fact.lastUpdate!.label}, after this note's date.`] : []),
+        ...newerDonors.map((dn) => `#${dn.machineNo} was updated ${dn.lastUpdate!.label}, after this note's date.`)
       ].join(" ");
       const a = ask({
         id: `order:${e.key}`, kind: "order", entry: e.key,
         prompt: `#${no}: this note is dated ${shortDate(day)}. ${reason} Is this note the latest word on its ${what.join(", ")}?`,
         options: [
           { value: "apply", label: "Yes, apply them", detail: "This note is newer than the record" },
-          { value: "history", label: "No, keep the current record", detail: "Save what this note says as history only", recommended: Boolean(newer) }
+          { value: "history", label: "No, keep the current record", detail: "Save what this note says as history only", recommended: Boolean(newer) || newerDonors.length > 0 }
         ]
       });
       uncertainApplies = a === "apply";
@@ -813,10 +821,11 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       if (ok && state && d.mpn) planned.partStates.push({ machineNo: no, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state, note: d.note, seenToken: fact.partUpdates[d.mpn]?.token ?? null });
       if (ok && d.testFirst && !planned.testFirst.includes(d.testFirst)) planned.testFirst.push(d.testFirst);
     }
-    for (const d of donorParts) {
-      planned.parts.push(d);
-      if (d.applied && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note, seenToken: known(d.machineNo)?.partUpdates[d.mpn]?.token ?? null });
-      if (!d.applied) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} has a newer record, so it is not marked removed there.`);
+    for (const { donor, precedence: pr, ...d } of donorParts) {
+      const ok = applies(pr);
+      planned.parts.push({ ...d, applied: ok });
+      if (ok && d.mpn) planned.partStates.push({ machineNo: d.machineNo, mpn: d.mpn, mpnDisplay: d.mpnDisplay, state: "pulled", note: d.note, seenToken: donor.partUpdates[d.mpn]?.token ?? null });
+      if (!ok) planned.info.push(`#${d.machineNo}'s ${d.mpnDisplay} has a newer record, so it is not marked removed there.`);
     }
 
     // Diagnosis: what is wrong, appended to what the record already says.
