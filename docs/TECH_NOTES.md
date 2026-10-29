@@ -4,7 +4,7 @@ Techs record what they found and where a machine went on paper. **Tech notes** t
 
 ## Flow
 
-1. **Photo.** On a phone, *Tech notes → Take photo*. The browser shrinks the photo (long edge 1600 px, JPEG) before upload.
+1. **Photo.** On a phone, *Tech notes → Take photo*. The browser shrinks the photo (long edge 1600 px, JPEG) before upload. A photo the browser cannot shrink (for example HEIC on a desktop browser) is refused above 4 MB, because hosted functions such as Vercel's reject request bodies over 4.5 MB.
 2. **Read.** Gemini reads the card into a structured reading: machine numbers, status, location, symptoms, part lines, crossed-out text, date. Crossed-out text is kept apart and never applied.
 3. **Check and ask.** Deterministic code (`src/lib/tech-notes/plan.ts`, not the model) compares the reading with the machine records and asks only what it cannot settle:
    - a machine number that is hard to read, not in the fleet (one-slip suggestions such as 6612 → 6611), or recorded as sold or scrapped;
