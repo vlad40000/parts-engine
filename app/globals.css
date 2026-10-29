@@ -32,32 +32,10 @@ th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--color-line); ver
 .pill-wait { background: #fef3c7; color: var(--color-wait); }
 .pill-mute { background: #f5f5f4; color: var(--color-muted); }
 
-/*
- * Roadrunner Standardized Field Intake (RR-F1). Sizes are inches so a 100% print is exact:
- * a letter page holds two 8.5in x 5.5in forms. Solid black text and lines only.
- */
-.rr-sheet-wrap { overflow-x: auto; }
-.rr-sheet { width: 8.5in; height: 11in; background: white; color: #000; display: grid; box-shadow: 0 0 0 1px var(--color-line); font-family: Arial, Helvetica, sans-serif; }
-.rf-sheet { grid-template-columns: 8.5in; grid-template-rows: 5.5in 5.5in; }
-.rf-form { box-sizing: border-box; height: 5.5in; padding: 0.3in 0.35in 0.25in; display: flex; flex-direction: column; gap: 0.08in; color: #000; }
-.rf-form + .rf-form { border-top: 1px solid #000; }
-.rf-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; padding-bottom: 0.04in; }
-.rf-title { font-weight: 800; font-size: 12pt; letter-spacing: 0.02em; }
-.rf-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 800; font-size: 12pt; border: 2px solid #000; padding: 0 0.06in; }
-.rf-row { display: grid; grid-template-columns: 1fr 2.2in; gap: 0.2in; }
-.rf-field { display: flex; flex-direction: column; gap: 0.02in; }
-.rf-label { font-weight: 800; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.03em; }
-.rf-space { border: 1.5px solid #000; height: 0.5in; }
-.rf-machine .rf-space, .rf-date .rf-space { height: 0.6in; }
-.rf-notes { flex: 1; }
-.rf-notes .rf-space { flex: 1; height: auto; min-height: 1.4in; }
-.rf-ref { font-size: 7pt; color: #000; }
-.rf-foot { font-size: 7pt; color: #000; margin: 0; }
+/* Print layout for application pages. Intake forms use the approved PDF. */
 @media print {
   @page { size: letter; margin: 0; }
   html, body { background: white !important; }
-  body > header, .no-print { display: none !important; }
+  body > header { display: none !important; }
   main { padding: 0 !important; margin: 0 !important; max-width: none !important; }
-  .rr-sheet-wrap { overflow: visible; }
-  .rr-sheet { box-shadow: none; }
 }
