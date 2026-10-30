@@ -25,9 +25,8 @@ export const REPAIR_CARD_PART_LINES = 4;
 
 /**
  * Statuses a note can set: exactly the Fleet status options, so a note can never write a status
- * the Fleet page, donor rules or exports do not know. "Being repaired" and "Ready for clean" are
- * not Fleet statuses; a note that says them keeps the words in the repair notes and leaves the
- * status alone.
+ * the Fleet page, donor rules or exports do not know. "Being repaired" is a valid legacy Fleet
+ * status. "Ready for clean" is not: it stays a note and never means READY TO SALE.
  */
 export const NOTE_STATUSES: ReadonlyArray<{ status: string; label: string }> = FLEET_STATUS_OPTIONS.map((status) => ({
   status, label: status[0] + status.slice(1).toLowerCase()
@@ -36,7 +35,7 @@ export const NOTE_STATUS_VALUES: readonly string[] = NOTE_STATUSES.map((s) => s.
 export const isNoteStatus = (v: string) => NOTE_STATUS_VALUES.includes(v);
 export const statusLabel = (status: string) => NOTE_STATUSES.find((s) => s.status === status)?.label ?? status;
 /** Old card check boxes that are not Fleet statuses: kept as words, never as a status. */
-export const LEGACY_CARD_STATUS_WORDS: Record<string, string> = { "BEING REPAIRED": "Being repaired" };
+export const LEGACY_CARD_STATUS_WORDS: Record<string, string> = {};
 
 /** Statuses that mean the machine has left the lot (matches OFF_LOT in queries). */
 export const OFF_LOT_STATUSES = ["SOLD", "SCRAPED", "SCRAPPED"];
@@ -50,6 +49,7 @@ export const CONDITION_FOR_STATUS: Record<string, string> = {
   "NEEDS PARTS": "E - Needs Parts",
   "PARTS ONLY": "F - Parts Only",
   "PARTS PROGRAM": "P - Parts Program",
+  "BEING REPAIRED": "X - Being Repaired",
   "SCRAPPED": "S - Scraped"
 };
 
