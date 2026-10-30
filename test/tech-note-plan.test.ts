@@ -149,9 +149,9 @@ describe("machine number checks", () => {
 describe("statuses: only the Fleet options, and only when written", () => {
   it("offers exactly the Fleet status options", () => {
     expect(NOTE_STATUS_VALUES).toEqual([...FLEET_STATUS_OPTIONS]);
-    // An old card's "Being repaired" box is not a Fleet status: kept as words.
+    // "Being repaired" exists in the imported Fleet vocabulary and is a valid explicit observation.
     expect(normalizeReading({ entries: [entry("1", { status: { checked: "BEING REPAIRED", phrases: [] } })] }).entries[0].status)
-      .toEqual({ checked: "", phrases: ["Being repaired"], confidence: "high" });
+      .toEqual({ checked: "BEING REPAIRED", phrases: [], confidence: "high" });
   });
 
   it("never turns 'Ready for clean' into READY TO SALE, even on the showroom floor", () => {
@@ -184,11 +184,11 @@ describe("statuses: only the Fleet options, and only when written", () => {
     }
   });
 
-  it("keeps words that are not Fleet statuses in the repair notes", () => {
+  it("sets the explicit BEING REPAIRED status while preserving the observation", () => {
     const f = facts([fact("4529", { availability: "NEEDS PARTS" })]);
     const p = plan({ entries: [entry("4529", { status: { checked: "BEING REPAIRED", phrases: [], confidence: "high" } })] }, f);
     expect(p.questions).toEqual([]);
-    expect(changes(p, "e0")).toEqual({ notes: "5/22/26-Being repaired." });
+    expect(changes(p, "e0")).toMatchObject({ availability: "BEING REPAIRED", condition: "X - Being Repaired", notes: "5/22/26-BEING REPAIRED." });
   });
 
   it("confirms a hard-to-read status from a shared line or written words, not only a marked box", () => {
