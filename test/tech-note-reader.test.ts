@@ -84,7 +84,7 @@ describe("normalizing a reading", () => {
     expect(prompt).toContain("does not need a printed RR-F1 code");
     expect(prompt).toContain("RR-M1");
     expect(prompt).toContain("RR-R1");
-    expect(prompt).toContain("UNCHECKED, NEEDS PARTS, PARTS ONLY, PARTS PROGRAM, READY TO SALE, SOLD, SCRAPPED");
+    expect(prompt).toContain("UNCHECKED, NEEDS PARTS, PARTS ONLY, PARTS PROGRAM, BEING REPAIRED, READY TO SALE, SOLD, SCRAPPED");
     expect(prompt).toContain('Never turn "Ready for clean" into READY TO SALE, and never choose a status from the location.');
     expect(prompt).toContain('"Needs timer" alone is needed with an empty condition.');
     expect(prompt).toContain('"needs gassing" is a refrigeration service need');
