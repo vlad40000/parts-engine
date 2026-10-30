@@ -237,6 +237,7 @@ export const FIELD_LABEL: Record<FieldName, string> = {
 const STATUS_PHRASES: Array<[RegExp, string]> = [
   [/ready\s*(for|to)\s*(\$|s)\s*ale|\bfor\s*(\$|s)ale\b/i, "READY TO SALE"],
   [/parts?\s*program/i, "PARTS PROGRAM"],
+  [/\bbeing\s+repaired\b/i, "BEING REPAIRED"],
   [/parts?\s*(machine|only|unit)|\bfor parts\b|\bharvest/i, "PARTS ONLY"],
   [/needs?\s*parts|waiting (on|for) parts/i, "NEEDS PARTS"],
   [/\bscrap/i, "SCRAPPED"],
