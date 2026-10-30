@@ -9,7 +9,7 @@ import type { Db } from "@/src/db/types";
 import { machineDetail, saveModelBom, setPartState, updateMachineLocation, updateMachineStatus, upsertFleet } from "@/src/db/queries";
 import {
   applyTechNote, createTechNote, discardTechNote, findNoteByPhoto, getTechNote, getTechNotePhoto, loadPlanFacts, locationList, machineHistory,
-  openLocationCheckCount, openLocationChecks, saveDraft, verifyLocation
+  openLocationCheckCount, openLocationChecks, pendingMachineNotes, saveDraft, verifyLocation
 } from "@/src/db/tech-notes";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { planNote, type Answers } from "@/src/lib/tech-notes/plan";
@@ -401,5 +401,26 @@ describe("tech note apply", () => {
     expect(await saveDraft(db, id, reading6171(), {})).toBe(false);
     const [{ n }] = (await db.execute(sql`select count(*)::int n from tech_notes`)).rows as Array<{ n: number }>;
     expect(n).toBe(1);
+  });
+});
+
+
+describe("pending service-note machine alerts", () => {
+  it("finds only the open observations for this machine and exposes status/location conflicts", async () => {
+    const first = normalizeReading({
+      card: "RR-F1", date: { text: "7/28/26", confidence: "high" },
+      entries: [{ machine: { text: "6171" },
+        status: { checked: "PARTS ONLY", phrases: [], confidence: "high" },
+        location: { name: "Red Building", text: "Red building", confidence: "high" },
+        note: "Needs a belt." }]
+    });
+    const noteId = await createTechNote(db, { origin: "manual", reading: first });
+    await createTechNote(db, { origin: "manual", reading: normalizeReading({
+      date: { text: "7/27/26" }, entries: [{ machine: { text: "5000" }, note: "Other machine." }]
+    }) });
+    expect(await pendingMachineNotes(db, "6171")).toEqual([{
+      id: noteId, written: "7/28/26", location: "Red Building", status: "PARTS ONLY"
+    }]);
+    expect(await pendingMachineNotes(db, "4261")).toEqual([]);
   });
 });

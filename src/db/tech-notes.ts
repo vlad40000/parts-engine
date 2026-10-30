@@ -593,3 +593,21 @@ export async function machineHistory(db: Db, machineNo: string, limit = 60): Pro
       from fleet_location_checks where machine_no = ${machineNo} and resolved_at is not null
     ) h order by sort desc, rank desc limit ${limit}`);
 }
+
+
+/** Pending handwritten service observations for a machine. No change is applied before review. */
+export async function pendingMachineNotes(db: Db, machineNo: string): Promise<Array<{
+  id: string; written: string; location: string; status: string;
+}>> {
+  return q<{ id: string; written: string; location: string; status: string }>(db, sql`
+    select id::text as id,
+      coalesce(reading->'date'->>'text', '') as written,
+      coalesce(reading->'entries'->0->'location'->>'name', '') as location,
+      coalesce(nullif(reading->'entries'->0->'status'->>'checked', ''),
+        reading->'entries'->0->'status'->'phrases'->>0, '') as status
+    from tech_notes
+    where status = 'open'
+      and reading->'entries' @> ${JSON.stringify([{ machine: { text: machineNo } }])}::jsonb
+    order by created_at desc limit 100
+  `);
+}

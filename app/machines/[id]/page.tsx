@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
 import { machineDetail } from "@/src/db/queries";
-import { machineHistory, openLocationChecks } from "@/src/db/tech-notes";
+import { machineHistory, openLocationChecks, pendingMachineNotes } from "@/src/db/tech-notes";
 import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
 import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
@@ -38,7 +38,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const db = await getDb();
   const machineNo = decodeURIComponent(id);
-  const [d, history, checks] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo)]);
+  const [d, history, checks, pendingNotes] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo), pendingMachineNotes(db, machineNo)]);
   if (!d) notFound();
   const { machine: m, bom, parts } = d;
   const qualified = parts.filter((p) => p.qualification?.result === "QUALIFIED" && !p.state);
@@ -47,6 +47,21 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   return (
     <>
       <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
+      {pendingNotes.length ? (
+        <section role="alert" className="card mb-4 border border-wait/40 bg-amber-50 p-3 text-sm">
+          <div className="font-semibold">TECH NOTE REVIEW — {pendingNotes.length} pending service observation{pendingNotes.length === 1 ? "" : "s"}</div>
+          <p className="mt-1 text-xs">These notes have been saved, but have not been applied. The latest dated location/status must be reconciled before changing the fleet record.</p>
+          <ul className="mt-2 list-disc pl-5 text-xs">
+            {pendingNotes.map((n) => (
+              <li key={n.id}>
+                <Link className="text-accent underline" href={`/notes/${n.id}`}>Review note{n.written ? ` (${n.written})` : " (undated)"}</Link>
+                {n.location && n.location.toLowerCase() !== (m.location ?? "").toLowerCase() ? ` · LOCATION CONFLICT: ${n.location} vs ${m.location ?? "unknown"}` : ""}
+                {n.status && n.status.toUpperCase() !== m.availability.toUpperCase() ? ` · STATUS CONFLICT: ${n.status} vs ${m.availability}` : ""}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {checks.length ? <VerifyLocation machineNo={m.machineNo} current={m.location} checks={checks} action={verifyLocationAction} /> : null}
       <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
         <div className="card p-3"><div className="text-xs text-muted">Physical location</div><LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
