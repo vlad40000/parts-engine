@@ -22,7 +22,7 @@ const STATUS_TEXT: Record<string, string> = { open: "needs review", applied: "ap
 
 export default async function NotesPage() {
   if (!hasDatabase()) return <NoDatabase />;
-  const notes = await listTechNotes(await getDb(), 40);
+  const notes = await listTechNotes(await getDb(), 200);
   return (
     <>
       <PageTitle
