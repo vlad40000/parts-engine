@@ -7,6 +7,9 @@ import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
 import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
+import { ButtonForm } from "@/src/components/forms";
+import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
+import { updateMachineStatusAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +46,9 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   const { machine: m, bom, parts } = d;
   const qualified = parts.filter((p) => p.qualification?.result === "QUALIFIED" && !p.state);
   const setRule = parts.some((p) => p.qualification?.result === "SET_RULE");
+  const expectedCondition = CONDITION_FOR_STATUS[m.availability];
+  const staleStandardCondition = Boolean(expectedCondition && m.condition && m.condition !== expectedCondition
+    && Object.values(CONDITION_FOR_STATUS).includes(m.condition));
 
   return (
     <>
@@ -64,9 +70,25 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       ) : null}
       {checks.length ? <VerifyLocation machineNo={m.machineNo} current={m.location} checks={checks} action={verifyLocationAction} /> : null}
       <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
-        <div className="card p-3"><div className="text-xs text-muted">Physical location</div><LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
+        <div className="card p-3">
+          <div className="text-xs text-muted">Status</div>
+          <div className="font-semibold">{m.availability}</div>
+          <div className="mt-2 text-xs text-muted">Physical location</div>
+          <LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
           <div className="mt-2 text-xs text-muted">Condition</div>
-          <div>{m.condition || "—"}{m.stickerPrice ? ` · sticker $${Number(m.stickerPrice).toFixed(0)}` : ""}</div>
+          <div>{m.condition || "—"}{m.stickerPrice ? ` · sticker ${Number(m.stickerPrice).toFixed(0)}` : ""}</div>
+          {staleStandardCondition ? (
+            <div role="alert" className="mt-2 border-l-2 border-wait pl-2 text-xs">
+              Condition is a legacy status code that does not match the current status. Expected: {expectedCondition}.
+              <div className="mt-2">
+                <ButtonForm action={updateMachineStatusAction} label="Align standard condition">
+                  <input type="hidden" name="machineNo" value={m.machineNo} />
+                  <input type="hidden" name="expectedStatus" value={m.availability} />
+                  <input type="hidden" name="status" value={m.availability} />
+                </ButtonForm>
+              </div>
+            </div>
+          ) : null}
           {m.localFields.length ? <div className="mt-1 text-xs text-muted">Set from tech notes, kept on re-import: {m.localFields.join(", ").replace("sticker_price", "sticker price")}</div> : null}
           <div className="mt-2 text-xs text-muted">Serial</div><div className="mono">{m.serial || "—"}</div>
           <div className="mt-2 text-xs text-muted">Possible build years</div><Years years={m.ageCandidateYears} /><div className="text-xs text-muted">{m.ageNote}</div></div>

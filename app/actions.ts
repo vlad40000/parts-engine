@@ -10,6 +10,7 @@ import {
 import { verifyLocation } from "@/src/db/tech-notes";
 import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
+import { resolveFleetLocationChoice } from "@/src/lib/fleet-location-options";
 import { legacyResearchHeaders, mapMarketRows, MARKET_IMPORT_SOURCE } from "@/src/lib/market-import";
 import { ensureMachineBom } from "@/src/lib/model-bom";
 import {
@@ -76,10 +77,16 @@ export async function updateMachineStatusAction(_prev: ActionResult | null, form
 
 /** Save one machine's physical placement, even across future inventory imports. */
 export async function updateMachineLocationAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const choice = form.get("locationChoice");
+  // The Fleet selector is controlled; legacy direct-action callers still use 'location'.
+  const selected = choice === null
+    ? String(form.get("location") ?? "")
+    : resolveFleetLocationChoice(String(choice), String(form.get("locationOther") ?? ""));
+  if (selected === null) return { ok: false, message: "Choose a shop location or enter an Other location." };
   const input = {
     machineNo: String(form.get("machineNo") ?? "").trim(),
     expectedLocation: String(form.get("expectedLocation") ?? ""),
-    location: String(form.get("location") ?? "")
+    location: selected
   };
   try {
     const outcome = await updateMachineLocation(await getDb(), input);

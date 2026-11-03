@@ -13,7 +13,7 @@ import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
 import { isEditableFleetStatus } from "@/src/lib/fleet-status";
-import { OFF_CARD_LOCATIONS } from "@/src/lib/tech-notes/vocabulary";
+import { CONDITION_FOR_STATUS, SALE_GRADES, OFF_CARD_LOCATIONS } from "@/src/lib/tech-notes/vocabulary";
 import * as t from "./schema";
 import type { Db } from "./types";
 
@@ -251,40 +251,72 @@ export async function updateMachineModel(
   return "has_part_states";
 }
 
-/** Change one machine's availability and record the transition in the same atomic SQL statement.
- * We deliberately do not change cached model BOMs, part-state history, or other machines.
- * The override flag prevents an older import from undoing a SOLD/SCRAPPED correction.
+/**
+ * A Fleet status correction also updates its standard condition code (e.g. UNCHECKED U
+ * to PARTS ONLY F). A custom condition is kept intact. READY TO SALE and SOLD have
+ * no automatic grade, so their grade is never invented here.
+ *
+ * A repeat Save for an already-changed status repairs legacy stale condition codes
+ * such as Machine #5751, without adding a fictitious status transition.
+ * All successful updates and history rows are atomic.
  */
 export async function updateMachineStatus(
   db: Db, input: { machineNo: string; expectedStatus: string; status: string }
 ): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict"> {
   if (!input.machineNo || !isEditableFleetStatus(input.status)) return "invalid";
-  if (input.expectedStatus === input.status) {
-    const [current] = await db.select({ availability: t.fleetMachines.availability })
-      .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
-    if (!current) return "not_found";
-    return current.availability === input.status ? "unchanged" : "conflict";
-  }
-  // The optimistic check and audit insert share one transaction (one statement on Neon HTTP).
-  // An old browser tab cannot overwrite a newer status; no phantom audit rows on failure.
+
+  const statusChanges = input.expectedStatus !== input.status;
+  const mapped = CONDITION_FOR_STATUS[input.status] ?? null;
+  const knownCodes = [...Object.values(CONDITION_FOR_STATUS), ...SALE_GRADES.map((g) => g.condition)];
+  const knownCodesSql = sql.raw(pgTextArray(knownCodes));
+  // A new status can replace blank/known standardized grades, never arbitrary custom text.
+  const syncForChange = mapped !== null
+    ? sql`(coalesce(btrim(f.condition), '') = '' or f.condition = any(${knownCodesSql}))`
+    : sql`false`;
+  // On unchanged status, only repair a stale standard status code, not an unknown grade.
+  const statusCodesSql = sql.raw(pgTextArray(Object.values(CONDITION_FOR_STATUS)));
+  const syncForRepair = mapped !== null
+    ? sql`(f.condition = any(${statusCodesSql}) and f.condition <> ${mapped})`
+    : sql`false`;
+  const shouldSync = statusChanges ? syncForChange : syncForRepair;
+
   const saved = await q<{ machine_no: string }>(db, sql`
-    with changed as (
-      update fleet_machines
-      set availability = ${input.status}, status_override = true, updated_at = now(),
-        last_field_update_at = greatest(last_field_update_at, now())
+    with original as (
+      select machine_no, condition from fleet_machines
       where machine_no = ${input.machineNo} and availability = ${input.expectedStatus}
-      returning machine_no
-    ), logged as (
+      for update
+    ), changed as (
+      update fleet_machines f
+      set availability = ${input.status},
+        condition = case when ${shouldSync} then ${mapped} else f.condition end,
+        local_fields = case when ${shouldSync} and not ('condition' = any(f.local_fields))
+          then array_append(f.local_fields, 'condition') else f.local_fields end,
+        status_override = true, updated_at = now(),
+        last_field_update_at = greatest(f.last_field_update_at, now())
+      from original o
+      where f.machine_no = o.machine_no and f.availability = ${input.expectedStatus}
+        and (${statusChanges} or ${shouldSync})
+      returning f.machine_no, f.condition
+    ), status_logged as (
       insert into fleet_status_events (machine_no, previous_status, next_status, source)
-      select machine_no, ${input.expectedStatus}, ${input.status}, 'fleet_ui' from changed
+      select machine_no, ${input.expectedStatus}, ${input.status}, 'fleet_ui'
+      from changed where ${statusChanges}
+      returning machine_no
+    ), condition_logged as (
+      insert into fleet_field_events (machine_no, field, previous_value, next_value, source)
+      select c.machine_no, 'condition', o.condition, c.condition, 'fleet_ui'
+      from changed c join original o on o.machine_no = c.machine_no
+      where o.condition is distinct from c.condition
       returning machine_no
     )
-    select machine_no from logged
+    select c.machine_no from changed c
+    where (select count(*) from status_logged) + (select count(*) from condition_logged) >= 0
   `);
   if (saved.length) return "saved";
   const [current] = await db.select({ availability: t.fleetMachines.availability })
     .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
-  return current ? "conflict" : "not_found";
+  if (!current) return "not_found";
+  return current.availability === input.expectedStatus && !statusChanges ? "unchanged" : "conflict";
 }
 
 export type FleetFilter = { band?: string; type?: string; brand?: string; availability?: string; q?: string; location?: string; sort?: string; verify?: string };

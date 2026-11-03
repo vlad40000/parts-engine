@@ -191,11 +191,20 @@ const toFact = (r: MachineRow, bomParts: BomPart[] = [], updates: UpdateRow[] = 
   const partUpdates: MachineFact["partUpdates"] = {};
   let last: (Observed & { epoch: number }) | null = r.last_epoch != null && r.last_day
     ? { day: r.last_day, epoch: r.last_epoch, label: `on ${r.last_label}` } : null;
+  // The first event can supply the field name even when its time matches the
+  // machine's cached last update. Among simultaneous events, prefer status.
+  let lastKey: string | null = null;
   for (const u of updates) {
     const o = observed(u);
     if (u.key.startsWith("part:")) partUpdates[u.key.slice(5)] = { day: o.day, label: o.label, state: u.state, token: u.state_token };
     else fieldUpdates[u.key as TrackedField] = { day: o.day, label: o.label };
-    if (!last || o.epoch >= last.epoch) last = { ...o, label: `${o.label}, ${u.key.startsWith("part:") ? `part ${u.key.slice(5)}` : u.key === "availability" ? "status" : u.key === "stickerPrice" ? "sticker price" : u.key}` };
+    // A Fleet status edit may write a condition code in the very same SQL statement.
+    // Both history facts matter, but the visible "last update" should identify the status
+    // decision, not whichever key happens to sort last when timestamps are identical.
+    if (!last || o.epoch > last.epoch || (o.epoch === last.epoch && (lastKey === null || u.key === "availability"))) {
+      last = { ...o, label: `${o.label}, ${u.key.startsWith("part:") ? `part ${u.key.slice(5)}` : u.key === "availability" ? "status" : u.key === "stickerPrice" ? "sticker price" : u.key}` };
+      lastKey = u.key;
+    }
   }
   return {
     machineNo: r.machine_no, availability: r.availability, condition: r.condition, location: r.location, diagnosis: r.diagnosis, notes: r.notes,
