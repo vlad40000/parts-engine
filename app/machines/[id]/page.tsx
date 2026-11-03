@@ -74,6 +74,14 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
         <div className="card p-3"><div className="text-xs text-muted">Parts list</div>
           <BomStatus bom={bom} identityOk={m.identityStatus === "ok"} />
+          {bom?.status === "found" && parts.length > 0 ? (
+            <>
+              <a className="btn mt-2 inline-block text-xs" href={`/api/export/machine-parts/${encodeURIComponent(m.machineNo)}`}>
+                Download all {parts.length} parts (CSV)
+              </a>
+              <p className="mt-1 text-xs text-muted">Includes unresearched, skipped, unqualified and previously removed parts. Model fitment is not confirmed physical stock.</p>
+            </>
+          ) : null}
           <div className="mt-2 text-xs text-muted">Qualified parts still inside</div>
           <div className="text-lg font-semibold">{setRule ? <Link className="text-sm text-accent underline" href="/settings">Set qualification rules</Link> : qualified.length}</div></div>
       </div>
@@ -100,7 +108,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       {m.identityStatus !== "ok" ? <div className="card mb-5 p-3 text-sm text-wait">Model is unreadable. Read the nameplate and update this machine on Intake before it can be matched.</div> : null}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr><th>Diagram</th><th>MPN</th><th>Description</th><th>Family</th><th className="num">Min</th><th className="num">New $</th><th className="num">Break-even</th><th>Qualification</th><th>Roadrunner history</th><th>State</th></tr></thead>
+          <thead><tr><th>Diagram</th><th>MPN</th><th>Description</th><th>Family</th><th className="num">Min</th><th className="num">New $</th><th className="num">Break-even</th><th>Qualification</th><th title="Sales events imported via the Roadrunner CSV on MPNs; not live eBay listing or sale status.">Roadrunner history</th><th>State</th></tr></thead>
           <tbody>
             {parts.map((p) => (
               <tr key={p.mpn_canonical} className={p.state ? "opacity-50" : ""}>
