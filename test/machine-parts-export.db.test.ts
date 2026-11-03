@@ -67,7 +67,7 @@ beforeAll(async () => {
 });
 
 describe("machine-specific complete parts CSV export", () => {
-  it("downloads every saved model part, including skipped, pulled, missing and unresearched", async () => {
+  it("downloads all 216 parts using only the nine requested columns", async () => {
     const response = await request("17");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/csv");
@@ -75,35 +75,60 @@ describe("machine-specific complete parts CSV export", () => {
     expect(response.headers.get("cache-control")).toContain("no-store");
 
     const [header, ...rows] = parseCsvRows(await response.text());
+    expect(header).toEqual([
+      "Machine ID", "Brand", "Model", "Serial", "Physical Location",
+      "MPN", "Description", "Test First", "Removal Minutes"
+    ]);
     expect(rows).toHaveLength(216);
+    expect(rows.every((row) => row.length === 9)).toBe(true);
+
     const get = (row: string[], name: string) => row[header.indexOf(name)];
     const byMpn = new Map(rows.map((row) => [get(row, "MPN"), row]));
     expect(byMpn.size).toBe(216);
-    expect([...byMpn.keys()]).toEqual(expect.arrayContaining([mpn(0), mpn(1), mpn(215)]));
-    expect(get(byMpn.get(mpn(0))!, "Qualification")).toBe("skipped");
-    expect(get(byMpn.get(mpn(3))!, "Part State")).toBe("pulled");
-    expect(get(byMpn.get(mpn(4))!, "Part State")).toBe("missing");
-    expect(get(byMpn.get(mpn(5))!, "Qualification")).toBe("not researched");
+    // Unresearched, prefiltered, pulled and missing rows all remain present.
+    expect([...byMpn.keys()]).toEqual(expect.arrayContaining([
+      mpn(0), mpn(1), mpn(2), mpn(3), mpn(4), mpn(5), mpn(215)
+    ]));
     expect(get(byMpn.get(mpn(215))!, "Machine ID")).toBe("17");
+    expect(get(byMpn.get(mpn(215))!, "Brand")).toBe("GE");
+    expect(get(byMpn.get(mpn(215))!, "Model")).toBe("TBFM21VAB");
+    expect(get(byMpn.get(mpn(215))!, "Serial")).toBe("LG560729");
     expect(get(byMpn.get(mpn(215))!, "Physical Location")).toBe("Graveyard");
-    expect(get(byMpn.get(mpn(215))!, "Parts List Source")).toBe("appliancepartspros");
+    expect(get(byMpn.get(mpn(0))!, "Description")).toBe("Screw");
     // Imported free-text descriptions are protected when opened in Excel.
     expect(get(byMpn.get(mpn(1))!, "Description")).toBe("'=SUM(1,2)");
   });
 
-  it("labels imported sales as recorded history, not a part's sale or stock status", async () => {
-    const [header, ...rows] = parseCsvRows(await (await request("17")).text());
-    const idx = (name: string) => header.indexOf(name);
-    const sold = rows.find((r) => r[idx("MPN")] === mpn(2))!;
-    const unknown = rows.find((r) => r[idx("MPN")] === mpn(5))!;
-    expect(sold[idx("Roadrunner History (imported)")]).toBe("Recorded sales");
-    expect(sold[idx("Roadrunner Units Sold")]).toBe("2");
-    expect(sold[idx("Roadrunner Sale Events")]).toBe("1");
-    expect(sold[idx("Roadrunner Average Item Price")]).toBe("45.50");
-    expect(sold[idx("Roadrunner Last Sold")]).toBe("2026-10-01");
-    expect(unknown[idx("Roadrunner History (imported)")]).toBe("No recorded sales");
-    expect(unknown[idx("Roadrunner Units Sold")]).toBe("");
-    expect(unknown[idx("Part State")]).toBe("");
+  it("removes fields from CSV only, never from stored machine, part or sales records", async () => {
+    const beforeMachine = await db.select().from(schema.fleetMachines);
+    const beforeStates = await db.select().from(schema.machinePartState);
+    const beforeSales = await db.select().from(schema.roadrunnerSaleEvents);
+    const beforeBom = await db.select().from(schema.modelBomCache);
+    const beforeEdges = await db.select().from(schema.modelPartEdges);
+    const beforeMaster = await db.select().from(schema.mpnMaster);
+
+    const response = await request("17");
+    expect(response.status).toBe(200);
+    const [header, ...rows] = parseCsvRows(await response.text());
+    expect(rows).toHaveLength(216);
+    for (const removed of [
+      "Machine Status", "Condition", "Parts List Source", "Parts List Retrieved At",
+      "Diagram", "Canonical MPN", "Part Family", "New Price", "Break-even",
+      "Qualification", "Qualification Detail", "Roadrunner History (imported)",
+      "Roadrunner Units Sold", "Roadrunner Sale Events", "Roadrunner Average Item Price",
+      "Roadrunner Last Sold", "Roadrunner Sources", "Part State"
+    ]) expect(header).not.toContain(removed);
+
+    expect(await db.select().from(schema.fleetMachines)).toEqual(beforeMachine);
+    expect(await db.select().from(schema.machinePartState)).toEqual(beforeStates);
+    expect(await db.select().from(schema.roadrunnerSaleEvents)).toEqual(beforeSales);
+    expect(await db.select().from(schema.modelBomCache)).toEqual(beforeBom);
+    expect(await db.select().from(schema.modelPartEdges)).toEqual(beforeEdges);
+    expect(await db.select().from(schema.mpnMaster)).toEqual(beforeMaster);
+    expect(beforeMachine.find((m) => m.machineNo === "17")?.availability).toBe("PARTS ONLY");
+    expect(beforeStates.find((p) => p.mpnCanonical === mpn(3))?.state).toBe("pulled");
+    expect(beforeStates.find((p) => p.mpnCanonical === mpn(4))?.state).toBe("missing");
+    expect(beforeSales.find((s) => s.mpnCanonical === mpn(2))?.quantity).toBe(2);
   });
 
   it("refuses a missing machine or unavailable BOM rather than inventing a complete file", async () => {
