@@ -26,7 +26,7 @@ describe("Fleet age-band reference panel", () => {
     expect(html).toContain("Machines");
     expect(html).toContain(band.label);
     expect(html).toContain("Unknown");
-    expect(html).toContain(`href="/bom?type=Dryer&amp;band=${band.key}"`);
+    expect(html).toContain(`href="/bom?type=Dryer&amp;band=${encodeURIComponent(band.key)}"`);
     expect(html).toContain("Click a band count");
   });
 });
