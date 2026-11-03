@@ -53,6 +53,52 @@ describe("editable machine statuses", () => {
     expect(isEditableFleetStatus("some unknown status")).toBe(false);
   });
 
+  it("syncs UNCHECKED to PARTS ONLY condition, audits both changes and protects the code on reimport", async () => {
+    await db.update(schema.fleetMachines).set({ condition: "U - Unchecked" }).where(eq(schema.fleetMachines.machineNo, "4"));
+    expect(await edit("4", "PARTS ONLY", "UNCHECKED")).toBe("saved");
+    const machine = (await machineDetail(db, "4"))!.machine;
+    expect(machine).toMatchObject({
+      availability: "PARTS ONLY", condition: "F - Parts Only", statusOverride: true
+    });
+    expect(machine.localFields).toContain("condition");
+    expect((await events()).map((e) => [e.previousStatus, e.nextStatus]))
+      .toEqual([["UNCHECKED", "PARTS ONLY"]]);
+    const changes = await db.select().from(schema.fleetFieldEvents);
+    expect(changes).toEqual([expect.objectContaining({
+      machineNo: "4", field: "condition", previousValue: "U - Unchecked",
+      nextValue: "F - Parts Only", source: "fleet_ui"
+    })]);
+    await upsertFleet(db, mapFleetRows([{ ...row(4, "UNCHECKED", "RETRY500"), Condition: "U - Unchecked" }]).rows);
+    expect((await machineDetail(db, "4"))!.machine).toMatchObject({
+      availability: "PARTS ONLY", condition: "F - Parts Only"
+    });
+  });
+
+  it("repairs an existing stale status code without fabricating a new status transition", async () => {
+    await db.update(schema.fleetMachines).set({
+      availability: "PARTS ONLY", condition: "U - Unchecked", statusOverride: true
+    }).where(eq(schema.fleetMachines.machineNo, "4"));
+    expect(await edit("4", "PARTS ONLY", "PARTS ONLY")).toBe("saved");
+    expect((await machineDetail(db, "4"))!.machine.condition).toBe("F - Parts Only");
+    expect(await events()).toHaveLength(0);
+    expect((await db.select().from(schema.fleetFieldEvents)).map((r) => [r.field, r.previousValue, r.nextValue]))
+      .toEqual([["condition", "U - Unchecked", "F - Parts Only"]]);
+    expect(await edit("4", "PARTS ONLY", "PARTS ONLY")).toBe("unchanged");
+  });
+
+  it("keeps custom condition and sale grade from being silently overwritten", async () => {
+    await db.update(schema.fleetMachines).set({ condition: "Custom inspected - needs wiring" })
+      .where(eq(schema.fleetMachines.machineNo, "4"));
+    expect(await edit("4", "PARTS ONLY", "UNCHECKED")).toBe("saved");
+    expect((await machineDetail(db, "4"))!.machine.condition).toBe("Custom inspected - needs wiring");
+    expect(await db.select().from(schema.fleetFieldEvents)).toHaveLength(0);
+
+    await db.update(schema.fleetMachines).set({ condition: "A - Excellent" })
+      .where(eq(schema.fleetMachines.machineNo, "1"));
+    expect(await edit("1", "READY TO SALE")).toBe("saved");
+    expect((await machineDetail(db, "1"))!.machine.condition).toBe("A - Excellent");
+  });
+
   it("saves status per machine, writes one audit event and removes off-lot donor immediately", async () => {
     expect((await mpnDetail(db, "OLDPART", "eligible"))?.machines.map(m => m.machine_no)).toEqual(["1","2"]);
     expect(await edit("1", "SOLD")).toBe("saved");
