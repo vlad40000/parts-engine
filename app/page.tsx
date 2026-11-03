@@ -4,6 +4,7 @@ import { fleetFacets, fleetSummary, getSettings, listFleet } from "@/src/db/quer
 import { openLocationCheckCount } from "@/src/db/tech-notes";
 import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
+import { FleetAgeBandPanel } from "@/src/components/fleet-age-band-panel";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
 import { ModelEditCell } from "@/src/components/model-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
@@ -44,30 +45,6 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
         <Stat label="Need nameplate" value={summary.totals.needs_nameplate.toLocaleString()} />
       </div>
 
-      <section className="card mb-5 overflow-x-auto p-4">
-        <h2 className="mb-2 font-semibold">Age band × type</h2>
-        <p className="mb-3 text-xs text-muted">A machine counts in every band one of its possible years falls in, so rows can add up to more than the machine count.</p>
-        <table className="w-full text-sm">
-          <thead>
-            <tr><th>Type</th><th className="num">Machines</th>{DEFAULT_AGE_BANDS.map((b) => <th key={b.key} className="num">{b.label}</th>)}<th className="num">Unknown</th></tr>
-          </thead>
-          <tbody>
-            {summary.bandMatrix.slice(0, 25).map((r) => (
-              <tr key={r.type}>
-                <td><Link className="hover:underline" href={qs({}, { type: r.type })}>{r.type || "—"}</Link></td>
-                <td className="num">{r.counts.total}</td>
-                {DEFAULT_AGE_BANDS.map((b) => (
-                  <td key={b.key} className="num">
-                    {r.counts[b.key] ? <Link className="hover:underline" href={`/bom${qs({}, { type: r.type, band: b.key })}`}>{r.counts[b.key]}</Link> : <span className="text-muted">·</span>}
-                  </td>
-                ))}
-                <td className="num text-muted">{r.counts.unknown || "·"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="mt-2 text-xs text-muted">Click a band count to open those models in Parts lists.</p>
-      </section>
 
       {toVerify || sp.verify === "1" ? (
         <div role="status" className="mb-3 rounded border border-stop/30 bg-red-50 p-2 text-sm">
@@ -130,6 +107,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
         </table>
       </div>
       <Pager total={list.total} limit={100} offset={offset} href={(o) => qs(base, { offset: o })} />
+      <FleetAgeBandPanel matrix={summary.bandMatrix} />
     </>
   );
 }
