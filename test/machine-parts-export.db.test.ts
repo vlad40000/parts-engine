@@ -71,7 +71,7 @@ describe("machine-specific complete parts CSV export", () => {
     const response = await request("17");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/csv");
-    expect(response.headers.get("content-disposition")).toMatch(/machine-17-all-parts-.*\\.csv/);
+    expect(response.headers.get("content-disposition")).toMatch(/machine-17-all-parts-.*\.csv/);
     expect(response.headers.get("cache-control")).toContain("no-store");
 
     const [header, ...rows] = parseCsvRows(await response.text());
