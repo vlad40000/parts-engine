@@ -8,6 +8,7 @@ import type { Db } from "@/src/db/types";
 import { listFleet, machineDetail, mpnDetail, updateMachineLocation, upsertFleet } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { updateMachineLocationAction } from "@/app/actions";
+import { FLEET_LOCATION_OPTIONS, fleetLocationChoice, resolveFleetLocationChoice } from "@/src/lib/fleet-location-options";
 import { GET as exportDonors } from "@/app/api/export/mpn-donors/route";
 
 const holder = vi.hoisted(() => ({ db: null as unknown }));
@@ -27,6 +28,48 @@ beforeEach(async () => {
 });
 
 describe("physical machine locations", () => {
+  it("offers the exact five named locations plus Other, preserving legacy names", () => {
+    expect(FLEET_LOCATION_OPTIONS).toEqual(["Red Building", "Shop", "Warehouse", "ICU", "Graveyard"]);
+    expect(fleetLocationChoice("Red Building")).toBe("Red Building");
+    expect(fleetLocationChoice("YARD-A3")).toBe("__other");
+    expect(fleetLocationChoice(null)).toBe("");
+    expect(resolveFleetLocationChoice("Red Building", "")).toBe("Red Building");
+    expect(resolveFleetLocationChoice("__other", "  BAY-07  ")).toBe("BAY-07");
+    expect(resolveFleetLocationChoice("__clear", "")).toBe("");
+    expect(resolveFleetLocationChoice("__other", "  ")).toBeNull();
+    expect(resolveFleetLocationChoice("unlisted choice", "")).toBeNull();
+  });
+
+  it("saves a dropdown move and its location history; Other and Clear work without weakening conflict checks", async () => {
+    const form = (machineNo: string, expected: string, choice: string, other = "") => {
+      const f = new FormData();
+      f.set("machineNo", machineNo);
+      f.set("expectedLocation", expected);
+      f.set("locationChoice", choice);
+      f.set("locationOther", other);
+      return f;
+    };
+
+    expect(await updateMachineLocationAction(null, form("1", "YARD-A3", "Red Building")))
+      .toMatchObject({ ok: true });
+    expect((await machineDetail(db, "1"))!.machine).toMatchObject({
+      location: "Red Building", locationOverride: true
+    });
+    expect((await db.select().from(schema.fleetFieldEvents)).map((x) => [x.field, x.previousValue, x.nextValue]))
+      .toEqual([["location", "YARD-A3", "Red Building"]]);
+
+    expect((await updateMachineLocationAction(null, form("1", "YARD-A3", "Shop"))).ok).toBe(false);
+    expect((await updateMachineLocationAction(null, form("1", "Red Building", "unknown"))).ok).toBe(false);
+    expect(await updateMachineLocationAction(null, form("1", "Red Building", "__other", "YARD-D1")))
+      .toMatchObject({ ok: true });
+    expect((await machineDetail(db, "1"))!.machine.location).toBe("YARD-D1");
+    expect(await updateMachineLocationAction(null, form("1", "YARD-D1", "__clear")))
+      .toMatchObject({ ok: true });
+    expect((await machineDetail(db, "1"))!.machine).toMatchObject({ location: null, locationOverride: true });
+    await upsertFleet(db, mapFleetRows([row(1, "YARD-A3")]).rows);
+    expect((await machineDetail(db, "1"))!.machine.location).toBeNull();
+  });
+
   it("supports location search, a dedicated filter and A–Z / Z–A sorting with pagination", async () => {
     expect((await listFleet(db, { q: "yard-a3" })).rows.map(m => m.machine_no)).toEqual(["1"]);
     expect((await listFleet(db, { location: "rack" })).rows.map(m => m.machine_no)).toEqual(["2"]);
