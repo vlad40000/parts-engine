@@ -113,6 +113,13 @@ describe("machine number checks", () => {
     expect(plan({ entries: [entry("6142", { model: "GTUP240EM5WW" })] }, f).questions).toEqual([]);
     expect(plan({ entries: [entry("6142", { model: "MEDB880BW0" })] }, f).questions[0].prompt).toContain("The note says model MEDB880BW0, but #6142 is a GTUP240EM5WW.");
     expect(plan({ entries: [entry("6142", { problem: "needs gassing" })] }, f).questions[0].prompt).toContain('mentions "gassing"');
+    const washer = facts([fact("6325", { applianceType: "Washer - Top Load / No Agitator" })]);
+    const wrongType = plan({ entries: [entry("6325", { note: "Whirlpool front-load dryer. Replaced heater element." })] }, washer);
+    expect(wrongType.questions.find((q) => q.kind === "machine")?.prompt).toContain('mentions "front-load dryer"');
+    expect(wrongType.ready).toBe(false);
+    // A matching appliance does not raise a false mismatch.
+    const dryer = facts([fact("6325", { applianceType: "Dryer - Electric" })]);
+    expect(plan({ entries: [entry("6325", { note: "Whirlpool front-load dryer." })] }, dryer).questions.filter((q) => q.kind === "machine")).toEqual([]);
   });
 
   it("asks which entry counts when one machine appears twice", () => {
