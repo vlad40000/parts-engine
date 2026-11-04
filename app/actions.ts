@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
-  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartDisposition, setPartState, updateMpnManual, upsertBaseline,
+  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartDisposition, setPartStateFromPage, updateMpnManual, upsertBaseline,
   updateMachineLocation, updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { verifyLocation } from "@/src/db/tech-notes";
@@ -405,15 +405,34 @@ export async function addAliasAction(form: FormData): Promise<void> {
   revalidatePath("/", "layout");
 }
 
-export async function setPartStateAction(form: FormData): Promise<void> {
+/** Optimistic initial part-state change, safe when another tab has listed or sold the part. */
+export async function setPartStateAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const state = String(form.get("state") ?? "");
-  await setPartState(
-    await getDb(),
-    String(form.get("machineNo")),
-    String(form.get("mpn")),
-    state === "clear" ? null : (state as "pulled" | "failed" | "missing" | "skip")
-  );
-  revalidatePath("/", "layout");
+  const expected = form.get("expectedState");
+  const renderedToken = form.get("token");
+  if (!["pulled", "failed", "missing", "clear"].includes(state)) {
+    return { ok: false, message: "Unknown part-state choice. Refresh the page." };
+  }
+  if (expected === null || renderedToken === null) {
+    return { ok: false, message: "This part may have changed. Refresh and try again." };
+  }
+  try {
+    const outcome = await setPartStateFromPage(await getDb(), {
+      machineNo: String(form.get("machineNo") ?? ""),
+      mpnCanonical: String(form.get("mpn") ?? ""),
+      state: state === "clear" ? null : (state as "pulled" | "failed" | "missing"),
+      expectedState: String(expected) || null,
+      token: String(renderedToken) || null
+    });
+    if (outcome === "saved") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: "Part state saved." };
+    }
+    if (outcome === "invalid") return { ok: false, message: "Invalid part-state input." };
+    return { ok: false, message: "This part changed since the page loaded. Refresh and try again." };
+  } catch {
+    return { ok: false, message: "Could not save this part state. No change confirmed." };
+  }
 }
 
 const DISPOSITION_STEPS: readonly DispositionStep[] = ["ebay", "repair", "listed", "sold", "unlisted", "back"];
