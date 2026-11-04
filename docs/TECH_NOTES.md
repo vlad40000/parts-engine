@@ -65,7 +65,7 @@ When a pending note identifies a SOLD machine and mentions a physical location (
 - **Uncertain:** Do not infer a current status or location from the photo or from the date it was uploaded. Keep the review open so the alert remains visible.
 - **Identity conflict:** Resolve the machine identity before updating any field.
 
-A physical return is not automatically READY TO SALE or an eligible donor; choose the appropriate Fleet status based on the current inspection. The VERIFY RETURN review alert clears when the pending note is resolved or the machine is no longer recorded as SOLD (after the separate current status edit). Location verification from conflicting applied notes is a separate check.
+A physical return is not automatically READY TO SALE or an eligible donor; choose the appropriate Fleet status based on the current inspection. The VERIFY RETURN alert clears when the pending note is resolved or both the current SOLD status and SOLD location marker have been reconciled (using separate Fleet status and location edits). Location verification from conflicting applied notes is a separate check.
 
 ## VERIFY LOCATION
 
