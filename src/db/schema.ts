@@ -390,10 +390,24 @@ export const machinePartState = pgTable("machine_part_state", {
   note: text("note"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** When a tech note observed this state (its written date). Null: updated_at. */
-  observedAt: timestamp("observed_at", { withTimezone: true })
+  observedAt: timestamp("observed_at", { withTimezone: true }),
+  /**
+   * Where a pulled part went (owner decision 2026-11-04; authoritative here): null (pulled, undecided),
+   * 'ebay', 'listed', 'sold' or 'repair'. Unlisted deletes the row, so the part counts as on the machine again.
+   */
+  disposition: text("disposition"),
+  /** Set when the part was marked Listed; kept through Sold so undo steps back to Listed. */
+  listedAt: timestamp("listed_at", { withTimezone: true }),
+  soldPrice: numeric("sold_price", { precision: 10, scale: 2 }),
+  /** The fleet machine this part went into for a repair. */
+  repairMachineNo: text("repair_machine_no")
 }, (t) => [
   primaryKey({ columns: [t.machineNo, t.mpnCanonical] }),
-  check("part_state_check", sql`${t.state} in ('pulled','failed','missing','skip')`)
+  check("part_state_check", sql`${t.state} in ('pulled','failed','missing','skip')`),
+  check("part_state_disposition_valid", sql`${t.disposition} is null or (${t.state} = 'pulled' and ${t.disposition} in ('ebay','listed','sold','repair'))`),
+  check("part_state_sold_price_valid", sql`(${t.disposition} is not distinct from 'sold') = (${t.soldPrice} is not null) and (${t.soldPrice} is null or ${t.soldPrice} >= 0)`),
+  check("part_state_repair_machine_valid", sql`(${t.disposition} is not distinct from 'repair') = (${t.repairMachineNo} is not null)`),
+  check("part_state_listed_at_valid", sql`${t.listedAt} is null or ${t.disposition} in ('listed','sold')`)
 ]);
 
 /** Shop-floor stopwatch observations. Completely separate from cost assumptions and inventory state. */

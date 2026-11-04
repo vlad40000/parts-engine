@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
-  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartState, updateMpnManual, upsertBaseline,
+  addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartDisposition, setPartState, updateMpnManual, upsertBaseline,
   updateMachineLocation, updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { verifyLocation } from "@/src/db/tech-notes";
@@ -18,6 +18,7 @@ import {
   batchKeys, EBAYDECISIONS_MAX_MPNS, EBAYDECISIONS_SOURCE, EbayDecisionsError, ebayDecisionsConfig, fetchMarketFacts, planMarketFacts
 } from "@/src/lib/ebaydecisions";
 import { canonicalizeMpn } from "@/src/lib/mpn";
+import { isDisposition, type Disposition, type DispositionStep } from "@/src/lib/part-disposition";
 import { harvestTimeIssue, parseHarvestSession } from "@/src/lib/harvest-time";
 import { recordHarvestSession } from "@/src/db/harvest-time";
 import { mapSaleRows, SALES_HEADERS } from "@/src/lib/sales-import";
@@ -413,6 +414,36 @@ export async function setPartStateAction(form: FormData): Promise<void> {
     state === "clear" ? null : (state as "pulled" | "failed" | "missing" | "skip")
   );
   revalidatePath("/", "layout");
+}
+
+const DISPOSITION_STEPS: readonly DispositionStep[] = ["ebay", "repair", "listed", "sold", "unlisted", "back"];
+
+export async function setPartDispositionAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const step = String(form.get("step") ?? "") as DispositionStep;
+  const fromRaw = String(form.get("from") ?? "");
+  if (!DISPOSITION_STEPS.includes(step) || (fromRaw !== "" && !isDisposition(fromRaw))) return { ok: false, message: "Unknown step. Refresh and try again." };
+  try {
+    const outcome = await setPartDisposition(await getDb(), {
+      machineNo: String(form.get("machineNo") ?? ""),
+      mpnCanonical: String(form.get("mpn") ?? ""),
+      from: fromRaw === "" ? null : (fromRaw as Disposition),
+      step,
+      soldPrice: form.get("soldPrice") === null ? null : String(form.get("soldPrice")),
+      repairMachineNo: form.get("repairMachineNo") === null ? null : String(form.get("repairMachineNo"))
+    });
+    if (outcome === "saved") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: "Saved." };
+    }
+    if (outcome === "invalid_price") return { ok: false, message: "Enter the sold price (a number, 0 or more)." };
+    if (outcome === "invalid_machine") return { ok: false, message: "Enter the Machine ID the part went into." };
+    if (outcome === "unknown_machine") return { ok: false, message: "No fleet machine has that Machine ID." };
+    if (outcome === "same_machine") return { ok: false, message: "That is this machine. Enter the machine being repaired." };
+    if (outcome === "invalid_step") return { ok: false, message: "That step is not available from here." };
+    return { ok: false, message: "This part changed since the page loaded. Refresh and try again." };
+  } catch {
+    return { ok: false, message: "Could not save. No change confirmed." };
+  }
 }
 
 export async function saveSettingsAction(form: FormData): Promise<void> {

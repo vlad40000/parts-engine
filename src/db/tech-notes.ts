@@ -459,7 +459,12 @@ export async function applyTechNote(db: Db, id: string, plan: Plan, reading: Not
       select p.machine_no, p.mpn, p.state, p.note, now(), ${obs}
       from part_input p, ok
       where ok.ok
-      on conflict (machine_no, mpn_canonical) do update set state = excluded.state, note = excluded.note, updated_at = now(), observed_at = excluded.observed_at
+      on conflict (machine_no, mpn_canonical) do update set state = excluded.state, note = excluded.note, updated_at = now(), observed_at = excluded.observed_at,
+        -- A pulled part keeps where it went (eBay/listed/sold/repair); any other state has none.
+        disposition = case when excluded.state = 'pulled' then machine_part_state.disposition end,
+        listed_at = case when excluded.state = 'pulled' then machine_part_state.listed_at end,
+        sold_price = case when excluded.state = 'pulled' then machine_part_state.sold_price end,
+        repair_machine_no = case when excluded.state = 'pulled' then machine_part_state.repair_machine_no end
         -- Only over the part record the reviewer saw (the planner already settled precedence, including a
         -- same-day "apply"), or over an older one when there was none: never over a record written since.
         where machine_part_state.updated_at <= coalesce(

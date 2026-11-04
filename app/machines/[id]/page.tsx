@@ -5,7 +5,8 @@ import { machineDetail } from "@/src/db/queries";
 import { machineHistory, openLocationChecks, pendingMachineNotes } from "@/src/db/tech-notes";
 import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
-import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
+import { setPartDispositionAction, setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
+import { PartDispositionControl } from "@/src/components/part-disposition-control";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
 import { VerifyReturn } from "@/src/components/verify-return";
@@ -150,7 +151,9 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
                 <td className="num">{p.qualification?.economics ? usd(p.qualification.economics.breakEven) : ""}</td>
                 <td>{p.prefilter && p.market === "missing" ? <span className="pill pill-mute" title={p.prefilter}>skipped</span> : <QualificationPill v={p.qualification} market={p.market} />}</td>
                 <td><RoadrunnerHistory p={p.roadrunner} /></td>
-                <td><StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} /></td>
+                <td>{p.state === "pulled"
+                  ? <PartDispositionControl machineNo={m.machineNo} mpn={p.mpn_canonical} disposition={p.disposition} soldPrice={p.soldPrice} repairMachineNo={p.repairMachineNo} action={setPartDispositionAction} />
+                  : <StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} />}</td>
               </tr>
             ))}
           </tbody>

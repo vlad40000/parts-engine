@@ -11,7 +11,8 @@ Parts Engine is the standalone fleet discovery and harvest-planning orchestrator
 Other applications remain authoritative for their domains:
 - **EbayDecisions:** eBay market research facts.
 - **Parts Image Finder:** MPN relationships, compatibility/fitment research, and listing-package research.
-- **Roadrunner Parts Ledger:** physical harvested inventory, SKU lifecycle, publishing, and realized sales/stock.
+- **Roadrunner Parts Ledger:** physical harvested inventory and SKU lifecycle.
+  Where a pulled part went (eBay, listed, sold with sold price, or repair into another fleet machine) set in Parts Engine is authoritative here (owner decision 2026-11-04); Unlisted returns the part to the machine until a storage area exists.
 - **Appliance Inventory / App 1:** upstream machine identity and fleet intake when connected.
   Machine operational state set from tech notes in Parts Engine (status, condition, location, diagnosis, repair notes, sticker price) is authoritative here (owner decision 2026-10-29); re-imports must keep it (`local_fields`, `status_override`, `location_override`).
 
