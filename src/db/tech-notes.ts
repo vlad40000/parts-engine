@@ -605,18 +605,47 @@ export async function machineHistory(db: Db, machineNo: string, limit = 60): Pro
 
 
 /** Pending handwritten service observations for a machine. No change is applied before review. */
+/**
+ * Open photo/typed notes across Fleet. A single note can mention multiple machines;
+ * each machine gets one alert for that note. Unidentified photos still count as open
+ * notes so they are never hidden from the review queue.
+ */
+export async function pendingFleetReview(db: Db): Promise<{
+  noteCount: number; machineCounts: Record<string, number>;
+}> {
+  const rows = await q<{ note_id: string; machine_no: string | null }>(db, sql`
+    select n.id::text note_id, f.machine_no
+    from tech_notes n
+    left join lateral jsonb_array_elements(coalesce(n.reading->'entries', '[]'::jsonb)) e(value) on true
+    left join fleet_machines f on f.machine_no = e.value->'machine'->>'text'
+    where n.status = 'open'
+  `);
+  const noteIds = new Set<string>();
+  const byMachine = new Map<string, Set<string>>();
+  for (const row of rows) {
+    noteIds.add(row.note_id);
+    if (!row.machine_no) continue;
+    const ids = byMachine.get(row.machine_no) ?? new Set<string>();
+    ids.add(row.note_id);
+    byMachine.set(row.machine_no, ids);
+  }
+  return { noteCount: noteIds.size, machineCounts: Object.fromEntries([...byMachine].map(([no, ids]) => [no, ids.size])) };
+}
+
+/** Each alert uses the actual entry for this machine, never entry 0 from another machine. */
 export async function pendingMachineNotes(db: Db, machineNo: string): Promise<Array<{
   id: string; written: string; location: string; status: string;
 }>> {
   return q<{ id: string; written: string; location: string; status: string }>(db, sql`
-    select id::text as id,
-      coalesce(reading->'date'->>'text', '') as written,
-      coalesce(reading->'entries'->0->'location'->>'name', '') as location,
-      coalesce(nullif(reading->'entries'->0->'status'->>'checked', ''),
-        reading->'entries'->0->'status'->'phrases'->>0, '') as status
-    from tech_notes
-    where status = 'open'
-      and reading->'entries' @> ${JSON.stringify([{ machine: { text: machineNo } }])}::jsonb
-    order by created_at desc limit 100
+    select n.id::text as id,
+      coalesce(n.reading->'date'->>'text', '') as written,
+      coalesce(nullif(e.value->'location'->>'name', ''), e.value->'location'->>'text', '') as location,
+      coalesce(nullif(e.value->'status'->>'checked', ''),
+        e.value->'status'->'phrases'->>0, '') as status
+    from tech_notes n
+    cross join lateral jsonb_array_elements(coalesce(n.reading->'entries', '[]'::jsonb)) e(value)
+    where n.status = 'open'
+      and e.value->'machine'->>'text' = ${machineNo}
+    order by n.created_at desc limit 100
   `);
 }
