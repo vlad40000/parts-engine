@@ -56,16 +56,17 @@ The date written on a note is when it was observed; the upload time is only when
 
 ## VERIFY RETURN (SOLD machines may re-enter inventory)
 
-A **SOLD** status is not permanent. A returned or exchanged appliance can re-enter the lot under its original Machine ID. Historical workbook imports sometimes contain SOLD without a dated sale event, so an old showroom/shop note cannot be classified as pre-sale or post-return from the upload timestamp alone.
+A **SOLD** status is not permanent. Returned or exchanged appliances can be checked back into inventory under their original Machine ID. Many historical imports lack a dated sale event, so a shop photo alone cannot establish whether the unit was seen before the sale or after a return.
 
-When a pending note identifies a SOLD machine and mentions a physical location (for example **Shop**, **Red Building**, or **Showroom**) or a non-SOLD Fleet status, Fleet and the machine page show **VERIFY RETURN**. The review explicitly asks whether the note predates the latest sale or the machine has physically returned.
+When an open note describes an on-lot location or active inventory status while the machine is SOLD (or still has the `$$$SOLD$$$` location marker), Fleet and machine detail show **VERIFY RETURN**.
 
-- **Historical photo:** Select the "before last sale" answer in the note review. Its dated repair history is retained, and its status, location, part states, and current SOLD value stay unchanged.
-- **Possible return:** Leave the note pending. Check the physical machine and Machine ID, establish the actual return date, and use the machine's Fleet status and location editors to enter the **current** observed values. Those edits are dated now and audit-logged. Re-open the old photo note afterward: its previous observations go into history, not over the newly verified inventory state.
-- **Uncertain:** Do not infer a current status or location from the photo or from the date it was uploaded. Keep the review open so the alert remains visible.
-- **Identity conflict:** Resolve the machine identity before updating any field.
+**One-step physical verification:** Open the machine page, inspect the machine and Machine ID in person, select its **current status** and **physical location** in the VERIFY RETURN form, check the confirmation box, and save once. Status, location, standardized condition, import-protection overrides, audit history, and any existing open VERIFY LOCATION checks are updated **atomically**. The return verification date is the time of physical inspection, not an asserted historic return date. This clears the VERIFY RETURN alert as long as both SOLD markers are reconciled; the original photo note remains saved and open for normal service-history review, but it does not need to be reopened to clear the return alert.
 
-A physical return is not automatically READY TO SALE or an eligible donor; choose the appropriate Fleet status based on the current inspection. The VERIFY RETURN alert clears when the pending note is resolved or both the current SOLD status and SOLD location marker have been reconciled (using separate Fleet status and location edits). Location verification from conflicting applied notes is a separate check.
+**Photo from before last sale:** Do not change the Fleet machine record. The note review's "before last sale" option retains dated information as history without reversing SOLD.
+
+**Uncertain or mismatched identity:** Do not infer location or status, and do not verify. Leave the review open. A physical return is not automatically READY TO SALE or donor eligible: choose its actual observed status.
+
+Manual return verification is audited with source `return_verified`. Later workbook imports cannot silently overwrite the confirmed status or location. Location checks arising from other subsequent observations may still require their own verification.
 
 ## VERIFY LOCATION
 
