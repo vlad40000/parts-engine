@@ -6,7 +6,7 @@
  * A stale SOLD location marker must keep the alert visible even if somebody
  * edits the status alone: both fields need a current physical confirmation.
  */
-const soldMarker = (s: string | null | undefined) => {
+export const isSoldLocationMarker = (s: string | null | undefined) => {
   const value = (s ?? "").trim().toLowerCase();
   return value === "$$$sold$$$" || value === "sold" || value === "off lot" || value === "off-lot";
 };
@@ -16,10 +16,10 @@ export function isReturnCandidate(
   observedStatus: string | null | undefined,
   currentLocation?: string | null
 ): boolean {
-  const wasOffLot = currentStatus.trim().toUpperCase() === "SOLD" || soldMarker(currentLocation);
+  const wasOffLot = currentStatus.trim().toUpperCase() === "SOLD" || isSoldLocationMarker(currentLocation);
   if (!wasOffLot) return false;
   const seen = (observedLocation ?? "").trim().toLowerCase();
-  const onLotLocation = !!seen && !soldMarker(seen) && seen !== "scrapped" && seen !== "graveyard";
+  const onLotLocation = !!seen && !isSoldLocationMarker(seen) && seen !== "scrapped" && seen !== "graveyard";
   const status = (observedStatus ?? "").trim().toUpperCase();
   const onLotStatus = ["UNCHECKED", "NEEDS PARTS", "PARTS ONLY", "PARTS PROGRAM", "BEING REPAIRED", "READY TO SALE"].includes(status);
   return onLotLocation || onLotStatus;
