@@ -590,14 +590,14 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       const readyForClean = e.readyForClean || phrases.some((p) => READY_FOR_CLEAN.test(p));
       // A SOLD machine may have been returned. Its photographed location or on-lot
       // status is evidence to physically verify, not a reason to reverse the sale.
-      const possibleReturn = isReturnCandidate(fact.availability, nextLocation ?? e.location.text, [...statuses][0] ?? "");
+      const possibleReturn = isReturnCandidate(fact.availability, nextLocation ?? e.location.text, [...statuses][0] ?? "", fact.location);
       if (possibleReturn) {
         ask({
           id: `return:${e.key}`, kind: "return", entry: e.key,
-          prompt: `VERIFY RETURN — #${no} is SOLD in Fleet, but the ${shortDate(day)} note indicates an on-lot observation${nextLocation ? ` at ${nextLocation}` : ""}. The actual sale date may be unknown. Was this before the last sale, or has the machine returned? If it returned, physically check it, update its current Fleet status and location, then reopen this note. The photo alone does not prove the current status.`,
+          prompt: `VERIFY RETURN — #${no} has a SOLD status or location marker in Fleet, but the ${shortDate(day)} note indicates an on-lot observation${nextLocation ? ` at ${nextLocation}` : ""}. The actual sale date may be unknown. Was this before the last sale, or has the machine returned? If it returned, physically check it, update its current Fleet status and location, then reopen this note. The photo alone does not prove the current status.`,
           options: [{ value: "history", label: "Before last sale — keep SOLD; preserve this note as history" }]
         });
-        planned.info.push(`VERIFY RETURN: #${no} is currently SOLD. Its on-lot observation requires physical verification before changing Fleet.`);
+        planned.info.push(`VERIFY RETURN: #${no} has a SOLD status or location marker. Its on-lot observation requires physical verification before changing Fleet.`);
       }
       const keep = { value: "keep", label: `Leave status as ${fact.availability}` };
       const statusOptions = (recommended?: string | null) => NOTE_STATUS_VALUES.filter((s) => s !== fact.availability)
