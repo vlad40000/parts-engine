@@ -7,6 +7,7 @@ import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
 import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
+import { StatusEditCell } from "@/src/components/status-edit-cell";
 import { ButtonForm } from "@/src/components/forms";
 import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
 import { updateMachineStatusAction } from "../../actions";
@@ -53,6 +54,12 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   return (
     <>
       <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
+      {pendingNotes.some((n) => n.verifyReturn) ? (
+        <section role="alert" className="card mb-4 border border-stop/40 bg-amber-50 p-3 text-sm">
+          <div className="font-semibold"><span className="pill pill-stop">VERIFY RETURN</span> Possible re-entry after SOLD</div>
+          <p className="mt-2">A photographed note places this machine on the lot or gives it an inventory status, but Fleet still says SOLD. The date of the last sale may not be recorded. Check the machine physically and confirm its identity, return date, present location, and status. If it returned, update the Fleet status and location below before applying the old note. Do not discard this observation or automatically undo SOLD.</p>
+        </section>
+      ) : null}
       {pendingNotes.length ? (
         <section role="alert" className="card mb-4 border border-wait/40 bg-amber-50 p-3 text-sm">
           <div className="font-semibold">TECH NOTE REVIEW — {pendingNotes.length} pending service observation{pendingNotes.length === 1 ? "" : "s"}</div>
@@ -61,6 +68,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
             {pendingNotes.map((n) => (
               <li key={n.id}>
                 <Link className="text-accent underline" href={`/notes/${n.id}`}>Review note{n.written ? ` (${n.written})` : " (undated)"}</Link>
+                {n.verifyReturn ? " · VERIFY RETURN (SOLD but photographed on lot)" : ""}
                 {n.location && n.location.toLowerCase() !== (m.location ?? "").toLowerCase() ? ` · LOCATION CONFLICT: ${n.location} vs ${m.location ?? "unknown"}` : ""}
                 {n.status && n.status.toUpperCase() !== m.availability.toUpperCase() ? ` · STATUS CONFLICT: ${n.status} vs ${m.availability}` : ""}
               </li>
@@ -72,7 +80,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
         <div className="card p-3">
           <div className="text-xs text-muted">Status</div>
-          <div className="font-semibold">{m.availability}</div>
+          <StatusEditCell machineNo={m.machineNo} status={m.availability} action={updateMachineStatusAction} />
           <div className="mt-2 text-xs text-muted">Physical location</div>
           <LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
           <div className="mt-2 text-xs text-muted">Condition</div>
