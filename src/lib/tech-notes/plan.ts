@@ -653,7 +653,8 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       let condition: string | null = null;
       if (effectiveStatus === "READY TO SALE") {
         if (e.grade) condition = gradeCondition(e.grade);
-        else if (statusChanged && !isSaleCondition(fact.condition)) {
+        else if (statusChanged && !isSaleCondition(fact.condition) && !possibleReturn
+          && precedence(day, fact.fieldUpdates.availability, fact.lastUpdate) !== "older") {
           const a = ask({
             id: `grade:${e.key}`, kind: "grade", entry: e.key, prompt: `#${no} is going up for sale. What grade is it?`,
             options: SALE_GRADES.map((g) => ({ value: `set:${g.condition}`, label: g.condition, recommended: g.grade === "B" }))
