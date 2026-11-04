@@ -56,6 +56,14 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
           <span className="ml-1">Review conflicts before applying changes. Current Fleet values remain in place.</span>
         </div>
       ) : null}
+      {Object.keys(pendingReview.returnMachineCounts).length ? (
+        <div role="alert" className="mb-3 rounded border border-stop/30 bg-amber-50 p-3 text-sm">
+          <span className="pill pill-stop">VERIFY RETURN</span>{" "}
+          {Object.keys(pendingReview.returnMachineCounts).length} SOLD machine{Object.keys(pendingReview.returnMachineCounts).length === 1 ? "" : "s"} with a photographed on-lot location or status.
+          <span className="ml-1">A returned machine may be back in inventory. Verify its physical location and current status before changing the SOLD record.</span>
+          {" "}<Link className="text-accent underline" href="/notes">Review notes</Link>
+        </div>
+      ) : null}
       {toVerify || sp.verify === "1" ? (
         <div role="status" className="mb-3 rounded border border-stop/30 bg-red-50 p-2 text-sm">
           <span className="pill pill-stop">VERIFY LOCATION</span>{" "}
@@ -96,6 +104,9 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
               <tr key={m.machine_no}>
                 <td>
                   <Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(m.machine_no)}`}>{m.machine_no}</Link>
+                  {pendingReview.returnMachineCounts[m.machine_no] ? (
+                    <Link className="pill pill-stop mt-1 inline-block whitespace-nowrap" href={`/machines/${encodeURIComponent(m.machine_no)}`}>VERIFY RETURN</Link>
+                  ) : null}
                   {pendingReview.machineCounts[m.machine_no] ? (
                     <Link className="pill pill-wait mt-1 inline-block whitespace-nowrap" href={`/machines/${encodeURIComponent(m.machine_no)}`}>
                       REVIEW UPDATE · {pendingReview.machineCounts[m.machine_no]}
