@@ -59,7 +59,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
       {Object.keys(pendingReview.returnMachineCounts).length ? (
         <div role="alert" className="mb-3 rounded border border-stop/30 bg-amber-50 p-3 text-sm">
           <span className="pill pill-stop">VERIFY RETURN</span>{" "}
-          {Object.keys(pendingReview.returnMachineCounts).length} SOLD machine{Object.keys(pendingReview.returnMachineCounts).length === 1 ? "" : "s"} with a photographed on-lot location or status.
+          {Object.keys(pendingReview.returnMachineCounts).length} machine{Object.keys(pendingReview.returnMachineCounts).length === 1 ? "" : "s"} with a SOLD status/location marker and a photographed on-lot observation.
           <span className="ml-1">A returned machine may be back in inventory. Verify its physical location and current status before changing the SOLD record.</span>
           {" "}<Link className="text-accent underline" href="/notes">Review notes</Link>
         </div>
