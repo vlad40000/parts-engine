@@ -1288,20 +1288,27 @@ export async function machineDetail(db: Db, machineNo: string) {
  * Undo is a decision too: the delete and a dated "cleared" event land together, so an older
  * tech note uploaded later cannot quietly put the state back. With a token, only the row as read.
  */
-async function clearPartStateRow(db: Db, machineNo: string, mpnCanonical: string, token?: string, expectedState?: string): Promise<boolean> {
+async function clearPartStateRow(db: Db, machineNo: string, mpnCanonical: string, token?: string, expectedState?: string, dispositionStep?: "unlisted" | "back"): Promise<boolean> {
   const rows = await q<{ n: number }>(db, sql`
     with del as (
       delete from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}
         ${token === undefined ? sql`` : sql`and updated_at = ${token}::timestamptz`}
         ${expectedState === undefined ? sql`` : sql`and state = ${expectedState}`}
-      returning machine_no, mpn_canonical
+      returning machine_no, mpn_canonical, disposition, sold_price, repair_machine_no
+    ),
+    event_logged as (
+      insert into machine_part_disposition_events
+        (machine_no, mpn_canonical, step, previous_disposition, next_disposition, previous_sold_price, sold_price, repair_machine_no)
+      select d.machine_no, d.mpn_canonical, ${dispositionStep ?? null}, d.disposition, null, d.sold_price, null, d.repair_machine_no
+      from del d where ${dispositionStep ?? null}::text is not null
+      returning id
     ),
     ev as (
       insert into fleet_part_events (machine_no, mpn_canonical, part_name, kind, applied, source, observed_at)
       select d.machine_no, d.mpn_canonical, '', 'cleared', true, 'fleet_ui', now() from del d
       where exists (select 1 from fleet_machines f where f.machine_no = d.machine_no)
     )
-    select count(*)::int n from del`);
+    select count(*)::int n from del where (select count(*) from event_logged) >= 0`);
   return Number(rows[0]?.n ?? 0) > 0;
 }
 
@@ -1375,19 +1382,48 @@ export async function setPartDisposition(db: Db, input: {
   };
   const tr = applyStep(cur, input.step, { soldPrice: input.soldPrice, repairMachineNo: input.repairMachineNo, now: new Date() });
   if (tr.kind === "invalid") return tr.reason === "step" ? "invalid_step" : tr.reason === "price" ? "invalid_price" : "invalid_machine";
-  if (tr.kind === "clear") return (await clearPartStateRow(db, machineNo, mpnCanonical, row.token)) ? "saved" : "conflict";
+  if (tr.kind === "clear") return (await clearPartStateRow(db, machineNo, mpnCanonical, row.token, "pulled", input.step === "unlisted" ? "unlisted" : "back")) ? "saved" : "conflict";
   const r = tr.record;
   if (input.step === "repair" && r.repairMachineNo) {
     if (r.repairMachineNo === machineNo) return "same_machine";
     const [m] = await db.select({ no: t.fleetMachines.machineNo }).from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, r.repairMachineNo));
     if (!m) return "unknown_machine";
   }
+  // State transition and its immutable evidence must succeed or fail together.
   const updated = await q<{ n: number }>(db, sql`
-    update machine_part_state set disposition = ${r.disposition}, listed_at = ${r.listedAt ? r.listedAt.toISOString() : null}::timestamptz,
-      sold_price = ${r.soldPrice}::numeric, repair_machine_no = ${r.repairMachineNo}, updated_at = now(), observed_at = null
-    where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical} and updated_at = ${row.token}::timestamptz
-    returning 1 n`);
-  return updated.length ? "saved" : "conflict";
+    with changed as (
+      update machine_part_state set disposition = ${r.disposition}, listed_at = ${r.listedAt ? r.listedAt.toISOString() : null}::timestamptz,
+        sold_price = ${r.soldPrice}::numeric, repair_machine_no = ${r.repairMachineNo}, updated_at = now(), observed_at = null
+      where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical} and updated_at = ${row.token}::timestamptz
+      returning machine_no, mpn_canonical
+    ),
+    event_logged as (
+      insert into machine_part_disposition_events
+        (machine_no, mpn_canonical, step, previous_disposition, next_disposition, previous_sold_price, sold_price, repair_machine_no)
+      select c.machine_no, c.mpn_canonical, ${input.step}, ${row.disposition}, ${r.disposition},
+        ${row.sold_price}::numeric, ${r.soldPrice}::numeric, ${r.repairMachineNo}
+      from changed c
+      returning id
+    )
+    select count(*)::int n from changed where (select count(*) from event_logged) >= 0`);
+  return Number(updated[0]?.n ?? 0) === 1 ? "saved" : "conflict";
+}
+
+/** Dated per-machine evidence of listing, sale price, repair destination and reversals. */
+export type PartDispositionHistoryRow = {
+  id: number; mpn_canonical: string; step: string; previous_disposition: string | null;
+  next_disposition: string | null; previous_sold_price: string | null; sold_price: string | null;
+  repair_machine_no: string | null; recorded: string;
+};
+export async function partDispositionHistory(db: Db, machineNo: string, limit = 100): Promise<PartDispositionHistoryRow[]> {
+  return q<PartDispositionHistoryRow>(db, sql`
+    select id::int id, mpn_canonical, step, previous_disposition, next_disposition,
+      previous_sold_price::text, sold_price::text, repair_machine_no,
+      to_char(recorded_at at time zone 'America/New_York', 'YYYY-MM-DD HH12:MI AM') recorded
+    from machine_part_disposition_events
+    where machine_no = ${machineNo}
+    order by recorded_at desc, id desc
+    limit ${limit}`);
 }
 
 export async function researchQueueCsvRows(db: Db) {
