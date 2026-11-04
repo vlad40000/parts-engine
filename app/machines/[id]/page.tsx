@@ -7,6 +7,7 @@ import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
 import { setPartDispositionAction, setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
 import { PartDispositionControl } from "@/src/components/part-disposition-control";
+import { PartStateButtons } from "@/src/components/part-state-buttons";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
 import { VerifyReturn } from "@/src/components/verify-return";
@@ -15,18 +16,6 @@ import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
 import { updateMachineStatusAction, verifyMachineReturnAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
-
-function StateButtons({ machineNo, mpn, state }: { machineNo: string; mpn: string; state: string | null }) {
-  const opts = state ? ["clear"] : ["pulled", "failed", "missing"];
-  return (
-    <form action={setPartStateAction} className="flex gap-1">
-      <input type="hidden" name="machineNo" value={machineNo} />
-      <input type="hidden" name="mpn" value={mpn} />
-      {state ? <span className="pill pill-mute mr-1">{state}</span> : null}
-      {opts.map((o) => <button key={o} name="state" value={o} className="btn px-2 py-0.5 text-xs">{o === "clear" ? "undo" : o}</button>)}
-    </form>
-  );
-}
 
 type Bom = NonNullable<Awaited<ReturnType<typeof machineDetail>>>["bom"];
 
@@ -153,7 +142,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
                 <td><RoadrunnerHistory p={p.roadrunner} /></td>
                 <td>{p.state === "pulled"
                   ? <PartDispositionControl machineNo={m.machineNo} mpn={p.mpn_canonical} disposition={p.disposition} soldPrice={p.soldPrice} repairMachineNo={p.repairMachineNo} token={p.partToken} action={setPartDispositionAction} />
-                  : <StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} />}</td>
+                  : <PartStateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} token={p.partToken} action={setPartStateAction} />}</td>
               </tr>
             ))}
           </tbody>
