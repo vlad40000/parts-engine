@@ -6,7 +6,7 @@ import { sql } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { upsertFleet, updateMachineStatus } from "@/src/db/queries";
+import { upsertFleet, updateMachineLocation, updateMachineStatus } from "@/src/db/queries";
 import { createTechNote, pendingFleetReview, pendingMachineNotes } from "@/src/db/tech-notes";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { normalizeReading } from "@/src/lib/tech-notes/reading";
@@ -71,8 +71,15 @@ describe("Fleet pending service note alerts", () => {
       id, status: "READY TO SALE", location: "Showroom - Main", verifyReturn: true
     }]);
     expect(await updateMachineStatus(db, { machineNo: "5576", expectedStatus: "SOLD", status: "PARTS ONLY" })).toBe("saved");
-    // The physical confirmation took place through a current Fleet status edit.
-    // The note remains open for chronological review, but no longer implies an unresolved SOLD return.
+    // A status-only edit is incomplete if the location is still the SOLD marker.
+    expect(await pendingFleetReview(db)).toEqual({
+      noteCount: 1, machineCounts: { "5576": 1 }, returnMachineCounts: { "5576": 1 }
+    });
+    expect(await updateMachineLocation(db, {
+      machineNo: "5576", expectedLocation: "$$SOLD$$", location: "Red Building"
+    })).toBe("saved");
+    // Return reconciliation requires both the current status and physical location.
+    // The dated photo still remains open until its history is reviewed.
     expect(await pendingFleetReview(db)).toEqual({
       noteCount: 1, machineCounts: { "5576": 1 }, returnMachineCounts: {}
     });
