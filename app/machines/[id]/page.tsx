@@ -57,7 +57,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       {pendingNotes.some((n) => n.verifyReturn) ? (
         <section role="alert" className="card mb-4 border border-stop/40 bg-amber-50 p-3 text-sm">
           <div className="font-semibold"><span className="pill pill-stop">VERIFY RETURN</span> Possible re-entry after SOLD</div>
-          <p className="mt-2">A photographed note places this machine on the lot or gives it an inventory status, but Fleet still says SOLD. The date of the last sale may not be recorded. Check the machine physically and confirm its identity, return date, present location, and status. If it returned, update the Fleet status and location below before applying the old note. Do not discard this observation or automatically undo SOLD.</p>
+          <p className="mt-2">A photographed note places this machine on the lot or gives it an inventory status, but Fleet still has a SOLD status or location marker. The date of the last sale may not be recorded. Check the machine physically and confirm its identity, return date, present location, and status. If it returned, update the Fleet status and location below before applying the old note. Do not discard this observation or automatically undo SOLD.</p>
         </section>
       ) : null}
       {pendingNotes.length ? (
