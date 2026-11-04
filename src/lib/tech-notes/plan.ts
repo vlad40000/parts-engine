@@ -23,6 +23,7 @@ import {
   gradeCondition, isNoteStatus, isSaleCondition, normalizeLocation, parseCardDate, shortDate, statusLabel, titleCaseLocation
 } from "./vocabulary";
 import { machineDigits, type NoteReading, type ReadEntry, type ReadGroup, type ReadLocation, type ReadPart } from "./reading";
+import { isReturnCandidate } from "./return-review";
 
 // ---------------------------------------------------------------------------
 // Facts: the fleet records the planner may consult.
@@ -110,7 +111,7 @@ export type PartStateChange = {
   seenToken: string | null;
 };
 export type LocationCheck = { from: string; to: string };
-export type QuestionKind = "date" | "machine" | "duplicate" | "group" | "status" | "grade" | "location" | "part" | "other_machine" | "price" | "order";
+export type QuestionKind = "date" | "machine" | "duplicate" | "group" | "status" | "grade" | "location" | "part" | "other_machine" | "price" | "order" | "return";
 export type QuestionOption = { value: string; label: string; detail?: string; recommended?: boolean };
 export type Question = {
   id: string;
@@ -251,6 +252,10 @@ const flaggable = (family: string | null | undefined) => (family && family !== "
 
 // Words on a note that only make sense for one kind of appliance.
 const APPLIANCE_WORDS: Array<{ words: RegExp; label: string; fits: RegExp }> = [
+  // When the note explicitly names an appliance type, guard the machine identity
+  // even if no model/serial is written (e.g. a dryer note on a washer ID).
+  { words: /\b(front[ -]?load dryer|top[ -]?load dryer|electric dryer|gas dryer)\b/i, label: "dryer", fits: /dryer|combo|laundry/i },
+  { words: /\b(front[ -]?load washer|top[ -]?load washer|washing machine)\b/i, label: "washer", fits: /washer|combo|laundry/i },
   { words: /\b(gassing|gassed|refrigerant|freon|evap(orator)?|defrost|sealed system|not cooling|condenser)\b/i, label: "refrigerator", fits: /refrig|freezer|cooler|ice maker|wine|beverage|deli|a\/c/i },
   { words: /\b(agitat\w*|won'?t spin|lid switch|lid lock|dampers?|suspension rods?|transmission|clutch|gearcase|inner tub)\b/i, label: "washer", fits: /washer|combo|laundry/i },
   { words: /\b(drum rollers?|idler|lint|blower wheel)\b/i, label: "dryer", fits: /dryer|combo|laundry/i },
@@ -583,6 +588,17 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         else if (!READY_FOR_CLEAN.test(p) && (!nextLocation || normalizeLocation(p) !== normalizeLocation(nextLocation))) otherWords.push(p);
       }
       const readyForClean = e.readyForClean || phrases.some((p) => READY_FOR_CLEAN.test(p));
+      // A SOLD machine may have been returned. Its photographed location or on-lot
+      // status is evidence to physically verify, not a reason to reverse the sale.
+      const possibleReturn = isReturnCandidate(fact.availability, nextLocation ?? e.location.text, [...statuses][0] ?? "", fact.location);
+      if (possibleReturn) {
+        ask({
+          id: `return:${e.key}`, kind: "return", entry: e.key,
+          prompt: `VERIFY RETURN — #${no} has a SOLD status or location marker in Fleet, but the ${shortDate(day)} note indicates an on-lot observation${nextLocation ? ` at ${nextLocation}` : ""}. The actual sale date may be unknown. Was this before the last sale, or has the machine returned? If it returned, physically check it, update its current Fleet status and location, then reopen this note. The photo alone does not prove the current status.`,
+          options: [{ value: "history", label: "Before last sale — keep SOLD; preserve this note as history" }]
+        });
+        planned.info.push(`VERIFY RETURN: #${no} has a SOLD status or location marker. Its on-lot observation requires physical verification before changing Fleet.`);
+      }
       const keep = { value: "keep", label: `Leave status as ${fact.availability}` };
       const statusOptions = (recommended?: string | null) => NOTE_STATUS_VALUES.filter((s) => s !== fact.availability)
         .map((s) => ({ value: `set:${s}`, label: s, recommended: s === recommended }));
@@ -637,7 +653,8 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       let condition: string | null = null;
       if (effectiveStatus === "READY TO SALE") {
         if (e.grade) condition = gradeCondition(e.grade);
-        else if (statusChanged && !isSaleCondition(fact.condition)) {
+        else if (statusChanged && !isSaleCondition(fact.condition) && !possibleReturn
+          && precedence(day, fact.fieldUpdates.availability, fact.lastUpdate) !== "older") {
           const a = ask({
             id: `grade:${e.key}`, kind: "grade", entry: e.key, prompt: `#${no} is going up for sale. What grade is it?`,
             options: SALE_GRADES.map((g) => ({ value: `set:${g.condition}`, label: g.condition, recommended: g.grade === "B" }))
@@ -802,7 +819,9 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         diagnosis: symptomBits.length > 0 || draftParts.some((d) => d.diagnosisBit)
       };
       const fieldPrecedence: Partial<Record<TrackedField, Precedence>> = {};
-      for (const f of Object.keys(wants) as TrackedField[]) if (wants[f]) fieldPrecedence[f] = precedence(day, fact.fieldUpdates[f], fact.lastUpdate);
+      for (const f of Object.keys(wants) as TrackedField[]) if (wants[f]) {
+        fieldPrecedence[f] = possibleReturn ? "older" : precedence(day, fact.fieldUpdates[f], fact.lastUpdate);
+      }
       // Condition is written with the status: it never outlives a status kept as history.
       if (fieldPrecedence.availability && fieldPrecedence.condition) {
         const rank = { older: 2, uncertain: 1, apply: 0 } as const;
@@ -810,9 +829,10 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       }
       // A part with a parts-list number has its own record; a named part follows the diagnosis.
       for (const d of draftParts) {
-        d.precedence = d.mpn ? precedence(day, fact.partUpdates[d.mpn], fact.lastUpdate)
+        d.precedence = possibleReturn ? "older" : d.mpn ? precedence(day, fact.partUpdates[d.mpn], fact.lastUpdate)
           : fieldPrecedence.diagnosis ?? precedence(day, fact.fieldUpdates.diagnosis, fact.lastUpdate);
       }
+      if (possibleReturn) for (const d of donorParts) d.precedence = "older";
       // When part of this note is certainly older than the record, the note as a whole predates it:
       // fields the record has not set since are history too, not a question. Same-day ties still ask.
       if (Object.values(fieldPrecedence).includes("older") || draftParts.some((d) => d.mpn && d.precedence === "older")) {
@@ -893,7 +913,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
         ["stickerPrice", price != null && sameMoney(price, fact.stickerPrice) ? fact.stickerPrice : null]
       ];
       for (const [field, value] of confirms) {
-        if (value != null && precedence(day, fact.fieldUpdates[field], fact.lastUpdate) === "apply") planned.confirmed.push({ field, from: value, to: value });
+        if (!possibleReturn && value != null && precedence(day, fact.fieldUpdates[field], fact.lastUpdate) === "apply") planned.confirmed.push({ field, from: value, to: value });
       }
       for (const [field, from, to] of want) {
         if (to == null || (from ?? "") === to) continue;
@@ -937,7 +957,7 @@ export function planNote(reading: NoteReading, facts: PlanFacts, answers: Answer
       if (e.note) line.push(sentence(e.note));
       if (historyNotes.length || draftParts.some((d) => !applies(d.precedence)) || donorParts.some((d) => !applies(d.precedence))) {
         if (!applies(fieldPrecedence.diagnosis ?? "apply")) line.push(...said);
-        line.push("(Older than the current record: kept as history.)");
+        line.push(possibleReturn ? "(SOLD/return not verified: kept as history; current Fleet state unchanged.)" : "(Older than the current record: kept as history.)");
       }
       const notesLine = line.length ? `${shortDate(day)}-${line.join(" ")}` : "";
       if (notesLine) {

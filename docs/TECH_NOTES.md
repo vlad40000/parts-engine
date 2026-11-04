@@ -54,6 +54,20 @@ The date written on a note is when it was observed; the upload time is only when
 - When precedence is **uncertain**, the app asks: the note and the record were set on the same day, or the machine was updated after the note's date in another field.
 - Repair notes are a log, not a decision: a note's dated line is always appended.
 
+## VERIFY RETURN (SOLD machines may re-enter inventory)
+
+A **SOLD** status is not permanent. Returned or exchanged appliances can be checked back into inventory under their original Machine ID. Many historical imports lack a dated sale event, so a shop photo alone cannot establish whether the unit was seen before the sale or after a return.
+
+When an open note describes an on-lot location or active inventory status while the machine is SOLD (or still has the `$$$SOLD$$$` location marker), Fleet and machine detail show **VERIFY RETURN**.
+
+**One-step physical verification:** Open the machine page, inspect the machine and Machine ID in person, select its **current status** and **physical location** in the VERIFY RETURN form, check the confirmation box, and save once. Status, location, standardized condition, import-protection overrides, audit history, and any existing open VERIFY LOCATION checks are updated **atomically**. The return verification date is the time of physical inspection, not an asserted historic return date. This clears the VERIFY RETURN alert as long as both SOLD markers are reconciled; the original photo note remains saved and open for normal service-history review, but it does not need to be reopened to clear the return alert.
+
+**Photo from before last sale:** Do not change the Fleet machine record. The note review's "before last sale" option retains dated information as history without reversing SOLD.
+
+**Uncertain or mismatched identity:** Do not infer location or status, and do not verify. Leave the review open. A physical return is not automatically READY TO SALE or donor eligible: choose its actual observed status.
+
+Manual return verification is audited with source `return_verified`. Later workbook imports cannot silently overwrite the confirmed status or location. Location checks arising from other subsequent observations may still require their own verification.
+
 ## VERIFY LOCATION
 
 When a note records a location that differs from the machine's location on record, the note's location is applied (it is the newer observation) and a **VERIFY LOCATION** check opens (`fleet_location_checks`). Both locations stay in the history. Fleet shows the flag and a count; the machine page asks where the machine is. Only that physical check clears it; a Fleet location edit does not. Filling in an empty location, or a note older than the record, raises no check.

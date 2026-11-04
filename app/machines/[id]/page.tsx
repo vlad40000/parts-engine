@@ -7,9 +7,11 @@ import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
 import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
+import { StatusEditCell } from "@/src/components/status-edit-cell";
+import { VerifyReturn } from "@/src/components/verify-return";
 import { ButtonForm } from "@/src/components/forms";
 import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
-import { updateMachineStatusAction } from "../../actions";
+import { updateMachineStatusAction, verifyMachineReturnAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +55,10 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   return (
     <>
       <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
+      {pendingNotes.some((n) => n.verifyReturn) ? (
+        <VerifyReturn machineNo={m.machineNo} status={m.availability} location={m.location}
+          action={verifyMachineReturnAction} />
+      ) : null}
       {pendingNotes.length ? (
         <section role="alert" className="card mb-4 border border-wait/40 bg-amber-50 p-3 text-sm">
           <div className="font-semibold">TECH NOTE REVIEW — {pendingNotes.length} pending service observation{pendingNotes.length === 1 ? "" : "s"}</div>
@@ -61,6 +67,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
             {pendingNotes.map((n) => (
               <li key={n.id}>
                 <Link className="text-accent underline" href={`/notes/${n.id}`}>Review note{n.written ? ` (${n.written})` : " (undated)"}</Link>
+                {n.verifyReturn ? " · VERIFY RETURN (SOLD but photographed on lot)" : ""}
                 {n.location && n.location.toLowerCase() !== (m.location ?? "").toLowerCase() ? ` · LOCATION CONFLICT: ${n.location} vs ${m.location ?? "unknown"}` : ""}
                 {n.status && n.status.toUpperCase() !== m.availability.toUpperCase() ? ` · STATUS CONFLICT: ${n.status} vs ${m.availability}` : ""}
               </li>
@@ -72,7 +79,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       <div className="mb-5 grid gap-3 text-sm md:grid-cols-3">
         <div className="card p-3">
           <div className="text-xs text-muted">Status</div>
-          <div className="font-semibold">{m.availability}</div>
+          <StatusEditCell machineNo={m.machineNo} status={m.availability} action={updateMachineStatusAction} />
           <div className="mt-2 text-xs text-muted">Physical location</div>
           <LocationEditCell machineNo={m.machineNo} location={m.location} action={updateMachineLocationAction} />
           <div className="mt-2 text-xs text-muted">Condition</div>

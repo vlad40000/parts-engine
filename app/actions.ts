@@ -8,6 +8,7 @@ import {
   updateMachineLocation, updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { verifyLocation } from "@/src/db/tech-notes";
+import { verifyMachineReturn } from "@/src/db/fleet-return";
 import { parseCsvRecords, parseCsvRows } from "@/src/lib/csv";
 import { mapFleetRows, readFleetFile } from "@/src/lib/fleet-import";
 import { resolveFleetLocationChoice } from "@/src/lib/fleet-location-options";
@@ -100,6 +101,36 @@ export async function updateMachineLocationAction(_prev: ActionResult | null, fo
     return { ok: false, message: "Location changed since this page loaded. Refresh and try again." };
   } catch {
     return { ok: false, message: "Could not save location. No change confirmed." };
+  }
+}
+
+/** A single physical return confirmation changes both current status and location atomically. */
+export async function verifyMachineReturnAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  if (form.get("physicallyVerified") !== "yes") {
+    return { ok: false, message: "Confirm you checked the physical machine before saving." };
+  }
+  const choice = String(form.get("locationChoice") ?? "");
+  const location = resolveFleetLocationChoice(choice, String(form.get("locationOther") ?? ""));
+  if (!location) return { ok: false, message: "Select its actual physical location, or specify Other." };
+  const input = {
+    machineNo: String(form.get("machineNo") ?? "").trim(),
+    expectedStatus: String(form.get("expectedStatus") ?? ""),
+    expectedLocation: String(form.get("expectedLocation") ?? ""),
+    status: String(form.get("status") ?? ""),
+    location
+  };
+  try {
+    const result = await verifyMachineReturn(await getDb(), input);
+    if (result === "verified") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: `Return verified for #${input.machineNo}. Status and location saved together, with full change history. Photo notes retained.` };
+    }
+    if (result === "invalid") return { ok: false, message: "Choose an active inventory status and a valid physical location." };
+    if (result === "not_found") return { ok: false, message: "Machine not found. Refresh and try again." };
+    if (result === "not_return") return { ok: false, message: "This machine no longer has a SOLD status or location marker. Refresh its record." };
+    return { ok: false, message: "Status or location changed since you opened this page. Refresh and verify the current values." };
+  } catch {
+    return { ok: false, message: "Return verification could not be saved. No change confirmed." };
   }
 }
 

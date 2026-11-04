@@ -419,7 +419,7 @@ describe("pending service-note machine alerts", () => {
       date: { text: "7/27/26" }, entries: [{ machine: { text: "5000" }, note: "Other machine." }]
     }) });
     expect(await pendingMachineNotes(db, "6171")).toEqual([{
-      id: noteId, written: "7/28/26", location: "Red Building", status: "PARTS ONLY"
+      id: noteId, written: "7/28/26", location: "Red Building", status: "PARTS ONLY", verifyReturn: false
     }]);
     expect(await pendingMachineNotes(db, "4261")).toEqual([]);
   });

@@ -108,11 +108,51 @@ describe("machine number checks", () => {
     expect(plan({ entries: [entry("4261")] }, facts([fact("4261", { availability: "SOLD" })]), { [q.id]: "skip" }).entries[0].skipped).toBe(true);
   });
 
+  it("VERIFY RETURN keeps SOLD and off-lot location intact until physical return is verified", () => {
+    const sold = facts([fact("5576", {
+      availability: "SOLD", condition: "B - Good", location: "$$SOLD$$",
+      applianceType: "Freezer"
+    })]);
+    const note = { date: { text: "3/24/26", confidence: "high" }, entries: [entry("5576", {
+      status: { checked: "READY TO SALE", confidence: "high" },
+      location: { name: "Shop", confidence: "high" }, note: "Seen in the shop"
+    })] };
+    const linked = plan(note, sold, { "machine:e0": "use:5576" });
+    expect(linked.questions.find((q) => q.id === "return:e0")?.prompt).toContain("VERIFY RETURN");
+    expect(linked.ready).toBe(false);
+    expect(changes(linked, "e0")).not.toHaveProperty("availability");
+    expect(changes(linked, "e0")).not.toHaveProperty("location");
+    expect(history(linked, "e0")).toMatchObject({ availability: "READY TO SALE", location: "Shop" });
+    const historic = plan(note, sold, { "machine:e0": "use:5576", "return:e0": "history" });
+    expect(historic.ready).toBe(true);
+    expect(historic.entries[0].locationCheck).toBeNull();
+    expect(changes(historic, "e0")).not.toHaveProperty("availability");
+    expect(changes(historic, "e0")).not.toHaveProperty("location");
+    // A current Fleet return changes status and records its own newer decision;
+    // the old photo then stays dated history, never the authority for its state.
+    const returned = facts([fact("5576", {
+      availability: "BEING REPAIRED", condition: "X - Being Repaired", location: "Red Building",
+      applianceType: "Freezer", lastUpdate: { day: "2026-05-21", label: "confirmed physical return" },
+      fieldUpdates: { availability: { day: "2026-05-21", label: "Fleet return" }, location: { day: "2026-05-21", label: "Fleet location" } }
+    })]);
+    const after = plan(note, returned);
+    expect(after.questions.find((q) => q.kind === "return")).toBeUndefined();
+    expect(after.ready).toBe(true);
+    expect(after.entries[0].history.map((c) => c.field)).toContain("availability");
+  });
+
   it("asks when the written model or the note's words do not fit the record", () => {
     const f = facts([fact("6142", { brand: "GE", modelRaw: "GTUP240EM5WW", applianceType: "Washer/Dryer Combo", availability: "NEEDS PARTS" })]);
     expect(plan({ entries: [entry("6142", { model: "GTUP240EM5WW" })] }, f).questions).toEqual([]);
     expect(plan({ entries: [entry("6142", { model: "MEDB880BW0" })] }, f).questions[0].prompt).toContain("The note says model MEDB880BW0, but #6142 is a GTUP240EM5WW.");
     expect(plan({ entries: [entry("6142", { problem: "needs gassing" })] }, f).questions[0].prompt).toContain('mentions "gassing"');
+    const washer = facts([fact("6325", { applianceType: "Washer - Top Load / No Agitator" })]);
+    const wrongType = plan({ entries: [entry("6325", { note: "Whirlpool front-load dryer. Replaced heater element." })] }, washer);
+    expect(wrongType.questions.find((q) => q.kind === "machine")?.prompt).toContain('mentions "front-load dryer"');
+    expect(wrongType.ready).toBe(false);
+    // A matching appliance does not raise a false mismatch.
+    const dryer = facts([fact("6325", { applianceType: "Dryer - Electric" })]);
+    expect(plan({ entries: [entry("6325", { note: "Whirlpool front-load dryer." })] }, dryer).questions.filter((q) => q.kind === "machine")).toEqual([]);
   });
 
   it("asks which entry counts when one machine appears twice", () => {
