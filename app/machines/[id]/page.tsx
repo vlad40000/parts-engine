@@ -8,9 +8,10 @@ import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years
 import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
+import { VerifyReturn } from "@/src/components/verify-return";
 import { ButtonForm } from "@/src/components/forms";
 import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
-import { updateMachineStatusAction } from "../../actions";
+import { updateMachineStatusAction, verifyMachineReturnAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -55,10 +56,8 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
     <>
       <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
       {pendingNotes.some((n) => n.verifyReturn) ? (
-        <section role="alert" className="card mb-4 border border-stop/40 bg-amber-50 p-3 text-sm">
-          <div className="font-semibold"><span className="pill pill-stop">VERIFY RETURN</span> Possible re-entry after SOLD</div>
-          <p className="mt-2">A photographed note places this machine on the lot or gives it an inventory status, but Fleet still has a SOLD status or location marker. The date of the last sale may not be recorded. Check the machine physically and confirm its identity, return date, present location, and status. If it returned, update the Fleet status and location below before applying the old note. Do not discard this observation or automatically undo SOLD.</p>
-        </section>
+        <VerifyReturn machineNo={m.machineNo} status={m.availability} location={m.location}
+          action={verifyMachineReturnAction} />
       ) : null}
       {pendingNotes.length ? (
         <section role="alert" className="card mb-4 border border-wait/40 bg-amber-50 p-3 text-sm">
