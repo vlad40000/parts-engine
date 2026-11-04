@@ -614,8 +614,8 @@ export async function machineHistory(db: Db, machineNo: string, limit = 60): Pro
 export async function pendingFleetReview(db: Db): Promise<{
   noteCount: number; machineCounts: Record<string, number>; returnMachineCounts: Record<string, number>;
 }> {
-  const rows = await q<{ note_id: string; machine_no: string | null; availability: string | null; location: string | null; status: string | null }>(db, sql`
-    select n.id::text note_id, f.machine_no, f.availability,
+  const rows = await q<{ note_id: string; machine_no: string | null; availability: string | null; location: string | null; status: string | null; current_location: string | null }>(db, sql`
+    select n.id::text note_id, f.machine_no, f.availability, f.location current_location,
       coalesce(nullif(e.value->'location'->>'name', ''), e.value->'location'->>'text', '') as location,
       coalesce(nullif(e.value->'status'->>'checked', ''), e.value->'status'->'phrases'->>0, '') as status
     from tech_notes n
@@ -632,7 +632,7 @@ export async function pendingFleetReview(db: Db): Promise<{
     const ids = byMachine.get(row.machine_no) ?? new Set<string>();
     ids.add(row.note_id);
     byMachine.set(row.machine_no, ids);
-    if (isReturnCandidate(row.availability ?? "", row.location, row.status)) {
+    if (isReturnCandidate(row.availability ?? "", row.location, row.status, row.current_location)) {
       const review = returns.get(row.machine_no) ?? new Set<string>();
       review.add(row.note_id);
       returns.set(row.machine_no, review);
@@ -646,8 +646,8 @@ export async function pendingFleetReview(db: Db): Promise<{
 export async function pendingMachineNotes(db: Db, machineNo: string): Promise<Array<{
   id: string; written: string; location: string; status: string; verifyReturn: boolean;
 }>> {
-  const rows = await q<{ id: string; written: string; location: string; status: string; availability: string }>(db, sql`
-    select n.id::text as id, f.availability,
+  const rows = await q<{ id: string; written: string; location: string; status: string; availability: string; current_location: string | null }>(db, sql`
+    select n.id::text as id, f.availability, f.location current_location,
       coalesce(n.reading->'date'->>'text', '') as written,
       coalesce(nullif(e.value->'location'->>'name', ''), e.value->'location'->>'text', '') as location,
       coalesce(nullif(e.value->'status'->>'checked', ''),
@@ -659,7 +659,7 @@ export async function pendingMachineNotes(db: Db, machineNo: string): Promise<Ar
       and e.value->'machine'->>'text' = ${machineNo}
     order by n.created_at desc limit 100
   `);
-  return rows.map(({ availability, ...r }) => ({
-    ...r, verifyReturn: isReturnCandidate(availability, r.location, r.status)
+  return rows.map(({ availability, current_location, ...r }) => ({
+    ...r, verifyReturn: isReturnCandidate(availability, r.location, r.status, current_location)
   }));
 }
