@@ -76,7 +76,7 @@ describe("Fleet pending service note alerts", () => {
       noteCount: 1, machineCounts: { "5576": 1 }, returnMachineCounts: { "5576": 1 }
     });
     expect(await updateMachineLocation(db, {
-      machineNo: "5576", expectedLocation: "$$SOLD$$", location: "Red Building"
+      machineNo: "5576", expectedLocation: "$$$SOLD$$$", location: "Red Building"
     })).toBe("saved");
     // Return reconciliation requires both the current status and physical location.
     // The dated photo still remains open until its history is reviewed.
