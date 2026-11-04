@@ -251,6 +251,10 @@ const flaggable = (family: string | null | undefined) => (family && family !== "
 
 // Words on a note that only make sense for one kind of appliance.
 const APPLIANCE_WORDS: Array<{ words: RegExp; label: string; fits: RegExp }> = [
+  // When the note explicitly names an appliance type, guard the machine identity
+  // even if no model/serial is written (e.g. a dryer note on a washer ID).
+  { words: /\b(front[ -]?load dryer|top[ -]?load dryer|electric dryer|gas dryer)\b/i, label: "dryer", fits: /dryer|combo|laundry/i },
+  { words: /\b(front[ -]?load washer|top[ -]?load washer|washing machine)\b/i, label: "washer", fits: /washer|combo|laundry/i },
   { words: /\b(gassing|gassed|refrigerant|freon|evap(orator)?|defrost|sealed system|not cooling|condenser)\b/i, label: "refrigerator", fits: /refrig|freezer|cooler|ice maker|wine|beverage|deli|a\/c/i },
   { words: /\b(agitat\w*|won'?t spin|lid switch|lid lock|dampers?|suspension rods?|transmission|clutch|gearcase|inner tub)\b/i, label: "washer", fits: /washer|combo|laundry/i },
   { words: /\b(drum rollers?|idler|lint|blower wheel)\b/i, label: "dryer", fits: /dryer|combo|laundry/i },
