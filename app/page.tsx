@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getDb, hasDatabase } from "@/src/db";
 import { fleetFacets, fleetSummary, getSettings, listFleet } from "@/src/db/queries";
-import { openLocationCheckCount } from "@/src/db/tech-notes";
+import { openLocationCheckCount, pendingFleetReview } from "@/src/db/tech-notes";
 import { isEligibleDonorStatus } from "@/src/lib/donor-status";
 import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { FleetAgeBandPanel } from "@/src/components/fleet-age-band-panel";
@@ -20,8 +20,8 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
   const db = await getDb();
   const offset = Number(sp.offset ?? 0) || 0;
   const filter = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort, verify: sp.verify };
-  const [summary, facets, list, settings, toVerify] = await Promise.all([
-    fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset), getSettings(db), openLocationCheckCount(db)
+  const [summary, facets, list, settings, toVerify, pendingReview] = await Promise.all([
+    fleetSummary(db), fleetFacets(db), listFleet(db, filter, 100, offset), getSettings(db), openLocationCheckCount(db), pendingFleetReview(db)
   ]);
   const base = { band: sp.band, type: sp.type, brand: sp.brand, availability: sp.availability, q: sp.q, location: sp.location, sort: sp.sort, verify: sp.verify };
 
@@ -46,6 +46,16 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
       </div>
 
 
+      {pendingReview.noteCount ? (
+        <div role="alert" className="mb-3 rounded border border-wait/40 bg-amber-50 p-3 text-sm">
+          <span className="pill pill-wait">REVIEW MACHINE UPDATES</span>{" "}
+          <Link className="text-accent underline" href="/notes">
+            {pendingReview.noteCount} pending tech note{pendingReview.noteCount === 1 ? "" : "s"}
+          </Link>
+          {" · "}{Object.keys(pendingReview.machineCounts).length} identified machine{Object.keys(pendingReview.machineCounts).length === 1 ? "" : "s"}.
+          <span className="ml-1">Review conflicts before applying changes. Current Fleet values remain in place.</span>
+        </div>
+      ) : null}
       {toVerify || sp.verify === "1" ? (
         <div role="status" className="mb-3 rounded border border-stop/30 bg-red-50 p-2 text-sm">
           <span className="pill pill-stop">VERIFY LOCATION</span>{" "}
@@ -84,7 +94,14 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
           <tbody>
             {list.rows.map((m) => (
               <tr key={m.machine_no}>
-                <td><Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(m.machine_no)}`}>{m.machine_no}</Link></td>
+                <td>
+                  <Link className="mono text-accent hover:underline" href={`/machines/${encodeURIComponent(m.machine_no)}`}>{m.machine_no}</Link>
+                  {pendingReview.machineCounts[m.machine_no] ? (
+                    <Link className="pill pill-wait mt-1 inline-block whitespace-nowrap" href={`/machines/${encodeURIComponent(m.machine_no)}`}>
+                      REVIEW UPDATE · {pendingReview.machineCounts[m.machine_no]}
+                    </Link>
+                  ) : null}
+                </td>
                 <td><StatusEditCell machineNo={m.machine_no} status={m.availability} action={updateMachineStatusAction}/></td>
                 <td className="text-xs">{m.appliance_type}</td>
                 <td>{m.brand}</td>
