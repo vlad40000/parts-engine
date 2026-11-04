@@ -1327,7 +1327,7 @@ export async function setPartState(db: Db, machineNo: string, mpnCanonical: stri
 /**
  * Guard initial machine-page part-state actions against stale browser tabs.
  * An untouched part may only be marked if its row still does not exist.
- * Failed/Missing undo deletes only the rendered state and row version.
+ * Failed/Missing/Skip undo deletes only the rendered state and row version.
  * Staff/tech-note updates retain the existing setPartState() API.
  */
 export type PagePartStateOutcome = "saved" | "conflict" | "invalid";
@@ -1350,7 +1350,7 @@ export async function setPartStateFromPage(db: Db, input: {
     return inserted.length ? "saved" : "conflict";
   }
 
-  if (!["failed", "missing"].includes(input.expectedState) || input.state !== null || !input.token) return "conflict";
+  if (!["failed", "missing", "skip"].includes(input.expectedState) || input.state !== null || !input.token) return "conflict";
   return await clearPartStateRow(db, input.machineNo, input.mpnCanonical, input.token, input.expectedState)
     ? "saved" : "conflict";
 }
