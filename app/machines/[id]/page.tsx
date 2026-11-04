@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
-import { machineDetail } from "@/src/db/queries";
+import { machineDetail, partDispositionHistory } from "@/src/db/queries";
 import { machineHistory, openLocationChecks, pendingMachineNotes } from "@/src/db/tech-notes";
 import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
@@ -33,7 +33,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const db = await getDb();
   const machineNo = decodeURIComponent(id);
-  const [d, history, checks, pendingNotes] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo), pendingMachineNotes(db, machineNo)]);
+  const [d, history, checks, pendingNotes, dispositionHistory] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo), pendingMachineNotes(db, machineNo), partDispositionHistory(db, machineNo)]);
   if (!d) notFound();
   const { machine: m, bom, parts } = d;
   const qualified = parts.filter((p) => p.qualification?.result === "QUALIFIED" && !p.state);
@@ -148,6 +148,31 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           </tbody>
         </table>
       </div>
+      {dispositionHistory.length ? (
+        <details className="card mt-4 p-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Part disposition history ({dispositionHistory.length}{dispositionHistory.length === 100 ? " recent" : ""})</summary>
+          <p className="mt-2 text-xs text-muted">Recorded actions are permanent history. Undo or Unlisted changes current availability without erasing a previous sale price.</p>
+          <div className="overflow-x-auto">
+            <table className="mt-2 w-full text-xs">
+              <thead><tr><th>Recorded</th><th>Part MPN</th><th>Action</th><th>Before</th><th>After</th><th>Sold price</th><th>Previous sale</th><th>Repair machine</th></tr></thead>
+              <tbody>
+                {dispositionHistory.map((e) => (
+                  <tr key={e.id}>
+                    <td className="whitespace-nowrap">{e.recorded}</td>
+                    <td className="mono">{e.mpn_canonical}</td>
+                    <td>{e.step}</td>
+                    <td>{e.previous_disposition ?? "On machine / Pulled"}</td>
+                    <td>{e.next_disposition ?? "On machine / Pulled"}</td>
+                    <td>{e.sold_price !== null ? usd(Number(e.sold_price)) : "—"}</td>
+                    <td>{e.previous_sold_price !== null ? usd(Number(e.previous_sold_price)) : "—"}</td>
+                    <td>{e.repair_machine_no ? <Link href={`/machines/${encodeURIComponent(e.repair_machine_no)}`} className="text-accent underline">#{e.repair_machine_no}</Link> : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }
