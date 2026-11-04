@@ -57,6 +57,13 @@
       "when": 1793298130169,
       "tag": "0007_tech_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793807090314,
+      "tag": "0008_pulled_part_disposition",
+      "breakpoints": true
     }
   ]
 }

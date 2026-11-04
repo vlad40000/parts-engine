@@ -14,6 +14,7 @@ import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-deco
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
 import { isEditableFleetStatus } from "@/src/lib/fleet-status";
 import { CONDITION_FOR_STATUS, SALE_GRADES, OFF_CARD_LOCATIONS } from "@/src/lib/tech-notes/vocabulary";
+import { applyStep, isDisposition, type Disposition, type DispositionStep } from "@/src/lib/part-disposition";
 import * as t from "./schema";
 import type { Db } from "./types";
 
@@ -1260,14 +1261,18 @@ export async function machineDetail(db: Db, machineNo: string) {
     .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)));
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
-  const parts = await q<MpnRow & { diagram_id: string; edge_description: string; state: string | null }>(db, sql`
-    select x.*, e.diagram_id, e.description edge_description, ps.state
+  const parts = await q<MpnRow & { diagram_id: string; edge_description: string; state: string | null;
+    disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null; part_token: string | null }>(db, sql`
+    select x.*, e.diagram_id, e.description edge_description, ps.state,
+      ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed, ps.updated_at::text part_token
     from model_part_edges e
     join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
     left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical
     where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}`);
   const performance = await roadrunnerPerformance(db, parts.map((p) => p.mpn_canonical));
   const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id, state: p.state,
+    disposition: isDisposition(p.disposition) ? p.disposition : null, soldPrice: p.sold_price, repairMachineNo: p.repair_machine_no,
+    wasListed: Boolean(p.was_listed), partToken: p.part_token,
     suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
   evaluated.sort((a, b) => {
     const order = (r: typeof a) => {
@@ -1279,23 +1284,146 @@ export async function machineDetail(db: Db, machineNo: string) {
   return { machine, bom, parts: evaluated, settings: s };
 }
 
-export async function setPartState(db: Db, machineNo: string, mpnCanonical: string, state: "pulled" | "failed" | "missing" | "skip" | null, note?: string) {
-  if (state === null) {
-    // Undo is a decision too: the delete and a dated "cleared" event land together, so an older
-    // tech note uploaded later cannot quietly put the state back.
-    await db.execute(sql`
-      with del as (
-        delete from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}
-        returning machine_no, mpn_canonical
-      )
+/**
+ * Undo is a decision too: the delete and a dated "cleared" event land together, so an older
+ * tech note uploaded later cannot quietly put the state back. With a token, only the row as read.
+ */
+async function clearPartStateRow(db: Db, machineNo: string, mpnCanonical: string, token?: string, expectedState?: string, dispositionStep?: "unlisted" | "back"): Promise<boolean> {
+  const rows = await q<{ n: number }>(db, sql`
+    with del as (
+      delete from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}
+        ${token === undefined ? sql`` : sql`and updated_at = ${token}::timestamptz`}
+        ${expectedState === undefined ? sql`` : sql`and state = ${expectedState}`}
+      returning machine_no, mpn_canonical, disposition, sold_price, repair_machine_no
+    ),
+    event_logged as (
+      insert into machine_part_disposition_events
+        (machine_no, mpn_canonical, step, previous_disposition, next_disposition, previous_sold_price, sold_price, repair_machine_no)
+      select d.machine_no, d.mpn_canonical, ${dispositionStep ?? null}, d.disposition, null, d.sold_price, null, d.repair_machine_no
+      from del d where ${dispositionStep ?? null}::text is not null
+      returning id
+    ),
+    ev as (
       insert into fleet_part_events (machine_no, mpn_canonical, part_name, kind, applied, source, observed_at)
       select d.machine_no, d.mpn_canonical, '', 'cleared', true, 'fleet_ui', now() from del d
-      where exists (select 1 from fleet_machines f where f.machine_no = d.machine_no)`);
+      where exists (select 1 from fleet_machines f where f.machine_no = d.machine_no)
+    )
+    select count(*)::int n from del where (select count(*) from event_logged) >= 0`);
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
+export async function setPartState(db: Db, machineNo: string, mpnCanonical: string, state: "pulled" | "failed" | "missing" | "skip" | null, note?: string) {
+  if (state === null) {
+    await clearPartStateRow(db, machineNo, mpnCanonical);
     return;
   }
   // A hand edit is observed now: clear any tech note's observation date so chronology dates it by updated_at.
+  // A new state by hand starts with no disposition.
+  const clean = { disposition: null, listedAt: null, soldPrice: null, repairMachineNo: null };
   await db.insert(t.machinePartState).values({ machineNo, mpnCanonical, state, note: note ?? null, updatedAt: new Date(), observedAt: null })
-    .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date(), observedAt: null } });
+    .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date(), observedAt: null, ...clean } });
+}
+
+/**
+ * Guard initial machine-page part-state actions against stale browser tabs.
+ * An untouched part may only be marked if its row still does not exist.
+ * Failed/Missing/Skip undo deletes only the rendered state and row version.
+ * Staff/tech-note updates retain the existing setPartState() API.
+ */
+export type PagePartStateOutcome = "saved" | "conflict" | "invalid";
+export async function setPartStateFromPage(db: Db, input: {
+  machineNo: string; mpnCanonical: string;
+  state: "pulled" | "failed" | "missing" | null;
+  expectedState: string | null;
+  token: string | null;
+}): Promise<PagePartStateOutcome> {
+  if (!input.machineNo || !input.mpnCanonical ||
+    (input.state !== null && !["pulled", "failed", "missing"].includes(input.state))) return "invalid";
+
+  if (input.expectedState === null) {
+    // The page showed no row. Never overwrite a newer Pulled/Sold/Repair row.
+    if (input.token !== null || input.state === null) return "conflict";
+    const inserted = await db.insert(t.machinePartState).values({
+      machineNo: input.machineNo, mpnCanonical: input.mpnCanonical,
+      state: input.state, note: null, updatedAt: new Date(), observedAt: null
+    }).onConflictDoNothing().returning({ mpnCanonical: t.machinePartState.mpnCanonical });
+    return inserted.length ? "saved" : "conflict";
+  }
+
+  if (!["failed", "missing", "skip"].includes(input.expectedState) || input.state !== null || !input.token) return "conflict";
+  return await clearPartStateRow(db, input.machineNo, input.mpnCanonical, input.token, input.expectedState)
+    ? "saved" : "conflict";
+}
+
+export type DispositionOutcome = "saved" | "conflict" | "invalid_step" | "invalid_price" | "invalid_machine" | "unknown_machine" | "same_machine";
+
+/**
+ * One step through a pulled part's disposition tree (src/lib/part-disposition.ts). `from` is the
+ * disposition the page showed and `token` the row version it rendered (updated_at as text); any
+ * other row now is a conflict, so a stale page or a double click never skips or undoes a newer step,
+ * even one that came back to the same disposition. Without a token only `from` is checked.
+ */
+export async function setPartDisposition(db: Db, input: {
+  machineNo: string; mpnCanonical: string; from: Disposition | null; step: DispositionStep;
+  soldPrice?: string | null; repairMachineNo?: string | null; token?: string;
+}): Promise<DispositionOutcome> {
+  const { machineNo, mpnCanonical } = input;
+  const [row] = await q<{ state: string; disposition: string | null; listed_ms: number | null; sold_price: string | null; repair_machine_no: string | null; token: string }>(db, sql`
+    select state, disposition, (extract(epoch from listed_at) * 1000)::float8 listed_ms, sold_price::text sold_price,
+      repair_machine_no, updated_at::text token
+    from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}`);
+  if (!row || row.state !== "pulled" || (row.disposition ?? null) !== input.from) return "conflict";
+  if (input.token !== undefined && input.token !== row.token) return "conflict";
+  const cur = {
+    disposition: isDisposition(row.disposition) ? row.disposition : null,
+    listedAt: row.listed_ms === null ? null : new Date(Number(row.listed_ms)),
+    soldPrice: row.sold_price,
+    repairMachineNo: row.repair_machine_no
+  };
+  const tr = applyStep(cur, input.step, { soldPrice: input.soldPrice, repairMachineNo: input.repairMachineNo, now: new Date() });
+  if (tr.kind === "invalid") return tr.reason === "step" ? "invalid_step" : tr.reason === "price" ? "invalid_price" : "invalid_machine";
+  if (tr.kind === "clear") return (await clearPartStateRow(db, machineNo, mpnCanonical, row.token, "pulled", input.step === "unlisted" ? "unlisted" : "back")) ? "saved" : "conflict";
+  const r = tr.record;
+  if (input.step === "repair" && r.repairMachineNo) {
+    if (r.repairMachineNo === machineNo) return "same_machine";
+    const [m] = await db.select({ no: t.fleetMachines.machineNo }).from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, r.repairMachineNo));
+    if (!m) return "unknown_machine";
+  }
+  // State transition and its immutable evidence must succeed or fail together.
+  const updated = await q<{ n: number }>(db, sql`
+    with changed as (
+      update machine_part_state set disposition = ${r.disposition}, listed_at = ${r.listedAt ? r.listedAt.toISOString() : null}::timestamptz,
+        sold_price = ${r.soldPrice}::numeric, repair_machine_no = ${r.repairMachineNo}, updated_at = now(), observed_at = null
+      where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical} and updated_at = ${row.token}::timestamptz
+      returning machine_no, mpn_canonical
+    ),
+    event_logged as (
+      insert into machine_part_disposition_events
+        (machine_no, mpn_canonical, step, previous_disposition, next_disposition, previous_sold_price, sold_price, repair_machine_no)
+      select c.machine_no, c.mpn_canonical, ${input.step}, ${row.disposition}, ${r.disposition},
+        ${row.sold_price}::numeric, ${r.soldPrice}::numeric, ${r.repairMachineNo}
+      from changed c
+      returning id
+    )
+    select count(*)::int n from changed where (select count(*) from event_logged) >= 0`);
+  return Number(updated[0]?.n ?? 0) === 1 ? "saved" : "conflict";
+}
+
+/** Dated per-machine evidence of listing, sale price, repair destination and reversals. */
+export type PartDispositionHistoryRow = {
+  id: number; mpn_canonical: string; step: string; previous_disposition: string | null;
+  next_disposition: string | null; previous_sold_price: string | null; sold_price: string | null;
+  repair_machine_no: string | null; recorded: string;
+};
+export async function partDispositionHistory(db: Db, machineNo: string, limit = 100): Promise<PartDispositionHistoryRow[]> {
+  return q<PartDispositionHistoryRow>(db, sql`
+    select id::int id, mpn_canonical, step, previous_disposition, next_disposition,
+      previous_sold_price::text, sold_price::text, repair_machine_no,
+      to_char(recorded_at at time zone 'America/New_York', 'YYYY-MM-DD HH12:MI AM') recorded
+    from machine_part_disposition_events
+    where machine_no = ${machineNo}
+    order by recorded_at desc, id desc
+    limit ${limit}`);
 }
 
 export async function researchQueueCsvRows(db: Db) {

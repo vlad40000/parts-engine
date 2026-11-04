@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb, hasDatabase } from "@/src/db";
-import { machineDetail } from "@/src/db/queries";
+import { machineDetail, partDispositionHistory } from "@/src/db/queries";
 import { machineHistory, openLocationChecks, pendingMachineNotes } from "@/src/db/tech-notes";
 import { VerifyLocation } from "@/src/components/verify-location";
 import { NoDatabase, PageTitle, QualificationPill, RoadrunnerHistory, usd, Years } from "@/src/components/ui";
-import { setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
+import { setPartDispositionAction, setPartStateAction, updateMachineLocationAction, verifyLocationAction } from "../../actions";
+import { PartDispositionControl } from "@/src/components/part-disposition-control";
+import { PartStateButtons } from "@/src/components/part-state-buttons";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
 import { VerifyReturn } from "@/src/components/verify-return";
@@ -14,18 +16,6 @@ import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
 import { updateMachineStatusAction, verifyMachineReturnAction } from "../../actions";
 
 export const dynamic = "force-dynamic";
-
-function StateButtons({ machineNo, mpn, state }: { machineNo: string; mpn: string; state: string | null }) {
-  const opts = state ? ["clear"] : ["pulled", "failed", "missing"];
-  return (
-    <form action={setPartStateAction} className="flex gap-1">
-      <input type="hidden" name="machineNo" value={machineNo} />
-      <input type="hidden" name="mpn" value={mpn} />
-      {state ? <span className="pill pill-mute mr-1">{state}</span> : null}
-      {opts.map((o) => <button key={o} name="state" value={o} className="btn px-2 py-0.5 text-xs">{o === "clear" ? "undo" : o}</button>)}
-    </form>
-  );
-}
 
 type Bom = NonNullable<Awaited<ReturnType<typeof machineDetail>>>["bom"];
 
@@ -43,7 +33,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const db = await getDb();
   const machineNo = decodeURIComponent(id);
-  const [d, history, checks, pendingNotes] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo), pendingMachineNotes(db, machineNo)]);
+  const [d, history, checks, pendingNotes, dispositionHistory] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo), pendingMachineNotes(db, machineNo), partDispositionHistory(db, machineNo)]);
   if (!d) notFound();
   const { machine: m, bom, parts } = d;
   const qualified = parts.filter((p) => p.qualification?.result === "QUALIFIED" && !p.state);
@@ -150,12 +140,39 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
                 <td className="num">{p.qualification?.economics ? usd(p.qualification.economics.breakEven) : ""}</td>
                 <td>{p.prefilter && p.market === "missing" ? <span className="pill pill-mute" title={p.prefilter}>skipped</span> : <QualificationPill v={p.qualification} market={p.market} />}</td>
                 <td><RoadrunnerHistory p={p.roadrunner} /></td>
-                <td><StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} /></td>
+                <td>{p.state === "pulled"
+                  ? <PartDispositionControl machineNo={m.machineNo} mpn={p.mpn_canonical} disposition={p.disposition} soldPrice={p.soldPrice} repairMachineNo={p.repairMachineNo} token={p.partToken} action={setPartDispositionAction} />
+                  : <PartStateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} token={p.partToken} action={setPartStateAction} />}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {dispositionHistory.length ? (
+        <details className="card mt-4 p-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Part disposition history ({dispositionHistory.length}{dispositionHistory.length === 100 ? " recent" : ""})</summary>
+          <p className="mt-2 text-xs text-muted">Recorded actions are permanent history. Undo or Unlisted changes current availability without erasing a previous sale price.</p>
+          <div className="overflow-x-auto">
+            <table className="mt-2 w-full text-xs">
+              <thead><tr><th>Recorded</th><th>Part MPN</th><th>Action</th><th>Before</th><th>After</th><th>Sold price</th><th>Previous sale</th><th>Repair machine</th></tr></thead>
+              <tbody>
+                {dispositionHistory.map((e) => (
+                  <tr key={e.id}>
+                    <td className="whitespace-nowrap">{e.recorded}</td>
+                    <td className="mono">{e.mpn_canonical}</td>
+                    <td>{e.step}</td>
+                    <td>{e.previous_disposition ?? "On machine / Pulled"}</td>
+                    <td>{e.next_disposition ?? "On machine / Pulled"}</td>
+                    <td>{e.sold_price !== null ? usd(Number(e.sold_price)) : "—"}</td>
+                    <td>{e.previous_sold_price !== null ? usd(Number(e.previous_sold_price)) : "—"}</td>
+                    <td>{e.repair_machine_no ? <Link href={`/machines/${encodeURIComponent(e.repair_machine_no)}`} className="text-accent underline">#{e.repair_machine_no}</Link> : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }

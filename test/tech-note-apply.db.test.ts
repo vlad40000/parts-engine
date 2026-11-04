@@ -6,7 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { machineDetail, saveModelBom, setPartState, updateMachineLocation, updateMachineStatus, upsertFleet } from "@/src/db/queries";
+import { machineDetail, saveModelBom, setPartDisposition, setPartState, updateMachineLocation, updateMachineStatus, upsertFleet } from "@/src/db/queries";
 import {
   applyTechNote, createTechNote, discardTechNote, findNoteByPhoto, getTechNote, getTechNotePhoto, loadPlanFacts, locationList, machineHistory,
   openLocationCheckCount, openLocationChecks, pendingMachineNotes, saveDraft, verifyLocation
@@ -261,6 +261,7 @@ describe("tech note apply", () => {
     await applyReading(reading6171(), ANSWERS);
     // A hand edit after the 5/14 note is a new decision, not the note's.
     await setPartState(db, "6171", "3948891", "pulled");
+    expect(await setPartDisposition(db, { machineNo: "6171", mpnCanonical: "3948891", from: null, step: "ebay" })).toBe("saved");
     const today = (await loadPlanFacts(db, normalizeReading({ entries: [{ machine: { text: "6171" } }] }), {}, new Date())).today;
     const [y, m, d] = today.split("-");
     const sameDay = normalizeReading({ date: { text: `${Number(m)}/${Number(d)}/${y.slice(2)}` }, entries: [{
@@ -277,6 +278,7 @@ describe("tech note apply", () => {
     expect(await applyTechNote(db, id, plan, sameDay, answers)).toBe("applied");
     const [ps] = await db.select().from(schema.machinePartState).where(eq(schema.machinePartState.machineNo, "6171"));
     expect(ps.state).toBe("missing");
+    expect(ps.disposition).toBeNull(); // a missing part has no eBay/repair disposition
   });
 
   it("remembers a part state undone by hand, so an older note cannot quietly put it back", async () => {
