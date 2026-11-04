@@ -6,7 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { machineDetail, setPartDisposition, setPartState, setPartStateFromPage, upsertFleet } from "@/src/db/queries";
+import { machineDetail, partDispositionHistory, setPartDisposition, setPartState, setPartStateFromPage, upsertFleet } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { setPartDispositionAction, setPartStateAction } from "@/app/actions";
 
@@ -115,6 +115,53 @@ describe("pulled part disposition (DB)", () => {
     const fresh = (await machineDetail(db, "1"))!.parts[0].partToken!;
     expect(await step("sold", "back", { token: fresh })).toBe("saved");
   });
+  it("keeps every sold price after Undo, resale, and Unlisted without rewriting earlier evidence", async () => {
+    expect(await step(null, "ebay")).toBe("saved");
+    expect(await step("ebay", "listed")).toBe("saved");
+    expect(await step("listed", "sold", { soldPrice: "45.00" })).toBe("saved");
+    expect(await step("sold", "back")).toBe("saved");
+    expect(await step("listed", "sold", { soldPrice: "60.00" })).toBe("saved");
+    expect(await step("sold", "back")).toBe("saved");
+    expect(await step("listed", "unlisted")).toBe("saved");
+    expect(await row()).toBeUndefined();
+
+    const raw = await db.select().from(schema.machinePartDispositionEvents)
+      .where(eq(schema.machinePartDispositionEvents.machineNo, "1"))
+      .orderBy(schema.machinePartDispositionEvents.id);
+    expect(raw.map((e) => [e.step, e.previousDisposition, e.nextDisposition, e.previousSoldPrice, e.soldPrice]))
+      .toEqual([
+        ["ebay", null, "ebay", null, null],
+        ["listed", "ebay", "listed", null, null],
+        ["sold", "listed", "sold", null, "45.00"],
+        ["back", "sold", "listed", "45.00", null],
+        ["sold", "listed", "sold", null, "60.00"],
+        ["back", "sold", "listed", "60.00", null],
+        ["unlisted", "listed", null, null, null]
+      ]);
+    expect((await partDispositionHistory(db, "1")).filter((e) => e.step === "sold")
+      .map((e) => e.sold_price).sort()).toEqual(["45.00", "60.00"]);
+    expect(await partDispositionHistory(db, "2")).toEqual([]);
+  });
+
+  it("writes no false audit event for rejected stale steps and records repair destination changes", async () => {
+    const stale = (await machineDetail(db, "1"))!.parts[0].partToken!;
+    expect(await step(null, "repair", { repairMachineNo: "2" })).toBe("saved");
+    expect(await step(null, "ebay", { token: stale })).toBe("conflict");
+    expect(await step("repair", "back")).toBe("saved");
+    const history = await partDispositionHistory(db, "1");
+    expect(history.map((e) => e.step)).toEqual(["back", "repair"]);
+    expect(history.find((e) => e.step === "repair")?.repair_machine_no).toBe("2");
+    expect(history.find((e) => e.step === "back")?.previous_disposition).toBe("repair");
+  });
+
+  it("keeps historical sale evidence even when a later technician reclassifies the part Failed", async () => {
+    expect(await step(null, "ebay")).toBe("saved");
+    expect(await step("ebay", "sold", { soldPrice: "82.50" })).toBe("saved");
+    await setPartState(db, "1", "PUMP1", "failed");
+    expect(await row()).toMatchObject({ state: "failed", disposition: null, soldPrice: null });
+    expect((await partDispositionHistory(db, "1")).find((e) => e.step === "sold")?.sold_price).toBe("82.50");
+  });
+
   it("rejects a stale initial Pulled click after another tab sells the part", async () => {
     await setPartState(db, "1", "PUMP1", null); // the initial machine page shows no part-state row
     const oldPage = (await machineDetail(db, "1"))!.parts[0];
