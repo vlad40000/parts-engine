@@ -88,11 +88,31 @@ describe("pulled part disposition (DB)", () => {
     await expect(db.execute(sql`update machine_part_state set state = 'pulled', disposition = 'sold' where machine_no = '1'`)).rejects.toThrow();
   });
 
-  it("server action reports validation in plain words", async () => {
-    const form = (o: Record<string, string>) => { const f = new FormData(); for (const [k, v] of Object.entries({ machineNo: "1", mpn: "PUMP1", from: "", ...o })) f.set(k, v); return f; };
-    expect(await setPartDispositionAction(null, form({ step: "repair", repairMachineNo: "999" }))).toMatchObject({ ok: false, message: "No fleet machine has that Machine ID." });
-    expect(await setPartDispositionAction(null, form({ step: "ebay" }))).toMatchObject({ ok: true });
-    expect(await setPartDispositionAction(null, form({ step: "sold", from: "ebay", soldPrice: "x" }))).toMatchObject({ ok: false, message: "Enter the sold price (a number, 0 or more)." });
-    expect(await setPartDispositionAction(null, form({ step: "bogus" }))).toMatchObject({ ok: false });
+  it("server action reports validation in plain words, and refuses a form without the row version", async () => {
+    const token = async () => (await machineDetail(db, "1"))!.parts[0].partToken!;
+    const form = async (o: Record<string, string>) => {
+      const f = new FormData();
+      for (const [k, v] of Object.entries({ machineNo: "1", mpn: "PUMP1", from: "", token: await token(), ...o })) f.set(k, v);
+      return f;
+    };
+    expect(await setPartDispositionAction(null, await form({ step: "repair", repairMachineNo: "999" }))).toMatchObject({ ok: false, message: "No fleet machine has that Machine ID." });
+    expect(await setPartDispositionAction(null, await form({ step: "ebay", token: "" }))).toMatchObject({ ok: false, message: "This part changed since the page loaded. Refresh and try again." });
+    expect(await setPartDispositionAction(null, await form({ step: "ebay" }))).toMatchObject({ ok: true });
+    expect(await setPartDispositionAction(null, await form({ step: "sold", from: "ebay", soldPrice: "x" }))).toMatchObject({ ok: false, message: "Enter the sold price (a number, 0 or more)." });
+    expect(await setPartDispositionAction(null, await form({ step: "bogus" }))).toMatchObject({ ok: false });
+  });
+
+  it("a stale tab cannot undo a newer sale that came back to the same disposition", async () => {
+    await step(null, "ebay");
+    await step("ebay", "sold", { soldPrice: "45" });
+    const staleTab = (await machineDetail(db, "1"))!.parts[0].partToken!;
+    // Another tab undoes the $45 sale and records $60.
+    expect(await step("sold", "back")).toBe("saved");
+    expect(await step("ebay", "sold", { soldPrice: "60" })).toBe("saved");
+    // The first tab still shows Sold; its Undo must not erase the $60 sale.
+    expect(await step("sold", "back", { token: staleTab })).toBe("conflict");
+    expect(await row()).toMatchObject({ disposition: "sold", soldPrice: "60.00" });
+    const fresh = (await machineDetail(db, "1"))!.parts[0].partToken!;
+    expect(await step("sold", "back", { token: fresh })).toBe("saved");
   });
 });

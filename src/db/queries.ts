@@ -1262,9 +1262,9 @@ export async function machineDetail(db: Db, machineNo: string) {
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
   const parts = await q<MpnRow & { diagram_id: string; edge_description: string; state: string | null;
-    disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null }>(db, sql`
+    disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null; part_token: string | null }>(db, sql`
     select x.*, e.diagram_id, e.description edge_description, ps.state,
-      ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed
+      ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed, ps.updated_at::text part_token
     from model_part_edges e
     join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
     left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical
@@ -1272,7 +1272,7 @@ export async function machineDetail(db: Db, machineNo: string) {
   const performance = await roadrunnerPerformance(db, parts.map((p) => p.mpn_canonical));
   const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id, state: p.state,
     disposition: isDisposition(p.disposition) ? p.disposition : null, soldPrice: p.sold_price, repairMachineNo: p.repair_machine_no,
-    wasListed: Boolean(p.was_listed),
+    wasListed: Boolean(p.was_listed), partToken: p.part_token,
     suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
   evaluated.sort((a, b) => {
     const order = (r: typeof a) => {
@@ -1320,12 +1320,13 @@ export type DispositionOutcome = "saved" | "conflict" | "invalid_step" | "invali
 
 /**
  * One step through a pulled part's disposition tree (src/lib/part-disposition.ts). `from` is the
- * disposition the page showed; anything else on the row now is a conflict, so a stale page or a
- * double click never skips a step.
+ * disposition the page showed and `token` the row version it rendered (updated_at as text); any
+ * other row now is a conflict, so a stale page or a double click never skips or undoes a newer step,
+ * even one that came back to the same disposition. Without a token only `from` is checked.
  */
 export async function setPartDisposition(db: Db, input: {
   machineNo: string; mpnCanonical: string; from: Disposition | null; step: DispositionStep;
-  soldPrice?: string | null; repairMachineNo?: string | null;
+  soldPrice?: string | null; repairMachineNo?: string | null; token?: string;
 }): Promise<DispositionOutcome> {
   const { machineNo, mpnCanonical } = input;
   const [row] = await q<{ state: string; disposition: string | null; listed_ms: number | null; sold_price: string | null; repair_machine_no: string | null; token: string }>(db, sql`
@@ -1333,6 +1334,7 @@ export async function setPartDisposition(db: Db, input: {
       repair_machine_no, updated_at::text token
     from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}`);
   if (!row || row.state !== "pulled" || (row.disposition ?? null) !== input.from) return "conflict";
+  if (input.token !== undefined && input.token !== row.token) return "conflict";
   const cur = {
     disposition: isDisposition(row.disposition) ? row.disposition : null,
     listedAt: row.listed_ms === null ? null : new Date(Number(row.listed_ms)),

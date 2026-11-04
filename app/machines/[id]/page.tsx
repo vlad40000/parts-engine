@@ -152,7 +152,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
                 <td>{p.prefilter && p.market === "missing" ? <span className="pill pill-mute" title={p.prefilter}>skipped</span> : <QualificationPill v={p.qualification} market={p.market} />}</td>
                 <td><RoadrunnerHistory p={p.roadrunner} /></td>
                 <td>{p.state === "pulled"
-                  ? <PartDispositionControl machineNo={m.machineNo} mpn={p.mpn_canonical} disposition={p.disposition} soldPrice={p.soldPrice} repairMachineNo={p.repairMachineNo} action={setPartDispositionAction} />
+                  ? <PartDispositionControl machineNo={m.machineNo} mpn={p.mpn_canonical} disposition={p.disposition} soldPrice={p.soldPrice} repairMachineNo={p.repairMachineNo} token={p.partToken} action={setPartDispositionAction} />
                   : <StateButtons machineNo={m.machineNo} mpn={p.mpn_canonical} state={p.state} />}</td>
               </tr>
             ))}

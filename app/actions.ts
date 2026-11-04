@@ -429,7 +429,9 @@ export async function setPartDispositionAction(_prev: ActionResult | null, form:
       from: fromRaw === "" ? null : (fromRaw as Disposition),
       step,
       soldPrice: form.get("soldPrice") === null ? null : String(form.get("soldPrice")),
-      repairMachineNo: form.get("repairMachineNo") === null ? null : String(form.get("repairMachineNo"))
+      repairMachineNo: form.get("repairMachineNo") === null ? null : String(form.get("repairMachineNo")),
+      // The row version the page rendered; a missing one never matches, so the step is refused.
+      token: String(form.get("token") ?? "")
     });
     if (outcome === "saved") {
       revalidatePath("/", "layout");

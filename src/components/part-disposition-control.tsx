@@ -10,14 +10,14 @@ const STEP_LABEL: Record<Exclude<DispositionStep, "back">, string> = {
 };
 
 /** State cell for a pulled part: eBay or Repair, then Listed / Sold / Unlisted. Undo steps back one level. */
-export function PartDispositionControl({ machineNo, mpn, disposition, soldPrice, repairMachineNo, action }: {
-  machineNo: string; mpn: string; disposition: Disposition | null; soldPrice: string | null; repairMachineNo: string | null;
+export function PartDispositionControl({ machineNo, mpn, disposition, soldPrice, repairMachineNo, token, action }: {
+  machineNo: string; mpn: string; disposition: Disposition | null; soldPrice: string | null; repairMachineNo: string | null; token: string | null;
   action: (prev: ActionResult | null, form: FormData) => Promise<ActionResult>;
 }) {
   const [mode, setMode] = useState<"repair" | "sold" | null>(null);
   const [result, formAction, pending] = useActionState(action, null);
   useEffect(() => { if (result?.ok) setMode(null); }, [result]);
-  useEffect(() => { setMode(null); }, [disposition]);
+  useEffect(() => { setMode(null); }, [disposition, token]);
 
   const btn = "btn px-2 py-0.5 text-xs";
   const detail = disposition === "sold" && soldPrice !== null ? ` $${Number(soldPrice).toFixed(2)}` : "";
@@ -27,6 +27,7 @@ export function PartDispositionControl({ machineNo, mpn, disposition, soldPrice,
       <input type="hidden" name="machineNo" value={machineNo} />
       <input type="hidden" name="mpn" value={mpn} />
       <input type="hidden" name="from" value={disposition ?? ""} />
+      <input type="hidden" name="token" value={token ?? ""} />
       <span className="pill pill-mute mr-1">
         pulled{disposition ? ` · ${DISPOSITION_LABEL[disposition]}${detail}` : ""}
         {disposition === "repair" && repairMachineNo ? (
