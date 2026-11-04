@@ -54,6 +54,19 @@ The date written on a note is when it was observed; the upload time is only when
 - When precedence is **uncertain**, the app asks: the note and the record were set on the same day, or the machine was updated after the note's date in another field.
 - Repair notes are a log, not a decision: a note's dated line is always appended.
 
+## VERIFY RETURN (SOLD machines may re-enter inventory)
+
+A **SOLD** status is not permanent. A returned or exchanged appliance can re-enter the lot under its original Machine ID. Historical workbook imports sometimes contain SOLD without a dated sale event, so an old showroom/shop note cannot be classified as pre-sale or post-return from the upload timestamp alone.
+
+When a pending note identifies a SOLD machine and mentions a physical location (for example **Shop**, **Red Building**, or **Showroom**) or a non-SOLD Fleet status, Fleet and the machine page show **VERIFY RETURN**. The review explicitly asks whether the note predates the latest sale or the machine has physically returned.
+
+- **Historical photo:** Select the "before last sale" answer in the note review. Its dated repair history is retained, and its status, location, part states, and current SOLD value stay unchanged.
+- **Possible return:** Leave the note pending. Check the physical machine and Machine ID, establish the actual return date, and use the machine's Fleet status and location editors to enter the **current** observed values. Those edits are dated now and audit-logged. Re-open the old photo note afterward: its previous observations go into history, not over the newly verified inventory state.
+- **Uncertain:** Do not infer a current status or location from the photo or from the date it was uploaded. Keep the review open so the alert remains visible.
+- **Identity conflict:** Resolve the machine identity before updating any field.
+
+A physical return is not automatically READY TO SALE or an eligible donor; choose the appropriate Fleet status based on the current inspection. The VERIFY RETURN review alert clears when the pending note is resolved or the machine is no longer recorded as SOLD (after the separate current status edit). Location verification from conflicting applied notes is a separate check.
+
 ## VERIFY LOCATION
 
 When a note records a location that differs from the machine's location on record, the note's location is applied (it is the newer observation) and a **VERIFY LOCATION** check opens (`fleet_location_checks`). Both locations stay in the history. Fleet shows the flag and a count; the machine page asks where the machine is. Only that physical check clears it; a Fleet location edit does not. Filling in an empty location, or a note older than the record, raises no check.
