@@ -1,14 +1,26 @@
 /**
- * A prior SOLD record is not proof the unit stayed sold. A dated observation
- * putting it at a physical shop location or describing an on-lot status may
- * represent a return. This is a candidate for physical verification, not a
- * decision to reverse the sale. Imported SOLD records can lack actual sale dates.
+ * SOLD is not a terminal machine lifecycle. A photo of a physical shop
+ * location or an inventory-ready status is a possible return, not proof of
+ * when the unit was sold or returned.
+ *
+ * A stale SOLD location marker must keep the alert visible even if somebody
+ * edits the status alone: both fields need a current physical confirmation.
  */
-export function isReturnCandidate(currentStatus: string, observedLocation: string | null | undefined, observedStatus: string | null | undefined): boolean {
-  if (currentStatus.trim().toUpperCase() !== "SOLD") return false;
-  const location = (observedLocation ?? "").trim().toLowerCase();
-  const offLot = ["$$$sold$$$", "sold", "scraped", "scrapped", "off lot", "off-lot"];
-  if (location && !offLot.includes(location)) return true;
+const soldMarker = (s: string | null | undefined) => {
+  const value = (s ?? "").trim().toLowerCase();
+  return value === "$$$sold$$$" || value === "sold" || value === "off lot" || value === "off-lot";
+};
+export function isReturnCandidate(
+  currentStatus: string,
+  observedLocation: string | null | undefined,
+  observedStatus: string | null | undefined,
+  currentLocation?: string | null
+): boolean {
+  const wasOffLot = currentStatus.trim().toUpperCase() === "SOLD" || soldMarker(currentLocation);
+  if (!wasOffLot) return false;
+  const seen = (observedLocation ?? "").trim().toLowerCase();
+  const onLotLocation = !!seen && !soldMarker(seen) && seen !== "scrapped" && seen !== "graveyard";
   const status = (observedStatus ?? "").trim().toUpperCase();
-  return ["UNCHECKED", "NEEDS PARTS", "PARTS ONLY", "PARTS PROGRAM", "BEING REPAIRED", "READY TO SALE"].includes(status);
+  const onLotStatus = ["UNCHECKED", "NEEDS PARTS", "PARTS ONLY", "PARTS PROGRAM", "BEING REPAIRED", "READY TO SALE"].includes(status);
+  return onLotLocation || onLotStatus;
 }
