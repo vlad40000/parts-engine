@@ -211,6 +211,24 @@ describe("pulled part disposition (DB)", () => {
     expect(await row()).toMatchObject({ state: "missing" });
   });
 
+  it("supports version-checked Undo of existing skip states without changing other branches", async () => {
+    // A skip may have been persisted by a harvest/technician workflow.
+    await setPartState(db, "1", "PUMP1", "skip");
+    const state = (await machineDetail(db, "1"))!.parts[0];
+    expect(state.state).toBe("skip");
+    expect(state.partToken).not.toBeNull();
+    expect(await setPartStateFromPage(db, {
+      machineNo: "1", mpnCanonical: "PUMP1", state: null, expectedState: "skip", token: state.partToken
+    })).toBe("saved");
+    expect(await row()).toBeUndefined();
+    expect((await machineDetail(db, "1"))!.parts[0].state).toBeNull();
+    await setPartState(db, "1", "PUMP1", "skip");
+    expect(await setPartStateFromPage(db, {
+      machineNo: "1", mpnCanonical: "PUMP1", state: null, expectedState: "skip", token: state.partToken
+    })).toBe("conflict");
+    expect(await row()).toMatchObject({ state: "skip" });
+  });
+
   it("rejects a legacy initial-state form without the rendered version fields", async () => {
     const form = new FormData();
     form.set("machineNo", "1");
