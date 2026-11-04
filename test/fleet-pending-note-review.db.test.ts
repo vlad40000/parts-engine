@@ -6,7 +6,7 @@ import { sql } from "drizzle-orm";
 import path from "node:path";
 import * as schema from "@/src/db/schema";
 import type { Db } from "@/src/db/types";
-import { upsertFleet } from "@/src/db/queries";
+import { upsertFleet, updateMachineStatus } from "@/src/db/queries";
 import { createTechNote, pendingFleetReview, pendingMachineNotes } from "@/src/db/tech-notes";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { normalizeReading } from "@/src/lib/tech-notes/reading";
@@ -37,7 +37,7 @@ describe("Fleet pending service note alerts", () => {
     expect(first).toMatchObject([{ id: noteId, written: "4/21/26", status: "PARTS ONLY", location: "Graveyard" }]);
     // Regression: the second machine must never display the first one's status/location.
     expect(second).toMatchObject([{ id: noteId, status: "READY TO SALE", location: "Showroom - Main" }]);
-    expect(await pendingFleetReview(db)).toEqual({ noteCount: 1, machineCounts: { "7771": 1, "7772": 1 } });
+    expect(await pendingFleetReview(db)).toEqual({ noteCount: 1, machineCounts: { "7771": 1, "7772": 1 }, returnMachineCounts: {} });
   });
 
   it("keeps an unidentified photo in the queue and removes alerts after review is closed", async () => {
@@ -47,11 +47,35 @@ describe("Fleet pending service note alerts", () => {
     const unknown = await createTechNote(db, { origin: "manual", reading: normalizeReading({
       entries: [{ machine: { text: "" } }]
     }) });
-    expect(await pendingFleetReview(db)).toEqual({ noteCount: 2, machineCounts: { "7771": 1 } });
+    expect(await pendingFleetReview(db)).toEqual({ noteCount: 2, machineCounts: { "7771": 1 }, returnMachineCounts: {} });
     await db.execute(sql`update tech_notes set status = 'discarded' where id = ${found}::uuid`);
     expect(await pendingMachineNotes(db, "7771")).toEqual([]);
-    expect(await pendingFleetReview(db)).toEqual({ noteCount: 1, machineCounts: {} });
+    expect(await pendingFleetReview(db)).toEqual({ noteCount: 1, machineCounts: {}, returnMachineCounts: {} });
     await db.execute(sql`update tech_notes set status = 'discarded' where id = ${unknown}::uuid`);
-    expect(await pendingFleetReview(db)).toEqual({ noteCount: 0, machineCounts: {} });
+    expect(await pendingFleetReview(db)).toEqual({ noteCount: 0, machineCounts: {}, returnMachineCounts: {} });
   });
+  it("flags photographed on-lot evidence for a SOLD machine until physical return is reconciled", async () => {
+    await upsertFleet(db, mapFleetRows([
+      { ID: 5576, Availability: "SOLD", ApplianceType: "Freezer", Brand: "Test", ModelNumber: "FREEZER5576", SerialNumber: "SER5576", Location: "$$$SOLD$$$" }
+    ], new Date("2026-05-01T12:00:00Z")).rows);
+    const id = await createTechNote(db, { origin: "manual", reading: normalizeReading({
+      date: { text: "3/24/26" }, entries: [{
+        machine: { text: "5576" }, status: { checked: "READY TO SALE" },
+        location: { name: "Showroom - Main" }, note: "Observed on the showroom floor."
+      }]
+    }) });
+    expect(await pendingFleetReview(db)).toEqual({
+      noteCount: 1, machineCounts: { "5576": 1 }, returnMachineCounts: { "5576": 1 }
+    });
+    expect(await pendingMachineNotes(db, "5576")).toMatchObject([{
+      id, status: "READY TO SALE", location: "Showroom - Main", verifyReturn: true
+    }]);
+    expect(await updateMachineStatus(db, { machineNo: "5576", expectedStatus: "SOLD", status: "PARTS ONLY" })).toBe("saved");
+    // The physical confirmation took place through a current Fleet status edit.
+    // The note remains open for chronological review, but no longer implies an unresolved SOLD return.
+    expect(await pendingFleetReview(db)).toEqual({
+      noteCount: 1, machineCounts: { "5576": 1 }, returnMachineCounts: {}
+    });
+  });
+
 });
