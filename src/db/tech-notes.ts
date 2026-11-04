@@ -11,6 +11,7 @@ import {
 } from "@/src/lib/tech-notes/plan";
 import { getSettings } from "./queries";
 import { normalizeReading, type NoteReading } from "@/src/lib/tech-notes/reading";
+import { isReturnCandidate } from "@/src/lib/tech-notes/return-review";
 import { SHOP_TIME_ZONE, shopToday } from "@/src/lib/tech-notes/vocabulary";
 
 type Rows<T> = { rows: T[] };
@@ -611,10 +612,12 @@ export async function machineHistory(db: Db, machineNo: string, limit = 60): Pro
  * notes so they are never hidden from the review queue.
  */
 export async function pendingFleetReview(db: Db): Promise<{
-  noteCount: number; machineCounts: Record<string, number>;
+  noteCount: number; machineCounts: Record<string, number>; returnMachineCounts: Record<string, number>;
 }> {
-  const rows = await q<{ note_id: string; machine_no: string | null }>(db, sql`
-    select n.id::text note_id, f.machine_no
+  const rows = await q<{ note_id: string; machine_no: string | null; availability: string | null; location: string | null; status: string | null }>(db, sql`
+    select n.id::text note_id, f.machine_no, f.availability,
+      coalesce(nullif(e.value->'location'->>'name', ''), e.value->'location'->>'text', '') as location,
+      coalesce(nullif(e.value->'status'->>'checked', ''), e.value->'status'->'phrases'->>0, '') as status
     from tech_notes n
     left join lateral jsonb_array_elements(coalesce(n.reading->'entries', '[]'::jsonb)) e(value) on true
     left join fleet_machines f on f.machine_no = e.value->'machine'->>'text'
@@ -622,30 +625,41 @@ export async function pendingFleetReview(db: Db): Promise<{
   `);
   const noteIds = new Set<string>();
   const byMachine = new Map<string, Set<string>>();
+  const returns = new Map<string, Set<string>>();
   for (const row of rows) {
     noteIds.add(row.note_id);
     if (!row.machine_no) continue;
     const ids = byMachine.get(row.machine_no) ?? new Set<string>();
     ids.add(row.note_id);
     byMachine.set(row.machine_no, ids);
+    if (isReturnCandidate(row.availability ?? "", row.location, row.status)) {
+      const review = returns.get(row.machine_no) ?? new Set<string>();
+      review.add(row.note_id);
+      returns.set(row.machine_no, review);
+    }
   }
-  return { noteCount: noteIds.size, machineCounts: Object.fromEntries([...byMachine].map(([no, ids]) => [no, ids.size])) };
+  const counts = (items: Map<string, Set<string>>) => Object.fromEntries([...items].map(([no, ids]) => [no, ids.size]));
+  return { noteCount: noteIds.size, machineCounts: counts(byMachine), returnMachineCounts: counts(returns) };
 }
 
 /** Each alert uses the actual entry for this machine, never entry 0 from another machine. */
 export async function pendingMachineNotes(db: Db, machineNo: string): Promise<Array<{
-  id: string; written: string; location: string; status: string;
+  id: string; written: string; location: string; status: string; verifyReturn: boolean;
 }>> {
-  return q<{ id: string; written: string; location: string; status: string }>(db, sql`
-    select n.id::text as id,
+  const rows = await q<{ id: string; written: string; location: string; status: string; availability: string }>(db, sql`
+    select n.id::text as id, f.availability,
       coalesce(n.reading->'date'->>'text', '') as written,
       coalesce(nullif(e.value->'location'->>'name', ''), e.value->'location'->>'text', '') as location,
       coalesce(nullif(e.value->'status'->>'checked', ''),
         e.value->'status'->'phrases'->>0, '') as status
     from tech_notes n
     cross join lateral jsonb_array_elements(coalesce(n.reading->'entries', '[]'::jsonb)) e(value)
+    join fleet_machines f on f.machine_no = ${machineNo}
     where n.status = 'open'
       and e.value->'machine'->>'text' = ${machineNo}
     order by n.created_at desc limit 100
   `);
+  return rows.map(({ availability, ...r }) => ({
+    ...r, verifyReturn: isReturnCandidate(availability, r.location, r.status)
+  }));
 }
