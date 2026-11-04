@@ -1019,6 +1019,125 @@
       },
       "isRLSEnabled": false
     },
+    "public.machine_part_disposition_events": {
+      "name": "machine_part_disposition_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "machine_no": {
+          "name": "machine_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mpn_canonical": {
+          "name": "mpn_canonical",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step": {
+          "name": "step",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_disposition": {
+          "name": "previous_disposition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_disposition": {
+          "name": "next_disposition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "previous_sold_price": {
+          "name": "previous_sold_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sold_price": {
+          "name": "sold_price",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "repair_machine_no": {
+          "name": "repair_machine_no",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "part_disposition_events_machine_time_idx": {
+          "name": "part_disposition_events_machine_time_idx",
+          "columns": [
+            {
+              "expression": "machine_no",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "recorded_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "machine_part_disposition_events_machine_no_fleet_machines_machine_no_fk": {
+          "name": "machine_part_disposition_events_machine_no_fleet_machines_machine_no_fk",
+          "tableFrom": "machine_part_disposition_events",
+          "tableTo": "fleet_machines",
+          "columnsFrom": [
+            "machine_no"
+          ],
+          "columnsTo": [
+            "machine_no"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "part_disposition_events_step_valid": {
+          "name": "part_disposition_events_step_valid",
+          "value": "\"machine_part_disposition_events\".\"step\" in ('ebay','repair','listed','sold','unlisted','back')"
+        },
+        "part_disposition_events_sale_price_valid": {
+          "name": "part_disposition_events_sale_price_valid",
+          "value": "\"machine_part_disposition_events\".\"sold_price\" is null or \"machine_part_disposition_events\".\"sold_price\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.machine_part_state": {
       "name": "machine_part_state",
       "schema": "",
