@@ -1288,11 +1288,12 @@ export async function machineDetail(db: Db, machineNo: string) {
  * Undo is a decision too: the delete and a dated "cleared" event land together, so an older
  * tech note uploaded later cannot quietly put the state back. With a token, only the row as read.
  */
-async function clearPartStateRow(db: Db, machineNo: string, mpnCanonical: string, token?: string): Promise<boolean> {
+async function clearPartStateRow(db: Db, machineNo: string, mpnCanonical: string, token?: string, expectedState?: string): Promise<boolean> {
   const rows = await q<{ n: number }>(db, sql`
     with del as (
       delete from machine_part_state where machine_no = ${machineNo} and mpn_canonical = ${mpnCanonical}
         ${token === undefined ? sql`` : sql`and updated_at = ${token}::timestamptz`}
+        ${expectedState === undefined ? sql`` : sql`and state = ${expectedState}`}
       returning machine_no, mpn_canonical
     ),
     ev as (
@@ -1314,6 +1315,37 @@ export async function setPartState(db: Db, machineNo: string, mpnCanonical: stri
   const clean = { disposition: null, listedAt: null, soldPrice: null, repairMachineNo: null };
   await db.insert(t.machinePartState).values({ machineNo, mpnCanonical, state, note: note ?? null, updatedAt: new Date(), observedAt: null })
     .onConflictDoUpdate({ target: [t.machinePartState.machineNo, t.machinePartState.mpnCanonical], set: { state, note: note ?? null, updatedAt: new Date(), observedAt: null, ...clean } });
+}
+
+/**
+ * Guard initial machine-page part-state actions against stale browser tabs.
+ * An untouched part may only be marked if its row still does not exist.
+ * Failed/Missing undo deletes only the rendered state and row version.
+ * Staff/tech-note updates retain the existing setPartState() API.
+ */
+export type PagePartStateOutcome = "saved" | "conflict" | "invalid";
+export async function setPartStateFromPage(db: Db, input: {
+  machineNo: string; mpnCanonical: string;
+  state: "pulled" | "failed" | "missing" | null;
+  expectedState: string | null;
+  token: string | null;
+}): Promise<PagePartStateOutcome> {
+  if (!input.machineNo || !input.mpnCanonical ||
+    (input.state !== null && !["pulled", "failed", "missing"].includes(input.state))) return "invalid";
+
+  if (input.expectedState === null) {
+    // The page showed no row. Never overwrite a newer Pulled/Sold/Repair row.
+    if (input.token !== null || input.state === null) return "conflict";
+    const inserted = await db.insert(t.machinePartState).values({
+      machineNo: input.machineNo, mpnCanonical: input.mpnCanonical,
+      state: input.state, note: null, updatedAt: new Date(), observedAt: null
+    }).onConflictDoNothing().returning({ mpnCanonical: t.machinePartState.mpnCanonical });
+    return inserted.length ? "saved" : "conflict";
+  }
+
+  if (!["failed", "missing"].includes(input.expectedState) || input.state !== null || !input.token) return "conflict";
+  return await clearPartStateRow(db, input.machineNo, input.mpnCanonical, input.token, input.expectedState)
+    ? "saved" : "conflict";
 }
 
 export type DispositionOutcome = "saved" | "conflict" | "invalid_step" | "invalid_price" | "invalid_machine" | "unknown_machine" | "same_machine";
