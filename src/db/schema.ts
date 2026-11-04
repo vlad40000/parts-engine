@@ -410,6 +410,28 @@ export const machinePartState = pgTable("machine_part_state", {
   check("part_state_listed_at_valid", sql`${t.listedAt} is null or ${t.disposition} in ('listed','sold')`)
 ]);
 
+/**
+ * Append-only audit of every eBay/Repair disposition choice and reversal.
+ * Sold prices survive Undo, Unlisted and later Sold entries for the same part.
+ * Source parts are linked to their donor Machine ID, not to transient part-state rows.
+ */
+export const machinePartDispositionEvents = pgTable("machine_part_disposition_events", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  machineNo: text("machine_no").notNull().references(() => fleetMachines.machineNo),
+  mpnCanonical: text("mpn_canonical").notNull(),
+  step: text("step").notNull(),
+  previousDisposition: text("previous_disposition"),
+  nextDisposition: text("next_disposition"),
+  previousSoldPrice: numeric("previous_sold_price", { precision: 10, scale: 2 }),
+  soldPrice: numeric("sold_price", { precision: 10, scale: 2 }),
+  repairMachineNo: text("repair_machine_no"),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  index("part_disposition_events_machine_time_idx").on(t.machineNo, t.recordedAt),
+  check("part_disposition_events_step_valid", sql`${t.step} in ('ebay','repair','listed','sold','unlisted','back')`),
+  check("part_disposition_events_sale_price_valid", sql`${t.soldPrice} is null or ${t.soldPrice} >= 0`)
+]);
+
 /** Shop-floor stopwatch observations. Completely separate from cost assumptions and inventory state. */
 export const harvestTimeSessions = pgTable("harvest_time_sessions", {
   id: uuid("id").primaryKey(),
