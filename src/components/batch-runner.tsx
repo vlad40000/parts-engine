@@ -26,7 +26,10 @@ type Job = {
   message?: string;
 };
 
-const keyOf = (brand: string, model: string, variation?: string | null) => `${brand.trim().toUpperCase()}::${model.trim().toUpperCase()}::${(variation ?? "").trim().toUpperCase()}`;
+const keyOf = (brand: string, model: string, variation?: string | null) => {
+  const base = `${brand.trim().toUpperCase()}::${model.trim().toUpperCase()}`;
+  return variation ? `${base}::${variation.trim().toUpperCase()}` : base;
+};
 
 /** The selections that are still rows on this page; the same Set when nothing changed. */
 export function selectionOnPage(selected: Set<string>, candidates: Candidate[]): Set<string> {
