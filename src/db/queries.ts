@@ -119,14 +119,10 @@ function chunks<T>(rows: T[], size: number): T[][] {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// MPN alias chains
-// ---------------------------------------------------------------------------
 /**
- * Loads every persisted alias reachable from `keys` and returns the chain for any of them.
- * One query per hop, never more than MAX_ALIAS_HOPS. Every lookup that lands old numbers on
- * the current one uses this, so a chain such as W10142630 → W11375994 → WP285655 → 285655
- * ends on the same MPN everywhere instead of stopping after the first hop.
+ * Loads every persisted alias reachable from `keys` (one query per hop, at most MAX_ALIAS_HOPS)
+ * and returns the chain for any of them. Read-only: used to refuse an alias that would close a
+ * loop. Lookups that key parts lists, market facts and part states still resolve one hop.
  */
 export async function loadAliasChains(db: Db, keys: string[]): Promise<(key: string) => AliasChain> {
   const next = new Map<string, string>();
@@ -143,29 +139,6 @@ export async function loadAliasChains(db: Db, keys: string[]): Promise<(key: str
     frontier = [...new Set(found.map((r) => r.target))].filter((k) => !asked.has(k));
   }
   return (key) => resolveAliasChain(key, (k) => next.get(k));
-}
-
-/** The MPN a number lands on now, following the whole alias chain. */
-export async function resolveMpnKey(db: Db, key: string): Promise<string> {
-  return (await loadAliasChains(db, [key]))(key).canonical;
-}
-
-/** Every alias whose chain ends on `canonical`, nearest first (direct aliases, then theirs). */
-async function aliasesInto(db: Db, canonical: string) {
-  const rows: Array<typeof t.mpnAlias.$inferSelect> = [];
-  const seen = new Set([canonical]);
-  let frontier = [canonical];
-  for (let depth = 0; frontier.length && depth < MAX_ALIAS_HOPS; depth += 1) {
-    const found = await db.select().from(t.mpnAlias).where(inArray(t.mpnAlias.mpnCanonical, frontier)).orderBy(t.mpnAlias.aliasCanonical);
-    frontier = [];
-    for (const r of found) {
-      if (seen.has(r.aliasCanonical)) continue;
-      seen.add(r.aliasCanonical);
-      rows.push(r);
-      frontier.push(r.aliasCanonical);
-    }
-  }
-  return rows;
 }
 
 /** Keep a field set in Parts Engine (tech notes); otherwise take the imported value. */
@@ -608,10 +581,13 @@ export async function saveModelBom(
     }
     return r;
   });
-  const chain = await loadAliasChains(db, resolved.map((r) => r.mpnCanonical));
+  const existingAliases = resolved.length
+    ? await db.select().from(t.mpnAlias).where(inArray(t.mpnAlias.aliasCanonical, resolved.map((r) => r.mpnCanonical)))
+    : [];
+  const aliasMap = new Map(existingAliases.map((a) => [a.aliasCanonical, a.mpnCanonical]));
   const byMpn = new Map<string, (typeof resolved)[number]>();
   for (const r of resolved) {
-    const canonical = chain(r.mpnCanonical).canonical;
+    const canonical = aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical;
     if (!byMpn.has(canonical)) byMpn.set(canonical, { ...r, mpnCanonical: canonical });
   }
   const rows = [...byMpn.values()];
@@ -794,11 +770,13 @@ export async function mpnRowsFor(db: Db, keys: string[]): Promise<MpnEvaluated[]
 export async function mpnDetail(db: Db, mpnRaw: string, availability: string = "all") {
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
-  const canonical = await resolveMpnKey(db, canonicalizeMpn(mpnRaw));
+  let canonical = canonicalizeMpn(mpnRaw);
+  const [alias] = await db.select().from(t.mpnAlias).where(eq(t.mpnAlias.aliasCanonical, canonical));
+  if (alias) canonical = alias.mpnCanonical;
   const [row] = await q<MpnRow>(db, sql`select * from (${MPN_SELECT(s.donorAvailabilities)}) x where mpn_canonical = ${canonical}`);
   if (!row) return null;
   const evaluated = evaluateMpn(row, s, baselines);
-  const aliases = await aliasesInto(db, canonical);
+  const aliases = await db.select().from(t.mpnAlias).where(eq(t.mpnAlias.mpnCanonical, canonical));
   const statusCounts = await q<{ availability: string; machines: number }>(db, sql`
     select f.availability, count(distinct f.machine_no)::int machines
     from model_part_edges e
@@ -929,14 +907,16 @@ export async function getMarketFacts(db: Db, canonical: string) {
 
 export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: string): Promise<{ saved: number; unknown: number }> {
   let unknown = 0;
-  const chain = await loadAliasChains(db, rows.map((r) => r.mpnCanonical));
-  const resolve = (key: string) => chain(key).canonical;
+  const aliases = rows.length
+    ? await db.select().from(t.mpnAlias).where(inArray(t.mpnAlias.aliasCanonical, rows.map((r) => r.mpnCanonical)))
+    : [];
+  const aliasMap = new Map(aliases.map((a) => [a.aliasCanonical, a.mpnCanonical]));
   const known = new Set(
     (rows.length ? await db.select({ m: t.mpnMaster.mpnCanonical }).from(t.mpnMaster) : []).map((r) => r.m)
   );
   for (const part of chunks(rows, 300)) {
     const values = part.map((r) => {
-      const canonical = resolve(r.mpnCanonical);
+      const canonical = aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical;
       if (!known.has(canonical)) unknown += 1;
       return {
         mpnCanonical: canonical,
@@ -966,10 +946,10 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
     });
   }
   // Market rows for MPNs not yet in any parts list still need a master row to show up.
-  const missing = rows.filter((r) => !known.has(resolve(r.mpnCanonical)));
+  const missing = rows.filter((r) => !known.has(aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical));
   for (const part of chunks(missing, 300)) {
     await db.insert(t.mpnMaster).values(part.map((r) => ({
-      mpnCanonical: resolve(r.mpnCanonical),
+      mpnCanonical: aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical,
       mpnDisplay: r.mpnDisplay,
       description: r.description ?? "",
       partFamily: classifyFamily(r.description ?? "")
@@ -1062,8 +1042,11 @@ export async function saveSharedResearch(
   rows: SharedResearchRow[],
   opts: { researchedOn: string; source: string }
 ): Promise<{ research: number; newPrices: number; unknown: number; untouched: number }> {
-  const chain = await loadAliasChains(db, rows.map((r) => r.mpnCanonical));
-  const resolved = rows.map((r) => ({ ...r, mpnCanonical: chain(r.mpnCanonical).canonical }));
+  const aliases = rows.length
+    ? await db.select().from(t.mpnAlias).where(inArray(t.mpnAlias.aliasCanonical, rows.map((r) => r.mpnCanonical)))
+    : [];
+  const aliasMap = new Map(aliases.map((a) => [a.aliasCanonical, a.mpnCanonical]));
+  const resolved = rows.map((r) => ({ ...r, mpnCanonical: aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical }));
   const linesByKey = new Map<string, number[]>();
   for (const r of resolved) linesByKey.set(r.mpnCanonical, [...(linesByKey.get(r.mpnCanonical) ?? []), r.line]);
   const clashes = [...linesByKey].filter(([, lines]) => lines.length > 1);
@@ -1148,7 +1131,7 @@ export async function addAlias(db: Db, aliasRaw: string, targetRaw: string, kind
   const alias = canonicalizeMpn(aliasRaw);
   const target = canonicalizeMpn(targetRaw);
   if (!alias || !target || alias === target) throw new Error("Alias and target must be different MPNs.");
-  // The direct relationship is stored as entered; only a loop back to the alias is refused.
+  // The relationship is stored as entered; only one that would lead back to the alias is refused.
   const path = (await loadAliasChains(db, [target]))(target);
   if (path.loop || path.hops.includes(alias)) {
     throw new Error(`${alias} → ${target} would make a loop: ${[target, ...path.hops].join(" → ")}. Nothing was saved.`);

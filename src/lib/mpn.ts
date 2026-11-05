@@ -25,9 +25,9 @@ export type AliasChain = {
 };
 
 /**
- * Follow persisted aliases to the end of the chain: W10142630 → W11375994 → WP285655 → 285655.
- * Aliases are relationships, so every hop stays stored; this only answers "which MPN does this
- * number land on now". A loop is bad data and resolves to nothing rather than to an arbitrary key.
+ * Walk persisted aliases to the end of the chain: W10142630 → W11375994 → WP285655 → 285655.
+ * Aliases are relationships, so every hop stays stored; this reads the chain, it does not re-key
+ * anything. A loop is bad data and resolves to nothing rather than to an arbitrary key.
  */
 export function resolveAliasChain(start: string, next: (key: string) => string | undefined): AliasChain {
   const hops: string[] = [];
