@@ -911,12 +911,25 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
     ? await db.select().from(t.mpnAlias).where(inArray(t.mpnAlias.aliasCanonical, rows.map((r) => r.mpnCanonical)))
     : [];
   const aliasMap = new Map(aliases.map((a) => [a.aliasCanonical, a.mpnCanonical]));
+  // Validate the entire resolved input before the first write, including collisions across
+  // batch boundaries. Keep the existing one-hop mapping for both facts and master rows.
+  const resolved = rows.map((r) => ({ ...r, mpnCanonical: aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical }));
+  const entriesByKey = new Map<string, number[]>();
+  resolved.forEach((r, i) => {
+    const entries = entriesByKey.get(r.mpnCanonical) ?? [];
+    entries.push(i + 1);
+    entriesByKey.set(r.mpnCanonical, entries);
+  });
+  const clashes = [...entriesByKey].filter(([, entries]) => entries.length > 1);
+  if (clashes.length) {
+    throw new Error(`${clashes.map(([key, entries]) => `Import entries ${entries.join(", ")} resolve to the same MPN (${key})`).join("; ")}. Keep one entry per MPN; nothing was imported.`);
+  }
   const known = new Set(
     (rows.length ? await db.select({ m: t.mpnMaster.mpnCanonical }).from(t.mpnMaster) : []).map((r) => r.m)
   );
-  for (const part of chunks(rows, 300)) {
+  for (const part of chunks(resolved, 300)) {
     const values = part.map((r) => {
-      const canonical = aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical;
+      const canonical = r.mpnCanonical;
       if (!known.has(canonical)) unknown += 1;
       return {
         mpnCanonical: canonical,
@@ -946,10 +959,10 @@ export async function upsertMarketFacts(db: Db, rows: MarketRow[], source: strin
     });
   }
   // Market rows for MPNs not yet in any parts list still need a master row to show up.
-  const missing = rows.filter((r) => !known.has(aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical));
+  const missing = resolved.filter((r) => !known.has(r.mpnCanonical));
   for (const part of chunks(missing, 300)) {
     await db.insert(t.mpnMaster).values(part.map((r) => ({
-      mpnCanonical: aliasMap.get(r.mpnCanonical) ?? r.mpnCanonical,
+      mpnCanonical: r.mpnCanonical,
       mpnDisplay: r.mpnDisplay,
       description: r.description ?? "",
       partFamily: classifyFamily(r.description ?? "")
