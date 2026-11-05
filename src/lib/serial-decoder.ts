@@ -47,10 +47,17 @@ const GE_YEAR: Record<string, number[]> = {
   Z: [1988, 2000, 2012, 2024]
 };
 
+/**
+ * Whirlpool reused letters after the 2010-2019 digit run: X = 2020, then A = 2021 ... F = 2026
+ * (AppliancePartsPros year table, 2023-2026 codes confirmed by its technical specialist). Whirlpool
+ * service literature also uses X for 1990 and on some 2010 units, so X keeps all three years.
+ * G and later are added only once a source confirms them.
+ */
 const WHIRLPOOL_YEAR: Record<string, number[]> = {
   K: [2000], L: [2001], M: [2002], P: [2003], R: [2004], S: [2005], T: [2006], U: [2007], W: [2008], Y: [2009],
+  X: [1990, 2010, 2020],
   A: [1991, 2021], B: [1992, 2022], C: [1993, 2023], D: [1994, 2024],
-  E: [1995], F: [1996], G: [1997], H: [1998], J: [1999],
+  E: [1995, 2025], F: [1996, 2026], G: [1997], H: [1998], J: [1999],
   "0": [1980, 2010], "1": [1981, 2011], "2": [1982, 2012], "3": [1983, 2013], "4": [1984, 2014],
   "5": [1985, 2015], "6": [1986, 2016], "7": [1987, 2017], "8": [1988, 2018], "9": [1989, 2019]
 };

@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { canonicalizeMpn, wpPrefixTarget } from "@/src/lib/mpn";
+import { canonicalizeMpn, MAX_ALIAS_HOPS, resolveAliasChain, wpPrefixTarget, type AliasChain } from "@/src/lib/mpn";
 import { classifyFamily, libraryAppliance, PREFILTER_SKIP_FAMILIES, ALWAYS_SCRAP_FAMILIES, type PartFamily } from "@/src/lib/part-family";
 import { resolveRemoval, SEED_BASELINES, type Baseline } from "@/src/lib/removal";
 import { qualify, type EconomicsSettings, type Qualification } from "@/src/lib/economics";
@@ -117,6 +117,28 @@ function chunks<T>(rows: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
   return out;
+}
+
+/**
+ * Loads every persisted alias reachable from `keys` (one query per hop, at most MAX_ALIAS_HOPS)
+ * and returns the chain for any of them. Read-only: used to refuse an alias that would close a
+ * loop. Lookups that key parts lists, market facts and part states still resolve one hop.
+ */
+export async function loadAliasChains(db: Db, keys: string[]): Promise<(key: string) => AliasChain> {
+  const next = new Map<string, string>();
+  const asked = new Set<string>();
+  let frontier = [...new Set(keys)].filter(Boolean);
+  for (let depth = 0; frontier.length && depth <= MAX_ALIAS_HOPS; depth += 1) {
+    frontier.forEach((k) => asked.add(k));
+    const found: Array<{ alias: string; target: string }> = [];
+    for (const part of chunks(frontier, 1000)) {
+      found.push(...await db.select({ alias: t.mpnAlias.aliasCanonical, target: t.mpnAlias.mpnCanonical })
+        .from(t.mpnAlias).where(inArray(t.mpnAlias.aliasCanonical, part)));
+    }
+    for (const r of found) next.set(r.alias, r.target);
+    frontier = [...new Set(found.map((r) => r.target))].filter((k) => !asked.has(k));
+  }
+  return (key) => resolveAliasChain(key, (k) => next.get(k));
 }
 
 /** Keep a field set in Parts Engine (tech notes); otherwise take the imported value. */
@@ -1109,6 +1131,11 @@ export async function addAlias(db: Db, aliasRaw: string, targetRaw: string, kind
   const alias = canonicalizeMpn(aliasRaw);
   const target = canonicalizeMpn(targetRaw);
   if (!alias || !target || alias === target) throw new Error("Alias and target must be different MPNs.");
+  // The relationship is stored as entered; only one that would lead back to the alias is refused.
+  const path = (await loadAliasChains(db, [target]))(target);
+  if (path.loop || path.hops.includes(alias)) {
+    throw new Error(`${alias} → ${target} would make a loop: ${[target, ...path.hops].join(" → ")}. Nothing was saved.`);
+  }
   await db.insert(t.mpnAlias).values({ aliasCanonical: alias, mpnCanonical: target, kind, source: "manual" })
     .onConflictDoUpdate({ target: t.mpnAlias.aliasCanonical, set: { mpnCanonical: target, kind } });
 }
