@@ -9,9 +9,9 @@ const urls = ["Outer-Case-Assembly", "Top-Cover-Assembly", "Tub-Assembly"].map((
 const page = `<html><body><h1>WT7200CW (ABWEVUS) LG Washer - Overview</h1>
   ${urls.map((u, i) => `<a href="${u}">Section ${i}</a>`).join("")}</body></html>`;
 const section = (name: string) => `<html><body><h1>WT7200CW ${name} Sections</h1>
-  <div>CABINET ASSEMBLY</div><div>Part #: HD8748226</div><div>Manufacturer Part #: ABJ72919616</div><div>$263.51</div><div>F000</div>
-  <div>PCB ASSEMBLY</div><div>Part #: HD12080807</div><div>Manufacturer Part #: EBR81634305</div><div>$263.51</div><div>A061</div>
-  <div>PUMP ASSEMBLY</div><div>Part #: HD11706439</div><div>Manufacturer Part #: 5859EA1004P</div><div>F080</div>
+  <div>CABINET ASSEMBLY</div><div>Part #: HD8748226</div><div>Manufacturer Part #: ABJ7291961${name.includes("Outer") ? "6" : name.includes("Top") ? "7" : "8"}</div><div>$263.51</div><div>F000</div>
+  <div>PCB ASSEMBLY</div><div>Part #: HD12080807</div><div>Manufacturer Part #: EBR8163430${name.includes("Outer") ? "5" : name.includes("Top") ? "6" : "7"}</div><div>$263.51</div><div>A061</div>
+  <div>PUMP ASSEMBLY</div><div>Part #: HD11706439</div><div>Manufacturer Part #: 5859EA1004${name.includes("Outer") ? "P" : name.includes("Top") ? "Q" : "R"}</div><div>F080</div>
   </body></html>`;
 const fetcher: Fetcher = async (url) => ({
   ok: true, status: 200, finalUrl: url, html: url === base ? page : section(url.split("/Sections/")[1] ?? "")
@@ -31,7 +31,7 @@ describe("exact LG variation supplier BOM", () => {
     expect(result.status).toBe("found");
     expect(result.winner?.sourceUrl).toBe(base);
     expect(result.winner?.supplier).toBe("homedepot-lg-variation");
-    expect(result.winner?.rows).toHaveLength(3);
+    expect(result.winner?.rows).toHaveLength(9);
     expect(result.attempts).toHaveLength(1);
   });
   it("refuses missing variation without contacting generic supplier URLs", async () => {
