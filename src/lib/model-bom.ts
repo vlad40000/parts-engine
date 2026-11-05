@@ -20,7 +20,7 @@ export async function readModelBom(
   { brand, model, variation }: ModelQuery,
   fetcher: Fetcher = supplierFetcher
 ): Promise<{ result: ChainResult; saved: SavedModelBom }> {
-  const result = await lookupModelBom({ brand, model, variation }, fetcher);
+  const result = await lookupModelBom(variation ? { brand, model, variation } : { brand, model }, fetcher);
   const saved = await saveModelBom(db, {
     brandKey: brandKey(brand),
     modelKey: brandKey(brand) === "LG" ? lgIdentity(brand, model, variation).modelKey : modelKey(model),
