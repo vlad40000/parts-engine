@@ -29,6 +29,39 @@ describe("decodeSerial keeps every candidate year", () => {
     expect(d.candidateYears).toEqual([1994, 2024]);
   });
 
+  it("Whirlpool A keeps 1991 and 2021 (nameplate CA0100271, WTW8120HW0, week 1)", () => {
+    const d = decodeSerial("Whirlpool", "WTW8120HW0", "CA0100271", new Date("2026-11-05T12:00:00Z"));
+    expect(d.candidateYears).toEqual([1991, 2021]);
+    expect(d.week).toBe(1);
+    expect(d.confidence).toBe("ambiguous");
+  });
+
+  it("Whirlpool X decodes to 1990, 2010 and 2020 instead of no year", () => {
+    const d = decodeSerial("Whirlpool", "WTW5100HW1", "MX3515313", NOW);
+    expect(d.candidateYears).toEqual([1990, 2010, 2020]);
+    expect(d.week).toBe(35);
+    expect(bandsFor(d.candidateYears)).toEqual(["2020+", "2010-2014", "pre-2005"]);
+  });
+
+  it("Whirlpool E and F keep 2025 and 2026, so new units are not banded pre-2005 only", () => {
+    const now = new Date("2026-11-05T12:00:00Z");
+    const e = decodeSerial("Whirlpool", "WTW8127LW1", "CE1234567", now);
+    expect(e.candidateYears).toEqual([1995, 2025]);
+    expect(e.confidence).toBe("ambiguous");
+    expect(bandsFor(e.candidateYears)).toContain("2020+");
+    const f = decodeSerial("Whirlpool", "WTW8127LW1", "CF0212345", now);
+    expect(f.candidateYears).toEqual([1996, 2026]);
+    expect(bandsFor(f.candidateYears)).toContain("2020+");
+  });
+
+  it("Whirlpool F decoded before 2026 keeps only 1996 (future years are dropped)", () => {
+    expect(decodeSerial("Whirlpool", "WTW8127LW1", "CF0212345", new Date("2025-06-01T12:00:00Z")).candidateYears).toEqual([1996]);
+  });
+
+  it("Kenmore 110 routes through the same Whirlpool table", () => {
+    expect(decodeSerial("Kenmore", "11021652020", "CX0112345", NOW).candidateYears).toEqual([1990, 2010, 2020]);
+  });
+
   it("Samsung X → 2004 and 2024", () => {
     const d = decodeSerial("Samsung", "DV45H7000EW/A2", "0123ABCX5Y00001", NOW);
     expect(d.candidateYears).toEqual([2004, 2024]);
