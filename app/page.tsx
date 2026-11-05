@@ -7,9 +7,10 @@ import { DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { FleetAgeBandPanel } from "@/src/components/fleet-age-band-panel";
 import { NoDatabase, PageTitle, Pager, Stat, Years, qs } from "@/src/components/ui";
 import { ModelEditCell } from "@/src/components/model-edit-cell";
+import { LgVariationEditCell } from "@/src/components/lg-variation-edit-cell";
 import { StatusEditCell } from "@/src/components/status-edit-cell";
 import { LocationEditCell } from "@/src/components/location-edit-cell";
-import { updateMachineLocationAction, updateMachineModelAction, updateMachineStatusAction } from "./actions";
+import { updateMachineLocationAction, updateMachineModelAction, updateMachineStatusAction, updateMachineVariationAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 type SP = Promise<Record<string, string | undefined>>;
@@ -42,7 +43,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
         <Stat label="Distinct models" value={summary.totals.models.toLocaleString()} />
         <Stat label="Models with parts list" value={summary.totals.models_with_bom.toLocaleString()} hint={`${summary.totals.with_bom.toLocaleString()} machines covered`} />
         <Stat label="MPNs indexed" value={summary.market?.mpns.toLocaleString() ?? 0} hint={`${summary.market?.researched ?? 0} with eBay data`} />
-        <Stat label="Need nameplate" value={summary.totals.needs_nameplate.toLocaleString()} />
+        <Stat label="Need nameplate" value={summary.totals.needs_nameplate.toLocaleString()} hint={`${summary.totals.needs_variation.toLocaleString()} LG variations also need verification`} />
       </div>
 
 
@@ -98,7 +99,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
       </form>
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>Serial</th><th>Location</th><th>Possible years</th><th>Symptom flags</th><th>Parts list</th></tr></thead>
+          <thead><tr><th>#</th><th>Status</th><th>Type</th><th>Brand</th><th>Model</th><th>LG variation</th><th>Serial</th><th>Location</th><th>Possible years</th><th>Symptom flags</th><th>Parts list</th></tr></thead>
           <tbody>
             {list.rows.map((m) => (
               <tr key={m.machine_no}>
@@ -117,6 +118,8 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 <td className="text-xs">{m.appliance_type}</td>
                 <td>{m.brand}</td>
                 <td><ModelEditCell machineNo={m.machine_no} model={m.model_raw} brand={m.brand} serial={m.serial} identityStatus={m.identity_status} action={updateMachineModelAction} /></td>
+                <td><LgVariationEditCell machineNo={m.machine_no} brand={m.brand} model={m.model_raw} serial={m.serial}
+                  variation={m.manufacturer_variation} productCode={m.product_code} action={updateMachineVariationAction} /></td>
                 <td className="mono text-xs">{m.serial}</td>
                 <td>
                   <LocationEditCell machineNo={m.machine_no} location={m.location} action={updateMachineLocationAction} />
@@ -128,6 +131,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                   ? isEligibleDonorStatus(m.availability, settings.donorAvailabilities)
                     ? <span className="pill pill-go">yes</span>
                     : <span className="pill pill-mute" title="Model parts list is cached, but this machine is not a currently eligible donor.">model cached · ineligible</span>
+                  : m.identity_status === "needs_variation" ? <span className="pill pill-wait">verify variation</span>
                   : m.bom_status ? <span className="pill pill-mute">{m.bom_status.replace("_", " ")}</span> : null}</td>
               </tr>
             ))}
