@@ -81,6 +81,7 @@ export default async function BomPage({ searchParams }: { searchParams: SP }) {
           <b className="tabular-nums">{totalMachines.toLocaleString()}</b> donor {totalMachines === 1 ? "machine" : "machines"} in {totalModels === 1 ? "that group" : "those groups"}
         </p>
         <p className="mt-1 max-w-4xl text-xs text-muted">
+          LG machines without a confirmed manufacturer variation are excluded and flagged VERIFY VARIATION in Fleet; generic model catalogs are not substitutes.
           This is the grouped parts-list (BOM) queue, not the full <Link className="underline" href="/">Fleet</Link>: one row per Brand + Model,
           since one parts list covers every machine of that model. Select a status imported with the machines before running a lookup.
           UNCHECKED is available for inspection-first research; SOLD and SCRAPED/SCRAPPED cannot be donors.
