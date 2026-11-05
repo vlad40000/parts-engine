@@ -12,7 +12,7 @@ import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearc
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
-import { lgIdentity, lgVariation, variationFromProductCode } from "@/src/lib/lg-variation";
+import { lgIdentity, lgVariation, splitLgModel, variationFromProductCode } from "@/src/lib/lg-variation";
 import { isEditableFleetStatus } from "@/src/lib/fleet-status";
 import { CONDITION_FOR_STATUS, SALE_GRADES, OFF_CARD_LOCATIONS } from "@/src/lib/tech-notes/vocabulary";
 import { applyStep, isDisposition, type Disposition, type DispositionStep } from "@/src/lib/part-disposition";
@@ -229,21 +229,26 @@ export async function updateMachineModel(
   db: Db,
   input: { machineNo: string; expectedModel: string; expectedBrand: string; expectedSerial: string; model: string }
 ): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict" | "has_part_states"> {
-  const requested = input.model.trim();
-  if (!requested || requested.length > 120 || isUnreadableModel(requested) || !modelKey(requested)) return "invalid";
+  const rawRequested = input.model.trim();
+  if (!rawRequested || rawRequested.length > 120 || isUnreadableModel(rawRequested) || !modelKey(rawRequested)) return "invalid";
   const [current] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
   if (!current) return "not_found";
   if (current.modelRaw !== input.expectedModel || current.brand !== input.expectedBrand || current.serial !== input.expectedSerial) return "conflict";
   if (!current.brandKey) return "invalid";
-  if (current.modelRaw === requested) return "unchanged";
-  const identity = lgIdentity(current.brand, requested, null);
+  const parsed = current.brandKey === "LG" ? splitLgModel(rawRequested) : { model: rawRequested, variation: null };
+  const requested = parsed.model;
+  // Editing the same base model must not clear an already verified nameplate variation.
+  const variation = parsed.variation ?? (requested === current.modelRaw ? current.manufacturerVariation : null);
+  const productCode = requested === current.modelRaw && variation === current.manufacturerVariation ? current.productCode : null;
+  if (current.modelRaw === requested && current.manufacturerVariation === variation) return "unchanged";
+  const identity = lgIdentity(current.brand, requested, variation);
   const nextModelKey = identity.modelKey;
   const age = decodeSerial(current.brand, requested, current.serial);
   const changed = await db.update(t.fleetMachines).set({
     modelRaw: requested,
     modelKey: nextModelKey,
-    manufacturerVariation: null,
-    productCode: null,
+    manufacturerVariation: variation,
+    productCode,
     identityStatus: identity.identityStatus,
     ageFamily: age.family,
     ageCandidateYears: age.candidateYears,
@@ -391,7 +396,7 @@ function fleetWhere(f: FleetFilter) {
   if (f.brand) parts.push(sql`f.brand_key = ${f.brand}`);
   if (f.location?.trim()) parts.push(sql`coalesce(f.location, '') ilike ${"%" + f.location.trim() + "%"}`);
   if (f.verify === "1") parts.push(sql`exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null)`);
-  if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"})`);
+  if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"} or coalesce(f.manufacturer_variation, '') ilike ${"%" + f.q + "%"})`);
   if (f.band) {
     const band = DEFAULT_AGE_BANDS.find((b) => b.key === f.band);
     if (band) parts.push(sql`exists (select 1 from unnest(f.age_candidate_years) y where y between ${band.start} and ${band.end})`);
