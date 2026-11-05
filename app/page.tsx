@@ -127,11 +127,11 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
                 </td>
                 <td className="text-xs"><Years years={m.age_candidate_years} /></td>
                 <td className="text-xs text-muted">{m.suspect_families.join(", ")}</td>
-                <td>{m.bom_status === "found"
+                <td>{m.identity_status === "needs_variation" ? <span className="pill pill-wait">verify variation</span>
+                  : m.bom_status === "found"
                   ? isEligibleDonorStatus(m.availability, settings.donorAvailabilities)
                     ? <span className="pill pill-go">yes</span>
                     : <span className="pill pill-mute" title="Model parts list is cached, but this machine is not a currently eligible donor.">model cached · ineligible</span>
-                  : m.identity_status === "needs_variation" ? <span className="pill pill-wait">verify variation</span>
                   : m.bom_status ? <span className="pill pill-mute">{m.bom_status.replace("_", " ")}</span> : null}</td>
               </tr>
             ))}
