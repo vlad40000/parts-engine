@@ -64,6 +64,13 @@
       "when": 1793807090314,
       "tag": "0008_pulled_part_disposition",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793900000000,
+      "tag": "0009_lg_manufacturer_variation",
+      "breakpoints": true
     }
   ]
 }

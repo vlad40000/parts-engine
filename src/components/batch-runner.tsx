@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export type Candidate = {
-  brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
+  brand_key: string; model_key: string; brand: string; model: string; variation?: string | null; machines: number; types: string; bom_status: string | null;
   identity_refusal?: string | null;
 };
 
@@ -14,6 +14,7 @@ type Job = {
   key: string;
   brand: string;
   model: string;
+  variation: string | null;
   machines: number | null;
   state: JobState;
   startedAt: number;
@@ -25,11 +26,14 @@ type Job = {
   message?: string;
 };
 
-const keyOf = (brand: string, model: string) => `${brand.trim().toUpperCase()}::${model.trim().toUpperCase()}`;
+const keyOf = (brand: string, model: string, variation?: string | null) => {
+  const base = `${brand.trim().toUpperCase()}::${model.trim().toUpperCase()}`;
+  return variation ? `${base}::${variation.trim().toUpperCase()}` : base;
+};
 
 /** The selections that are still rows on this page; the same Set when nothing changed. */
 export function selectionOnPage(selected: Set<string>, candidates: Candidate[]): Set<string> {
-  const onPage = new Set(candidates.map((c) => keyOf(c.brand, c.model)));
+  const onPage = new Set(candidates.map((c) => keyOf(c.brand, c.model, c.variation)));
   return [...selected].every((k) => onPage.has(k)) ? selected : new Set([...selected].filter((k) => onPage.has(k)));
 }
 
@@ -71,7 +75,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
   function selectNext() {
     const next = new Set<string>();
     for (const c of candidates) {
-      const k = keyOf(c.brand, c.model);
+      const k = keyOf(c.brand, c.model, c.variation);
       if (doneKeys.has(k)) continue;
       next.add(k);
       if (next.size >= batchSize) break;
@@ -79,17 +83,17 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
     setSelected(next);
   }
 
-  function start(brand: string, model: string, machines: number | null) {
-    const key = keyOf(brand, model);
+  function start(brand: string, model: string, variation: string | null | undefined, machines: number | null) {
+    const key = keyOf(brand, model, variation);
     controllers.current.get(key)?.abort();
     const controller = new AbortController();
     controllers.current.set(key, controller);
-    const job: Job = { key, brand, model, machines, state: "running", startedAt: Date.now() };
+    const job: Job = { key, brand, model, variation: variation ?? null, machines, state: "running", startedAt: Date.now() };
     setJobs((cur) => [job, ...cur.filter((j) => j.key !== key)]);
     fetch("/api/bom/model", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ brand, model, availability }),
+      body: JSON.stringify({ brand, model, variation, availability }),
       signal: controller.signal
     })
       .then(async (res) => {
@@ -109,7 +113,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
 
   function runSelected() {
     setError("");
-    const chosen = candidates.filter((c) => selected.has(keyOf(c.brand, c.model)));
+    const chosen = candidates.filter((c) => selected.has(keyOf(c.brand, c.model, c.variation)));
     const pasted = paste
       .split(/\r?\n/)
       .map((l) => l.split(/[,\t]/).map((x) => x.trim()))
@@ -117,8 +121,8 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
     const total = chosen.length + pasted.length;
     if (!total) return setError("Select models or paste lines like: GE, GDT535PSJ2SS");
     if (total > batchSize) return setError(`Run up to ${batchSize} models at a time (Settings → batch size).`);
-    chosen.forEach((c) => start(c.brand, c.model, c.machines));
-    pasted.forEach(([b, m]) => start(b, m, null));
+    chosen.forEach((c) => start(c.brand, c.model, c.variation, c.machines));
+    pasted.forEach(([b, m, v]) => start(b, m, v ?? null, null));
     setSelected(new Set());
     setPaste("");
   }
@@ -148,14 +152,14 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
             <thead><tr><th></th><th>Brand</th><th>Model</th><th className="num">Machines</th><th>Type</th></tr></thead>
             <tbody>
               {candidates.map((c) => {
-                const k = keyOf(c.brand, c.model);
+                const k = keyOf(c.brand, c.model, c.variation);
                 const done = doneKeys.has(k);
                 return (
                   <tr key={k} className={done ? "opacity-40" : ""}>
                     <td><input type="checkbox" checked={selected.has(k)} disabled={done || (!selected.has(k) && selected.size >= batchSize)} onChange={() => toggle(k)} /></td>
                     <td>{c.brand}</td>
                     <td className="mono">
-                      {c.model}
+                      {c.model}{c.variation ? <span className="ml-1 text-muted">· {c.variation}</span> : null}
                       {c.identity_refusal ? <span className="pill pill-stop ml-2">identity mismatch</span>
                         : c.bom_status === "error" ? <span className="pill pill-stop ml-2">retry</span> : null}
                       {c.identity_refusal ? (
@@ -177,7 +181,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
         </div>
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer text-muted">Paste models instead</summary>
-          <textarea className="input mt-2 h-28 w-full mono" placeholder={"GE, GDT535PSJ2SS\nWhirlpool, WTW5000DW1"} value={paste} onChange={(e) => setPaste(e.target.value)} />
+          <textarea className="input mt-2 h-28 w-full mono" placeholder={"GE, GDT535PSJ2SS\nLG, WT7200CW, ABWEVUS"} value={paste} onChange={(e) => setPaste(e.target.value)} />
         </details>
       </section>
 
@@ -197,7 +201,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
               <li key={j.key} className="rounded border border-line p-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{j.brand}</span>
-                  <span className="mono">{j.model}</span>
+                  <span className="mono">{j.model}{j.variation ? ` · ${j.variation}` : ""}</span>
                   {j.machines ? <span className="text-xs text-muted">{j.machines} machines</span> : null}
                   <span className="ml-auto text-xs text-muted tabular-nums">{secs}s</span>
                   {j.state === "running" ? <span className="pill pill-wait">reading…</span> : null}
@@ -207,7 +211,7 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
                   {j.state === "canceled" ? <span className="pill pill-mute">canceled</span> : null}
                   {j.state === "running"
                     ? <button className="btn" type="button" onClick={() => cancel(j.key)}>Cancel</button>
-                    : j.state !== "found" ? <button className="btn" type="button" onClick={() => start(j.brand, j.model, j.machines)}>Retry</button> : null}
+                    : j.state !== "found" ? <button className="btn" type="button" onClick={() => start(j.brand, j.model, j.variation, j.machines)}>Retry</button> : null}
                 </div>
                 {j.result?.newMpns ? <div className="mt-1 text-xs text-muted">{j.result.newMpns} MPNs not seen before{j.result.dropped ? ` · ${j.result.dropped} rows had no OEM number` : ""}</div> : null}
                 {j.message ? <div className="mt-1 text-xs text-stop">{j.message}</div> : null}

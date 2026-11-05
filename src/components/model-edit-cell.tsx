@@ -28,7 +28,7 @@ export function ModelEditCell({ machineNo, model, brand, serial, identityStatus,
       <p className="text-xs text-muted">Only machine #${machineNo} changes. Shared parts lists are not rewritten.</p>
     </form> : <div className="flex flex-wrap items-center gap-2">
       <span className="mono">{model || "—"}</span>
-      {identityStatus !== "ok" ? <span className="pill pill-wait">nameplate</span> : null}
+      {identityStatus === "needs_nameplate" ? <span className="pill pill-wait">nameplate</span> : null}
       <button type="button" onClick={() => setEditing(true)} className="btn px-2 py-0.5 text-xs" aria-label={`Edit model for machine ${machineNo}`}>Edit</button>
     </div>}
     {result ? <p role="status" className={`mt-1 text-xs ${result.ok ? "text-go" : "text-stop"}`}>{result.message}</p> : null}

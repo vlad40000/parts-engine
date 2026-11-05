@@ -69,6 +69,8 @@ export function MachineForm({ action }: { action: (prev: ActionResult | null, fo
         {field("machineNo", "Machine ID", { required: true })}
         {field("brand", "Brand", { required: true })}
         {field("model", "Model", { required: true, className: "input mono" })}
+        {field("variation", "LG manufacturer variation (if LG)", { placeholder: "ABWEVUS", maxLength: 12 })}
+        {field("productCode", "LG product code (optional)", { placeholder: "T1780WFFV.ABWEVUS", maxLength: 120 })}
         {field("serial", "Serial", { className: "input mono" })}
         {field("applianceType", "Type", { placeholder: "Washer - Front Load" })}
         <label className="flex flex-col gap-1 text-sm">

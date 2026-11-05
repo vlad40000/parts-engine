@@ -12,6 +12,7 @@ import { buildAllSharedResearchExports, buildSharedResearchExport, SharedResearc
 import type { ChainResult } from "@/src/sources/chain";
 import { bandsFor, decodeSerial, DEFAULT_AGE_BANDS } from "@/src/lib/serial-decoder";
 import { isUnreadableModel, modelKey } from "@/src/lib/model-key";
+import { lgIdentity, lgVariation, splitLgModel, variationFromProductCode } from "@/src/lib/lg-variation";
 import { isEditableFleetStatus } from "@/src/lib/fleet-status";
 import { CONDITION_FOR_STATUS, SALE_GRADES, OFF_CARD_LOCATIONS } from "@/src/lib/tech-notes/vocabulary";
 import { applyStep, isDisposition, type Disposition, type DispositionStep } from "@/src/lib/part-disposition";
@@ -135,7 +136,18 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         brand: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.brand else excluded.brand end`,
         brandKey: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.brand_key else excluded.brand_key end`,
         modelRaw: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.model_raw else excluded.model_raw end`,
-        modelKey: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.model_key else excluded.model_key end`,
+        modelKey: sql`case when fleet_machines.source = 'manual_model' or
+          (fleet_machines.brand_key = 'LG' and excluded.brand_key = 'LG' and fleet_machines.model_raw = excluded.model_raw
+           and fleet_machines.manufacturer_variation is not null and excluded.manufacturer_variation is null)
+          then fleet_machines.model_key else excluded.model_key end`,
+        manufacturerVariation: sql`case when fleet_machines.source = 'manual_model' or
+          (fleet_machines.brand_key = 'LG' and excluded.brand_key = 'LG' and fleet_machines.model_raw = excluded.model_raw
+           and fleet_machines.manufacturer_variation is not null and excluded.manufacturer_variation is null)
+          then fleet_machines.manufacturer_variation else excluded.manufacturer_variation end`,
+        productCode: sql`case when fleet_machines.source = 'manual_model' or
+          (fleet_machines.brand_key = 'LG' and excluded.brand_key = 'LG' and fleet_machines.model_raw = excluded.model_raw
+           and fleet_machines.manufacturer_variation is not null and excluded.manufacturer_variation is null)
+          then fleet_machines.product_code else excluded.product_code end`,
         serial: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.serial else excluded.serial end`,
         color: sql`excluded.color`,
         // Operational fields a tech note set in Parts Engine are the record (owner decision 2026-10-29).
@@ -147,7 +159,10 @@ export async function upsertFleet(db: Db, rows: FleetRow[]): Promise<number> {
         stickerPrice: localOr("sticker_price"),
         listPrice: sql`excluded.list_price`,
         acquiredAt: sql`excluded.acquired_at`,
-        identityStatus: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.identity_status else excluded.identity_status end`,
+        identityStatus: sql`case when fleet_machines.source = 'manual_model' or
+          (fleet_machines.brand_key = 'LG' and excluded.brand_key = 'LG' and fleet_machines.model_raw = excluded.model_raw
+           and fleet_machines.manufacturer_variation is not null and excluded.manufacturer_variation is null)
+          then fleet_machines.identity_status else excluded.identity_status end`,
         // Part-family flags follow whichever diagnosis and notes are kept.
         suspectFamilies: sql`case when fleet_machines.local_fields && array['diagnosis','notes']::text[] then fleet_machines.suspect_families else excluded.suspect_families end`,
         ageFamily: sql`case when fleet_machines.source = 'manual_model' then fleet_machines.age_family else excluded.age_family end`,
@@ -214,19 +229,27 @@ export async function updateMachineModel(
   db: Db,
   input: { machineNo: string; expectedModel: string; expectedBrand: string; expectedSerial: string; model: string }
 ): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict" | "has_part_states"> {
-  const requested = input.model.trim();
-  if (!requested || requested.length > 120 || isUnreadableModel(requested) || !modelKey(requested)) return "invalid";
+  const rawRequested = input.model.trim();
+  if (!rawRequested || rawRequested.length > 120 || isUnreadableModel(rawRequested) || !modelKey(rawRequested)) return "invalid";
   const [current] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
   if (!current) return "not_found";
   if (current.modelRaw !== input.expectedModel || current.brand !== input.expectedBrand || current.serial !== input.expectedSerial) return "conflict";
   if (!current.brandKey) return "invalid";
-  if (current.modelRaw === requested) return "unchanged";
-  const nextModelKey = modelKey(requested);
+  const parsed = current.brandKey === "LG" ? splitLgModel(rawRequested) : { model: rawRequested, variation: null };
+  const requested = parsed.model;
+  // Editing the same base model must not clear an already verified nameplate variation.
+  const variation = parsed.variation ?? (requested === current.modelRaw ? current.manufacturerVariation : null);
+  const productCode = requested === current.modelRaw && variation === current.manufacturerVariation ? current.productCode : null;
+  if (current.modelRaw === requested && current.manufacturerVariation === variation) return "unchanged";
+  const identity = lgIdentity(current.brand, requested, variation);
+  const nextModelKey = identity.modelKey;
   const age = decodeSerial(current.brand, requested, current.serial);
   const changed = await db.update(t.fleetMachines).set({
     modelRaw: requested,
     modelKey: nextModelKey,
-    identityStatus: "ok",
+    manufacturerVariation: variation,
+    productCode,
+    identityStatus: identity.identityStatus,
     ageFamily: age.family,
     ageCandidateYears: age.candidateYears,
     ageMonth: age.month,
@@ -249,6 +272,50 @@ export async function updateMachineModel(
   const [record] = await db.select({ modelRaw: t.fleetMachines.modelRaw, brand: t.fleetMachines.brand, serial: t.fleetMachines.serial })
     .from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
   if (!record || record.modelRaw !== input.expectedModel || record.brand !== input.expectedBrand || record.serial !== input.expectedSerial) return "conflict";
+  return "has_part_states";
+}
+
+
+/**
+ * Change one LG machine's manufacturer variation. This changes BOM identity, so
+ * physical pulled/failed/missing part states must be resolved before switching it.
+ * A missing code is never treated as permission to use a generic LG parts list.
+ */
+export async function updateMachineVariation(db: Db, input: {
+  machineNo: string; expectedModel: string; expectedBrand: string; expectedSerial: string;
+  expectedVariation: string; expectedProductCode: string;
+  variation: string; productCode: string;
+}): Promise<"saved" | "unchanged" | "invalid" | "not_found" | "conflict" | "has_part_states"> {
+  const variation = lgVariation(input.variation);
+  const productCode = input.productCode.trim().toUpperCase();
+  if (!variation || input.variation.trim().toUpperCase() !== variation ||
+      productCode.length > 120 || (productCode && variationFromProductCode(productCode) !== variation)) return "invalid";
+  const [current] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
+  if (!current) return "not_found";
+  if (current.brandKey !== "LG" || current.identityStatus === "needs_nameplate") return "invalid";
+  if (current.modelRaw !== input.expectedModel || current.brand !== input.expectedBrand ||
+      current.serial !== input.expectedSerial || (current.manufacturerVariation ?? "") !== input.expectedVariation ||
+      (current.productCode ?? "") !== input.expectedProductCode) return "conflict";
+  if (current.manufacturerVariation === variation && (current.productCode ?? "") === productCode) return "unchanged";
+  const nextModelKey = lgIdentity(current.brand, current.modelRaw, variation).modelKey;
+  const changed = await db.update(t.fleetMachines).set({
+    manufacturerVariation: variation, productCode: productCode || null,
+    modelKey: nextModelKey, identityStatus: "ok", updatedAt: new Date()
+  }).where(and(
+    eq(t.fleetMachines.machineNo, input.machineNo),
+    eq(t.fleetMachines.modelRaw, input.expectedModel),
+    eq(t.fleetMachines.brand, input.expectedBrand),
+    eq(t.fleetMachines.serial, input.expectedSerial),
+    sql`coalesce(${t.fleetMachines.manufacturerVariation}, '') = ${input.expectedVariation}`,
+    sql`coalesce(${t.fleetMachines.productCode}, '') = ${input.expectedProductCode}`,
+    sql`(${t.fleetMachines.modelKey} = ${nextModelKey} or not exists
+      (select 1 from machine_part_state ps where ps.machine_no = ${input.machineNo}))`
+  )).returning({ machineNo: t.fleetMachines.machineNo });
+  if (changed.length) return "saved";
+  const [record] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, input.machineNo));
+  if (!record || record.modelRaw !== input.expectedModel || record.brand !== input.expectedBrand ||
+      record.serial !== input.expectedSerial || (record.manufacturerVariation ?? "") !== input.expectedVariation ||
+      (record.productCode ?? "") !== input.expectedProductCode) return "conflict";
   return "has_part_states";
 }
 
@@ -329,7 +396,7 @@ function fleetWhere(f: FleetFilter) {
   if (f.brand) parts.push(sql`f.brand_key = ${f.brand}`);
   if (f.location?.trim()) parts.push(sql`coalesce(f.location, '') ilike ${"%" + f.location.trim() + "%"}`);
   if (f.verify === "1") parts.push(sql`exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null)`);
-  if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"})`);
+  if (f.q) parts.push(sql`(f.machine_no ilike ${"%" + f.q + "%"} or f.model_raw ilike ${"%" + f.q + "%"} or f.serial ilike ${"%" + f.q + "%"} or coalesce(f.location, '') ilike ${"%" + f.q + "%"} or coalesce(f.manufacturer_variation, '') ilike ${"%" + f.q + "%"})`);
   if (f.band) {
     const band = DEFAULT_AGE_BANDS.find((b) => b.key === f.band);
     if (band) parts.push(sql`exists (select 1 from unnest(f.age_candidate_years) y where y between ${band.start} and ${band.end})`);
@@ -349,12 +416,13 @@ export const OFF_LOT = ["SOLD", "SCRAPED", "SCRAPPED"];
 
 export async function fleetSummary(db: Db) {
   const onLot = sql.raw(`f.availability <> all(${pgTextArray(OFF_LOT)})`);
-  const [totals] = await q<{ machines: number; models: number; needs_nameplate: number; with_bom: number; models_with_bom: number }>(db, sql`
+  const [totals] = await q<{ machines: number; models: number; needs_nameplate: number; needs_variation: number; with_bom: number; models_with_bom: number }>(db, sql`
     select count(*)::int machines,
       count(distinct (f.brand_key, f.model_key)) filter (where f.identity_status = 'ok')::int models,
-      count(*) filter (where f.identity_status <> 'ok')::int needs_nameplate,
-      count(*) filter (where c.status = 'found')::int with_bom,
-      count(distinct (f.brand_key, f.model_key)) filter (where c.status = 'found')::int models_with_bom
+      count(*) filter (where f.identity_status = 'needs_nameplate')::int needs_nameplate,
+      count(*) filter (where f.identity_status = 'needs_variation')::int needs_variation,
+      count(*) filter (where c.status = 'found' and f.identity_status = 'ok')::int with_bom,
+      count(distinct (f.brand_key, f.model_key)) filter (where c.status = 'found' and f.identity_status = 'ok')::int models_with_bom
     from fleet_machines f
     left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
     where ${onLot}`);
@@ -385,10 +453,11 @@ export async function listFleet(db: Db, f: FleetFilter, limit = 100, offset = 0)
     : f.sort === "location_desc" ? sql`f.location desc nulls last, ${byMachine}` : byMachine;
   const rows = await q<{
     machine_no: string; availability: string; appliance_type: string; brand: string; model_raw: string; serial: string; location: string | null;
+    manufacturer_variation: string | null; product_code: string | null;
     identity_status: string; age_candidate_years: number[]; age_confidence: string; suspect_families: string[]; bom_status: string | null;
     verify_location: boolean;
   }>(db, sql`
-    select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.location, f.identity_status,
+    select f.machine_no, f.availability, f.appliance_type, f.brand, f.model_raw, f.serial, f.location, f.manufacturer_variation, f.product_code, f.identity_status,
       f.age_candidate_years, f.age_confidence, f.suspect_families, c.status bom_status,
       exists (select 1 from fleet_location_checks lc where lc.machine_no = f.machine_no and lc.resolved_at is null) verify_location
     from fleet_machines f
@@ -411,7 +480,7 @@ export async function fleetFacets(db: Db) {
 // BOM queue + persistence
 // ---------------------------------------------------------------------------
 export type ModelCandidate = {
-  brand_key: string; model_key: string; brand: string; model: string; machines: number; types: string; bom_status: string | null;
+  brand_key: string; model_key: string; brand: string; model: string; variation: string | null; machines: number; types: string; bom_status: string | null;
   /** Warnings of the supplier attempts that refused a page for identity, so Retries can say why. */
   identity_refusal: string | null;
 };
@@ -429,7 +498,7 @@ export type BomQueueFilter = FleetFilter & { queue?: BomQueueCategory };
 function pendingBomGroups(f: FleetFilter, donorSet: string[], category: BomQueueCategory | "all") {
   const allowed = donorStatusesForSelection(donorSet, f.availability);
   return sql`
-    select f.brand_key, f.model_key, min(f.brand) brand, min(f.model_raw) model, count(*)::int machines,
+    select f.brand_key, f.model_key, min(f.brand) brand, min(f.model_raw) model, min(f.manufacturer_variation) variation, count(*)::int machines,
       string_agg(distinct f.appliance_type, ', ') types, min(c.status) bom_status
     from fleet_machines f
     left join model_bom_cache c on c.brand_key = f.brand_key and c.model_key = f.model_key
@@ -1257,11 +1326,13 @@ export async function teardownQueue(db: Db, limit = 100): Promise<TeardownResult
 export async function machineDetail(db: Db, machineNo: string) {
   const [machine] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, machineNo));
   if (!machine) return null;
-  const [bom] = await db.select().from(t.modelBomCache)
-    .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)));
+  const [bom] = machine.identityStatus === "ok"
+    ? await db.select().from(t.modelBomCache)
+      .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)))
+    : [];
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
-  const parts = await q<MpnRow & { diagram_id: string; edge_description: string; state: string | null;
+  const parts = machine.identityStatus !== "ok" ? [] : await q<MpnRow & { diagram_id: string; edge_description: string; state: string | null;
     disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null; part_token: string | null }>(db, sql`
     select x.*, e.diagram_id, e.description edge_description, ps.state,
       ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed, ps.updated_at::text part_token

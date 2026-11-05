@@ -19,9 +19,10 @@ export const dynamic = "force-dynamic";
 
 type Bom = NonNullable<Awaited<ReturnType<typeof machineDetail>>>["bom"];
 
-function BomStatus({ bom, identityOk }: { bom: Bom; identityOk: boolean }) {
+function BomStatus({ bom, identityStatus }: { bom: Bom; identityStatus: string }) {
   const queue = <Link className="text-accent underline" href="/bom">Parts lists</Link>;
-  if (!identityOk) return <div className="text-wait">Not looked up: model unreadable.</div>;
+  if (identityStatus === "needs_nameplate") return <div className="text-wait">Not looked up: model unreadable.</div>;
+  if (identityStatus === "needs_variation") return <div className="text-wait">VERIFY VARIATION: read the LG manufacturer suffix from the nameplate before using a parts list.</div>;
   if (!bom) return <div>Not read yet. {queue}</div>;
   if (bom.status === "found") return <div>{bom.rowCount} parts from {bom.source ?? "—"} ({bom.status})</div>;
   if (bom.status === "not_found") return <div className="text-wait">Unavailable: no supplier has a parts list for this model (not_found). No parts evaluated.</div>;
@@ -44,7 +45,13 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
 
   return (
     <>
-      <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw} · ${m.applianceType} · ${m.availability}`} />
+      <PageTitle title={`Machine ${m.machineNo}`} sub={`${m.brand} ${m.modelRaw}${m.manufacturerVariation ? ` · Variation ${m.manufacturerVariation}` : ""} · ${m.applianceType} · ${m.availability}`} />
+      {m.brandKey === "LG" && m.identityStatus === "needs_variation" ? (
+        <div role="alert" className="card mb-4 border border-wait/40 bg-amber-50 p-3 text-sm">
+          <b>VERIFY VARIATION</b> — this LG machine cannot use a shared parts list until its manufacturer variation is recorded in Fleet.
+          <Link className="ml-2 text-accent underline" href="/">Edit Fleet variation</Link>
+        </div>
+      ) : null}
       {pendingNotes.some((n) => n.verifyReturn) ? (
         <VerifyReturn machineNo={m.machineNo} status={m.availability} location={m.location}
           action={verifyMachineReturnAction} />
@@ -92,7 +99,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
         <div className="card p-3"><div className="text-xs text-muted">Failure symptom</div><div>{m.diagnosis || "—"}</div>
           <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
         <div className="card p-3"><div className="text-xs text-muted">Parts list</div>
-          <BomStatus bom={bom} identityOk={m.identityStatus === "ok"} />
+          <BomStatus bom={bom} identityStatus={m.identityStatus} />
           {bom?.status === "found" && parts.length > 0 ? (
             <>
               <a className="btn mt-2 inline-block text-xs" href={`/api/export/machine-parts/${encodeURIComponent(m.machineNo)}`}>

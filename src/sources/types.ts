@@ -31,4 +31,4 @@ export type SupplierResult = {
   elapsedMs: number;
 };
 
-export type ModelQuery = { brand: string; model: string };
+export type ModelQuery = { brand: string; model: string; variation?: string | null };

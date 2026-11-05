@@ -79,6 +79,8 @@ export const fleetMachines = pgTable("fleet_machines", {
   brandKey: text("brand_key").notNull().default(""),
   modelRaw: text("model_raw").notNull().default(""),
   modelKey: text("model_key").notNull().default(""),
+  manufacturerVariation: text("manufacturer_variation"),
+  productCode: text("product_code"),
   serial: text("serial").notNull().default(""),
   color: text("color"),
   condition: text("condition"),
@@ -116,7 +118,7 @@ export const fleetMachines = pgTable("fleet_machines", {
 }, (t) => [
   index("fleet_model_idx").on(t.brandKey, t.modelKey),
   index("fleet_availability_idx").on(t.availability),
-  check("fleet_identity_check", sql`${t.identityStatus} in ('ok','needs_nameplate')`),
+  check("fleet_identity_check", sql`${t.identityStatus} in ('ok','needs_nameplate','needs_variation')`),
   check("fleet_age_conf_check", sql`${t.ageConfidence} in ('unique','ambiguous','none')`)
 ]);
 

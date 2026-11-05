@@ -1,5 +1,6 @@
 import { lookupAppliancePartsPros } from "./appliancepartspros";
 import { lookupEncompass } from "./encompass";
+import { lookupLgVariation } from "./lg-variant";
 import type { Fetcher, ModelQuery, SupplierResult } from "./types";
 
 /** A supplier result with fewer rows than this is treated as a miss (Ledger MIN_SPINE_THRESHOLD). */
@@ -28,7 +29,10 @@ const SUPPLIERS: Array<{ name: string; run: (q: ModelQuery, f: Fetcher) => Promi
 export async function lookupModelBom(q: ModelQuery, fetcher: Fetcher): Promise<ChainResult> {
   const attempts: ChainResult["attempts"] = [];
   let sawError = false;
-  for (const s of SUPPLIERS) {
+  // LG supplier variations must never fall back to generic /00 or base-model BOMs.
+  const suppliers = q.brand.trim().toUpperCase() === "LG"
+    ? [{ name: "homedepot-lg-variation", run: lookupLgVariation }] : SUPPLIERS;
+  for (const s of suppliers) {
     let result: SupplierResult;
     try {
       result = await s.run(q, fetcher);

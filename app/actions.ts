@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/src/db";
 import {
   addAlias, getMarketFacts, getSettings, patchProviderMarketFacts, saveSettings, saveSharedResearch, setPartDisposition, setPartStateFromPage, updateMpnManual, upsertBaseline,
-  updateMachineLocation, updateMachineModel, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
+  updateMachineLocation, updateMachineModel, updateMachineVariation, updateMachineStatus, upsertFleet, upsertMarketFacts, upsertSaleEvents
 } from "@/src/db/queries";
 import { verifyLocation } from "@/src/db/tech-notes";
 import { verifyMachineReturn } from "@/src/db/fleet-return";
@@ -153,6 +153,35 @@ export async function verifyLocationAction(_prev: ActionResult | null, form: For
   }
 }
 
+/** Confirm an LG nameplate's manufacturer variation without touching a shared BOM. */
+export async function updateMachineVariationAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
+  const input = {
+    machineNo: String(form.get("machineNo") ?? "").trim(),
+    expectedModel: String(form.get("expectedModel") ?? ""),
+    expectedBrand: String(form.get("expectedBrand") ?? ""),
+    expectedSerial: String(form.get("expectedSerial") ?? ""),
+    expectedVariation: String(form.get("expectedVariation") ?? ""),
+    expectedProductCode: String(form.get("expectedProductCode") ?? ""),
+    variation: String(form.get("variation") ?? ""),
+    productCode: String(form.get("productCode") ?? "")
+  };
+  if (!input.machineNo) return { ok: false, message: "Machine ID is required." };
+  try {
+    const outcome = await updateMachineVariation(await getDb(), input);
+    if (outcome === "saved") {
+      revalidatePath("/", "layout");
+      return { ok: true, message: `LG variation saved for machine ${input.machineNo}; its exact variation now determines the parts list and donor matching.` };
+    }
+    if (outcome === "unchanged") return { ok: true, message: "Variation already current." };
+    if (outcome === "invalid") return { ok: false, message: "Confirm the LG nameplate variation (e.g. ABWEVUS) and enter a matching product code, or leave product code blank." };
+    if (outcome === "not_found") return { ok: false, message: "Machine not found. Refresh Fleet." };
+    if (outcome === "conflict") return { ok: false, message: "Nameplate identity changed since the page loaded. Refresh Fleet." };
+    return { ok: false, message: "Cannot change variation while this machine has recorded pulled/failed/missing/skipped parts. Existing part decisions remain unchanged." };
+  } catch {
+    return { ok: false, message: "Variation not saved; no change confirmed." };
+  }
+}
+
 /** Correct a fleet record; supplier BOMs are never renamed or copied. */
 export async function updateMachineModelAction(_prev: ActionResult | null, form: FormData): Promise<ActionResult> {
   const input = {
@@ -186,6 +215,8 @@ export async function addMachineAction(_prev: ActionResult | null, form: FormDat
     ApplianceType: String(form.get("applianceType") ?? ""),
     Brand: String(form.get("brand") ?? ""),
     ModelNumber: String(form.get("model") ?? ""),
+    "Manufacturer Variation": String(form.get("variation") ?? ""),
+    "Product Code": String(form.get("productCode") ?? ""),
     SerialNumber: String(form.get("serial") ?? ""),
     Condition: String(form.get("condition") ?? ""),
     Location: String(form.get("location") ?? ""),
