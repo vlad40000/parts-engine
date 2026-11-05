@@ -8,6 +8,7 @@ describe("LG manufacturer variation identity", () => {
     expect(lgIdentity("LG", "WT7200CW", "ABWETUS").modelKey).not.toBe(lgIdentity("LG", "WT7200CW", "ABWEVUS").modelKey);
     expect(lgIdentity("LG", "WT7200CW/00", "ABWEVUS").modelKey).toBe("WT7200CW/00|ABWEVUS");
     expect(lgIdentity("LG", "WT7200CW", null).identityStatus).toBe("needs_variation");
+    expect(lgIdentity("LG", "WT7200C?", "ABWEVUS").identityStatus).toBe("needs_nameplate");
     expect(lgIdentity("Maytag", "MVWX655DW1", null)).toEqual({ modelKey: "MVWX655DW1", identityStatus: "ok" });
   });
   it("reads a variation from the model or nameplate product code without assuming the serial supplies it", () => {
@@ -22,9 +23,10 @@ describe("LG manufacturer variation identity", () => {
     const result = mapFleetRows([
       { ID: "1", Brand: "LG", ModelNumber: "WT7200CW", SerialNumber: "SYNTHETIC" },
       { ID: "2", Brand: "LG", ModelNumber: "WT7200CW.ABWEVUS", "Product Code": "T1780WFFV.ABWETUS" },
-      { ID: "3", Brand: "LG", ModelNumber: "WT7200CW.ABWEVUS" }
+      { ID: "3", Brand: "LG", ModelNumber: "WT7200CW.ABWEVUS" },
+      { ID: "4", Brand: "LG", ModelNumber: "WT7200CW", "Manufacturer Variation": "ABWEVUS", "Product Code": "UNKNOWN" }
     ]);
-    expect(result.rows.map((r) => r.identityStatus)).toEqual(["needs_variation", "needs_variation", "ok"]);
+    expect(result.rows.map((r) => r.identityStatus)).toEqual(["needs_variation", "needs_variation", "ok", "needs_variation"]);
     expect(result.rows[1].manufacturerVariation).toBeNull();
     expect(result.rows[2].modelKey).toBe("WT7200CW|ABWEVUS");
   });

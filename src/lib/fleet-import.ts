@@ -140,7 +140,8 @@ export function mapFleetRows(records: Array<Record<string, unknown>>, now: Date 
     const productVariation = variationFromProductCode(productCode);
     const candidates = [parsedLg.variation, suppliedVariation ? lgVariation(suppliedVariation) : null, productVariation].filter((v): v is string => !!v);
     // Conflicting markings require physical verification. Never choose one silently.
-    const conflictingVariation = new Set(candidates).size > 1 || (!!suppliedVariation && !lgVariation(suppliedVariation));
+    const conflictingVariation = new Set(candidates).size > 1 || (!!suppliedVariation && !lgVariation(suppliedVariation))
+      || (!!productCode && !productVariation);
     const manufacturerVariation = brandKey(brand) === "LG" && !conflictingVariation ? candidates[0] ?? null : null;
     const identity = lgIdentity(brand, modelRaw, manufacturerVariation);
     if (conflictingVariation) identity.identityStatus = "needs_variation";

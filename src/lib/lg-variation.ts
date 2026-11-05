@@ -26,7 +26,7 @@ export function lgIdentity(brand: string, model: string, variationText?: string 
     return { modelKey: key, identityStatus: (!brand || isUnreadableModel(model) || !key ? "needs_nameplate" : "ok") as "ok" | "needs_nameplate" | "needs_variation" };
   }
   const variation = lgVariation(variationText);
-  const identityStatus = !brand || isUnreadableModel(model) || !key
+  const identityStatus = !brand || isUnreadableModel(model) || /[?*#]/.test(model) || !key
     ? "needs_nameplate" : variation ? "ok" : "needs_variation";
   // The delimiter cannot appear in a conventional normalized modelKey, so existing
   // brand+model BOMs remain intact while variant-specific catalogs never collide.
