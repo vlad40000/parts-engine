@@ -1,4 +1,5 @@
-import { brandKey, isUnreadableModel, modelKey } from "./model-key";
+import { brandKey } from "./model-key";
+import { lgIdentity, lgVariation, splitLgModel, variationFromProductCode } from "./lg-variation";
 import { decodeSerial } from "./serial-decoder";
 import { suspectFamilies } from "./part-family";
 import { cellText as text } from "./table-read";
@@ -16,6 +17,8 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   agitation: ["agitation"],
   brand: ["brand", "make"],
   model: ["modelnumber", "model number", "model", "model #"],
+  manufacturerVariation: ["manufacturer variation", "manufacturer_variation", "variation", "lg suffix", "model suffix"],
+  productCode: ["product code", "product_code", "productcode"],
   serial: ["serialnumber", "serial number", "serial", "serial #"],
   color: ["color", "colour"],
   condition: ["condition"],
@@ -37,6 +40,8 @@ export type FleetRow = {
   brandKey: string;
   modelRaw: string;
   modelKey: string;
+  manufacturerVariation: string | null;
+  productCode: string | null;
   serial: string;
   color: string | null;
   condition: string | null;
@@ -46,7 +51,7 @@ export type FleetRow = {
   listPrice: string | null;
   stickerPrice: string | null;
   acquiredAt: string | null;
-  identityStatus: "ok" | "needs_nameplate";
+  identityStatus: "ok" | "needs_nameplate" | "needs_variation";
   suspectFamilies: string[];
   ageFamily: string | null;
   ageCandidateYears: number[];
@@ -127,7 +132,18 @@ export function mapFleetRows(records: Array<Record<string, unknown>>, now: Date 
     seen.add(machineNo);
 
     const brand = text(get(r, "brand"));
-    const modelRaw = text(get(r, "model"));
+    const incomingModel = text(get(r, "model"));
+    const parsedLg = brandKey(brand) === "LG" ? splitLgModel(incomingModel) : { model: incomingModel, variation: null };
+    const modelRaw = parsedLg.model;
+    const productCode = text(get(r, "productCode")).toUpperCase() || null;
+    const suppliedVariation = text(get(r, "manufacturerVariation"));
+    const productVariation = variationFromProductCode(productCode);
+    const candidates = [parsedLg.variation, suppliedVariation ? lgVariation(suppliedVariation) : null, productVariation].filter((v): v is string => !!v);
+    // Conflicting markings require physical verification. Never choose one silently.
+    const conflictingVariation = new Set(candidates).size > 1 || (!!suppliedVariation && !lgVariation(suppliedVariation));
+    const manufacturerVariation = brandKey(brand) === "LG" && !conflictingVariation ? candidates[0] ?? null : null;
+    const identity = lgIdentity(brand, modelRaw, manufacturerVariation);
+    if (conflictingVariation) identity.identityStatus = "needs_variation";
     const serial = text(get(r, "serial"));
     const applianceType = text(get(r, "applianceType"));
     const diagnosis = text(get(r, "diagnosis")) || null;
@@ -136,7 +152,7 @@ export function mapFleetRows(records: Array<Record<string, unknown>>, now: Date 
     const agitation = text(get(r, "agitation"));
     const configuration = [text(get(r, "configuration")), agitation].filter(Boolean).join(" / ") || null;
 
-    const unreadable = isUnreadableModel(modelRaw) || !brand;
+    const unreadable = identity.identityStatus === "needs_nameplate";
     const age = unreadable ? null : decodeSerial(brand, modelRaw, serial, now);
 
     rows.push({
@@ -147,7 +163,9 @@ export function mapFleetRows(records: Array<Record<string, unknown>>, now: Date 
       brand,
       brandKey: brandKey(brand),
       modelRaw,
-      modelKey: unreadable ? "" : modelKey(modelRaw),
+      modelKey: unreadable ? "" : identity.modelKey,
+      manufacturerVariation,
+      productCode,
       serial,
       color: text(get(r, "color")) || null,
       condition: text(get(r, "condition")) || null,
@@ -157,7 +175,7 @@ export function mapFleetRows(records: Array<Record<string, unknown>>, now: Date 
       listPrice: money(get(r, "listPrice")),
       stickerPrice: money(get(r, "stickerPrice")),
       acquiredAt: isoDate(get(r, "acquiredAt")),
-      identityStatus: unreadable ? "needs_nameplate" : "ok",
+      identityStatus: identity.identityStatus,
       suspectFamilies: suspectFamilies(diagnosis, repairNotes),
       ageFamily: age?.family ?? null,
       ageCandidateYears: age?.candidateYears ?? [],
