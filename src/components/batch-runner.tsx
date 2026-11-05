@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export type Candidate = {
-  brand_key: string; model_key: string; brand: string; model: string; variation: string | null; machines: number; types: string; bom_status: string | null;
+  brand_key: string; model_key: string; brand: string; model: string; variation?: string | null; machines: number; types: string; bom_status: string | null;
   identity_refusal?: string | null;
 };
 
@@ -80,12 +80,12 @@ export function BatchRunner({ candidates, batchSize, availability, category = "n
     setSelected(next);
   }
 
-  function start(brand: string, model: string, variation: string | null, machines: number | null) {
+  function start(brand: string, model: string, variation: string | null | undefined, machines: number | null) {
     const key = keyOf(brand, model, variation);
     controllers.current.get(key)?.abort();
     const controller = new AbortController();
     controllers.current.set(key, controller);
-    const job: Job = { key, brand, model, variation, machines, state: "running", startedAt: Date.now() };
+    const job: Job = { key, brand, model, variation: variation ?? null, machines, state: "running", startedAt: Date.now() };
     setJobs((cur) => [job, ...cur.filter((j) => j.key !== key)]);
     fetch("/api/bom/model", {
       method: "POST",
