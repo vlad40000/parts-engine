@@ -41,6 +41,35 @@ describe('read-only supplier probe boundaries', () => {
     ),'partselect');
     expect(evidence.parts.map((v) => v.canonical)).toEqual(['W10247710']);
   });
+  it('reads a Sears original and its replacement as separate sourced relationships', async () => {
+    const payload={
+      ROOT_QUERY:{'model({"id":"exact"})':{__ref:'Model:1'}},
+      'Model:1':{__typename:'Model',number:model.model,hasParts:true,brand:{__ref:'Brand:1'},
+        'parts({"page":1})':{totalCount:100,parts:[{__ref:'Part:1'}]},
+        'schematics({"page":1})':{schematics:[{__ref:'Schematic:top'}]}},
+      'Brand:1':{__typename:'Brand',name:'Maytag'},
+      'Schematic:top':{id:'top',pageName:'Top and Cabinet Parts'},
+      'Part:1':{__typename:'Part',number:'W10256514',contextSchematicTitle:'Top and Cabinet Parts',
+        contextSchematicKeyId:'10',substitutedByList:{parts:[{__ref:'Part:2'}]}},
+      'Part:2':{__typename:'Part',number:'W10247710'}
+    };
+    const html=htmlPage(model.model,model.brand,
+      '<script>window.state='+JSON.stringify({CATALOG_API_RESPONSE:payload})+'</script>');
+    const result=await probeOne(model,'sears',fake(html));
+    expect(result).toMatchObject({outcome:'structured_sample_parts_found',identity:'confirmed',
+      observedCount:1,sourceExpectedCount:100,sectionsDiscovered:1,coverage:'partial',
+      observedParts:[{canonical:'W10256514',replacedBy:['W10247710']}]});
+    const diff=compareToBaseline([result],{models:[{brand:model.brand,model:model.model,mpns:[]}]});
+    expect(diff[0].candidateMissingFromApp).toEqual(['W10256514']);
+    expect(diff[0].replacementCandidatesMissingFromApp).toEqual(['W10247710']);
+    expect(diff[0].observedParts.find((p)=>p.canonical==='W10247710')).toBeUndefined();
+  });
+  it('refuses Sears pages without a verified structured model payload', async () => {
+    const result=await probeOne(model,'sears',fake(htmlPage(model.model,model.brand,
+      '<div>Part #W10247710</div>')));
+    expect(result).toMatchObject({outcome:'structured_catalog_unresolved',
+      observedCount:0,coverage:'unknown'});
+  });
   it('does not fabricate MPNs by joining Sears part numbers to stock/status text', () => {
     const sample = htmlPage(model.model,model.brand,
       '<div>Part #72017In Stock</div><div>Part #350930This item ships</div>');
