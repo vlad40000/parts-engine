@@ -10,6 +10,7 @@ import { load } from 'cheerio';
 import { readFile, writeFile, mkdir, appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import {extractSearsCatalogPayload,parseSearsCatalogPage} from './sears-catalog.mjs';
 
 export const CASES = [
   { machine:'5712', brand:'Maytag', model:'MVWB300WQ2', type:'washer', appRowsAtAudit:134, sears:'https://www.searspartsdirect.com/model/363jgyd8re-003048', partsdr:'https://partsdr.com/appliance-models/mvwb300wq2-maytag-washer', coast:'https://www.coastparts.com/lookup/213278/1199001' },
@@ -142,6 +143,30 @@ export async function probeOne(item,provider,fetcher=httpGet) {
   }
   base.identity = modelIdentity(response.html,item);
   if (base.identity !== 'confirmed') return {...base,outcome:'identity_unresolved',warnings:['Exact model + manufacturer absent from title/headings']};
+  if (provider === 'sears') {
+    const page = parseSearsCatalogPage(extractSearsCatalogPayload(response.html),item.model);
+    if (page.status !== 'model_page_parsed' && page.status !== 'partial_unresolved_refs')
+      return {...base,outcome:'structured_catalog_unresolved',warnings:['Sears catalog parser: '+page.status]};
+    const payloadBrand = (page.model?.brand || '').toUpperCase();
+    const family = FAMILIES.find((f)=>f.includes(item.brand.toUpperCase())) || [item.brand.toUpperCase()];
+    if (payloadBrand && !family.includes(payloadBrand))
+      return {...base,outcome:'structured_identity_mismatch',identity:'unresolved',
+        warnings:['Sears payload brand differs from requested brand']};
+    base.observedParts = page.parts.map((p)=>({
+      mpn:p.original,canonical:p.canonical,section:p.section,
+      diagramKey:p.diagramKey,replacedBy:p.replacedBy,evidenceType:'original_catalog_part'
+    }));
+    base.observedCount = page.parts.length;
+    base.sectionsDiscovered = page.schematics.length;
+    base.coverage = 'partial';
+    base.sourceExpectedCount = page.expectedCount;
+    base.sourcePagesFetched = 1;
+    base.observedReplacements = [...new Set(page.parts.flatMap((p)=>p.replacedBy.map(normalized)))];
+    base.outcome = page.parts.length ? 'structured_sample_parts_found' : 'structured_no_parts_observed';
+    if (page.status === 'partial_unresolved_refs') base.warnings.push('One or more Sears part references could not be parsed');
+    if (page.expectedCount === null) base.warnings.push('Sears has no reliable total count');
+    return base;
+  }
   const evidence = extractPageEvidence(response.html,provider);
   base.observedParts = evidence.parts;
   base.observedCount = evidence.parts.length;
@@ -160,6 +185,8 @@ export function compareToBaseline(probes,baseline) {
     return {...probe,baselineAvailable:!!rows,baselineMpnCount:rows?.size ?? null,
       candidateMissingFromApp:rows && probe.identity === 'confirmed'
         ? probe.observedParts.filter((p) => !rows.has(p.canonical)).map((p) => p.canonical) : [],
+      replacementCandidatesMissingFromApp:rows && probe.identity === 'confirmed'
+        ? [...new Set((probe.observedReplacements || []).filter((p)=>!rows.has(p)))] : [],
       comparisonStatus:rows ? 'sample_only_review_required' : 'baseline_unavailable'};
   });
 }
@@ -188,9 +215,9 @@ export function reportMarkdown(report) {
     '# Read-only supplier capability probe','',
     'Generated: '+report.generatedAt+'; baseline: '+report.baselineMode,
     'All collected parts are SAMPLE observations, not complete BOMs or verified installed donor parts.','',
-    '| Machine | Model | Provider | Result | HTTP | Sample MPNs | Missing from APP (review) |',
-    '|---|---|---|---|---:|---:|---:|',
-    ...report.results.map((r) => '| '+r.machine+' | '+r.model+' | '+r.provider+' | '+r.outcome+' | '+r.httpStatus+' | '+r.observedCount+' | '+r.candidateMissingFromApp.length+' |')
+    '| Machine | Model | Provider | Result | HTTP | Original MPNs | Missing original MPNs | Replacement candidates |',
+    '|---|---|---|---|---:|---:|---:|---:|',
+    ...report.results.map((r) => '| '+r.machine+' | '+r.model+' | '+r.provider+' | '+r.outcome+' | '+r.httpStatus+' | '+r.observedCount+' | '+r.candidateMissingFromApp.length+' | '+r.replacementCandidatesMissingFromApp.length+' |')
   ].join('\n')+'\n';
 }
 async function main() {
