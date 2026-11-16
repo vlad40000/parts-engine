@@ -78,9 +78,11 @@ function addPart(map,number,sourceText,section) {
 export function extractPageEvidence(html,provider) {
   const $ = load(html); $('script,style,noscript,svg,footer,nav').remove();
   const parts = new Map(), sections = new Set();
-  const body = $('body').text().replace(/\s+/g,' ');
-  for (const match of body.matchAll(/\b(?:Part\s*(?:No\.?|Number|#)|OEM\s*#)\s*:?\s*([A-Z0-9][A-Z0-9./-]{3,23})/gi))
-    addPart(parts,match[1],match[0],null);
+  // Flattened page text can join OEM IDs to status words: "Part #72017In Stock"
+  // became the fabricated identifier 72017IN in a live Sears probe.
+  // Parse ONLY explicit OEM-labelled attributes or provider-specific table cells.
+  $('[data-oem-part-number]').each((_i,el) =>
+    addPart(parts,$(el).attr('data-oem-part-number'),$(el).text(),null));
   if (provider === 'dlparts') {
     $('table.table tbody tr, table.parts-list tbody tr').each((_i,el) => {
       const tr = $(el); addPart(parts,tr.find('td.partNumber, td.part-number').first().text(),tr.text(),null);
