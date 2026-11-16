@@ -58,3 +58,55 @@ Retail PS/PD numbers are excluded. OEM part identities and any Replaces relation
 2. Compare actual source OEM observations with all six APP cached MPN sets using SELECT-only DB access or local JSON baseline.
 3. Validate W10247710 and its sourced relationship to MVWB755YQ0 without converting mere fitment into original installed OEM BOM.
 4. Only then consider verified full-diagram parsers with per-section coverage and source provenance.
+
+## Sears structured catalog — verified 2026-11-16
+
+The older hero-page-video-main.BACKUP project contains a Sears CATALOG_API_RESPONSE parser.
+The staging runner confirmed this structure in the live public HTML of all six exact test
+models. Every model returned the precise normalized model number, a source-reported total,
+10 referenced part records on page one, and 5–9 diagram records. Source-reported totals do
+not establish complete pagination, unique OEM identities, or actual original installation.
+
+| Machine | Sears reported parts | Cached APP edges |
+|---|---:|---:|
+| 5712 MVWB300WQ2 | 142 | 134 |
+| 5713 MVWB755YQ0 | 160 | 148 |
+| 6605 WED4616FW0 | 110 | 104 |
+| 2121 GSS25WGTABB | 279 | 206 |
+| 6660 WFE715H0ES0 | 156 | 147 |
+| 58-1 JB645RK4SS | 105 | 87 |
+
+Sears exposed original W10256514 for Maytag MVWB755YQ0, top-and-cabinet item 10,
+and manufacturer replacement W10247710. Neither is currently represented in the
+APP-derived BOM edge set for that machine. This confirms that original BOM membership
+and service replacement compatibility must be retained as separate evidence.
+
+The new Sears parser only reads verified embedded JSON, not adjacent text or retail IDs.
+It keeps the original MPN, replacement MPNs, section, position and source-level expected count
+separately. A model overview is always partial evidence. Page reconciliation must match
+the source's pagination total and pass an exact model check before declaring a
+Sears-catalog-complete retrieval (which is not OEM/physical-fitment verification).
+
+## Marcone B2B access route
+
+Roadrunner already has a Marcone wholesale account. Do not reapply.
+
+Third-party EPASS documentation confirms Marcone supports account-enabled B2B web services
+for price, part, inventory, warehouse quantity, sub-parts and cross-reference lookup:
+https://help.epass.software/help/Integrations/Marcone/
+
+Marcone describes parts research wizards on its National Accounts site:
+https://www.marcone.com/national-accounts/
+
+This does not yet prove that the existing account can receive complete machine-model
+BOMs, exploded diagrams, or data exports. Contact official account support
+https://www.marcone.com/contact-us/ to request:
+
+1. Supported B2B endpoint documentation, sandbox, usage authorization and rate limits.
+2. Exact full-model BOM/assembly diagrams (rather than MPN-only lookup), including variants.
+3. Original OEM number vs service replacement chains, diagram item positions, serial applicability.
+4. Permission to cache/derive fitment and use content in Parts Engine.
+5. Credential management, IP restrictions and bulk access pricing.
+
+Keep all Marcone credentials out of Git, CI and shared logs. Evaluate an authorized
+data feed before broader supplier HTML scraping.
