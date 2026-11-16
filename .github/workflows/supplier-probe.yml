@@ -1,0 +1,36 @@
+name: Read-only supplier capability probe
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/supplier-probe.mjs'
+      - 'test/supplier-probe.test.mjs'
+      - 'vitest.config.ts'
+      - '.github/workflows/supplier-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-catalog-probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Probe public supplier pages (no database credentials)
+        run: node scripts/supplier-probe.mjs --output=/tmp/supplier-probe.json
+      - name: Upload read-only capability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supplier-capability-probe
+          path: /tmp/supplier-probe.json
+          if-no-files-found: warn
+          retention-days: 14
