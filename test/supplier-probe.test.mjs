@@ -36,9 +36,16 @@ describe('read-only supplier probe boundaries', () => {
   });
   it('extracts OEMs but excludes PartSelect retail PS IDs', () => {
     const evidence = extractPageEvidence(htmlPage(model.model,model.brand,
-      '<div>Suspension Kit Part #W10247710</div><div>Store SKU Part #PS2355518</div><div>Part #W10247710</div>'
+      '<div data-oem-part-number="W10247710">Suspension Kit</div>' +
+      '<div data-oem-part-number="PS2355518">Retail-only identifier</div>'
     ),'partselect');
     expect(evidence.parts.map((v) => v.canonical)).toEqual(['W10247710']);
+  });
+  it('does not fabricate MPNs by joining Sears part numbers to stock/status text', () => {
+    const sample = htmlPage(model.model,model.brand,
+      '<div>Part #72017In Stock</div><div>Part #350930This item ships</div>');
+    const evidence = extractPageEvidence(sample,'sears');
+    expect(evidence.parts).toEqual([]);
   });
   it('parses Coast diagram table and sourced replacements without collapsing identities', () => {
     const evidence = extractPageEvidence(htmlPage(model.model,model.brand,
@@ -47,8 +54,8 @@ describe('read-only supplier probe boundaries', () => {
     expect(evidence.parts).toMatchObject([{canonical:'W10247710',replaces:['W10256514']}]);
   });
   it('never claims completeness from a model page, even with part rows', async () => {
-    const result = await probeOne(model,'partsdr',fake(htmlPage(model.model,model.brand,
-      '<div>Suspension Damper Kit Part #W10247710</div>')));
+    const result = await probeOne(model,'coast',fake(htmlPage(model.model,model.brand,
+      '<table><tbody><tr><td>10</td><td>W10247710</td><td>Suspension Kit</td></tr></tbody></table>')));
     expect(result).toMatchObject({outcome:'sample_parts_found',identity:'confirmed',
       coverage:'sample',sectionsFetched:0,observedCount:1});
   });
@@ -63,8 +70,9 @@ describe('read-only supplier probe boundaries', () => {
     expect(compared[0]).toMatchObject({outcome:'identity_unresolved',candidateMissingFromApp:[]});
   });
   it('proposes missing MPNs for review, never new donor links', async () => {
-    const result = await probeOne(model,'partsdr',fake(htmlPage(model.model,model.brand,
-      '<div>Suspension Damper Kit Part #W10247710</div><div>Clamp Part #WP285655</div>')));
+    const result = await probeOne(model,'coast',fake(htmlPage(model.model,model.brand,
+      '<table><tbody><tr><td>10</td><td>W10247710</td><td>Suspension Kit</td></tr>' +
+      '<tr><td>11</td><td>WP285655</td><td>Clamp</td></tr></tbody></table>')));
     const compared = compareToBaseline([result],{models:[{brand:model.brand,model:model.model,mpns:['WP285655']}]});
     expect(compared[0]).toMatchObject({comparisonStatus:'sample_only_review_required',
       candidateMissingFromApp:['W10247710'],baselineMpnCount:1});
