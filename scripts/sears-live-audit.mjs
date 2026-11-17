@@ -4,10 +4,10 @@
  */
 import {writeFile} from 'node:fs/promises';
 import {CASES,httpGet,modelIdentity,allowedHost} from './supplier-probe.mjs';
-import {extractSearsCatalogPayload,parseSearsCatalogPage} from './sears-catalog.mjs';
+import {extractSearsCatalogPayload,parseSearsCatalogPage,reconcileSearsPages} from './sears-catalog.mjs';
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 async function main() {
-  const outputs=[];
+  const outputs=[],sears5713=new Map();
   for (const item of CASES) {
     const pages=item.machine==='5713'?[1,2,16]:[1];
     for (const pageNumber of pages) {
@@ -29,6 +29,7 @@ async function main() {
         if (!payload) diag.status='no_structured_payload';
         else {
           const detail=parseSearsCatalogPage(payload,item.model);
+          if (item.machine==='5713') sears5713.set(pageNumber,detail);
           diag.status=detail.status;
           diag.expectedCount=detail.expectedCount;
           diag.loadedCount=detail.parts.length;
@@ -42,6 +43,45 @@ async function main() {
       } else diag.status=response.ok?'identity_not_proven':'http_error';
       console.log('SEARS_DIAG '+JSON.stringify(diag));
       outputs.push(diag);
+    }
+  }
+  if (process.argv.includes('--full-5713')) {
+    const item=CASES.find((it)=>it.machine==='5713');
+    const page1=sears5713.get(1);
+    // The first page must independently establish a model-specific count and page size.
+    const maxPages=page1?.expectedCount && page1?.observedCount
+      ? Math.ceil(page1.expectedCount/page1.observedCount) : 0;
+    if (maxPages < 1 || maxPages > 20) {
+      console.log('SEARS_FULL_5713 '+JSON.stringify({status:'pagination_unresolved',maxPages}));
+    } else {
+      for (let page=2;page<=maxPages;page++) {
+        if (sears5713.has(page)) continue;
+        await sleep(1200);
+        const url=new URL(item.sears);url.searchParams.set('page',String(page));
+        const result=await httpGet(url.toString());
+        if (!result.ok || !allowedHost(result.finalUrl,'sears')
+            || modelIdentity(result.html,item)!=='confirmed') {
+          sears5713.set(page,{status:'page_unavailable',parts:[],schematics:[],expectedCount:null});
+          continue;
+        }
+        const detail=parseSearsCatalogPage(extractSearsCatalogPayload(result.html),item.model);
+        sears5713.set(page,detail);
+      }
+      const merged=reconcileSearsPages(Array.from({length:maxPages},(_v,i)=>
+        sears5713.get(i+1)||{status:'missing_page',parts:[],schematics:[],expectedCount:null}
+      ),maxPages);
+      const output={generatedAt:new Date().toISOString(),
+        machine:'5713',model:item.model,readOnly:true,pagesExpected:maxPages,
+        summary:{status:merged.status,coverage:merged.coverage,expectedCount:merged.expectedCount,
+          observedCount:merged.observedCount,remainingExpected:merged.remainingExpected,
+          rejectedPages:merged.rejectedPages,schematics:merged.schematics.length},
+        parts:merged.parts,blockedOrInvalidPages:[...sears5713].filter(([,p])=>
+          p.status!=='model_page_parsed').map(([index,p])=>({page:index,status:p.status}))};
+      await writeFile('/tmp/sears-full-5713.json',JSON.stringify(output,null,2)+'\n');
+      console.log('SEARS_FULL_5713 '+JSON.stringify({
+        ...output.summary,pagesFetched:maxPages,
+        originalSuspension:merged.parts.find((p)=>p.original==='W10256514')||null
+      }));
     }
   }
   await writeFile('/tmp/sears-structure-audit.json',JSON.stringify({generatedAt:new Date().toISOString(),
