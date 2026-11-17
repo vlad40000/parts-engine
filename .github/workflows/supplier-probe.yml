@@ -30,7 +30,7 @@ jobs:
       - name: Probe public supplier pages (no database credentials)
         run: node scripts/supplier-probe.mjs --output=/tmp/supplier-probe.json
       - name: Inspect Sears structured catalog for six models (no DB credentials)
-        run: node scripts/sears-live-audit.mjs
+        run: node scripts/sears-live-audit.mjs --full-5713
       - name: Upload read-only capability evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -39,5 +39,6 @@ jobs:
           path: |
             /tmp/supplier-probe.json
             /tmp/sears-structure-audit.json
+            /tmp/sears-full-5713.json
           if-no-files-found: warn
           retention-days: 14
