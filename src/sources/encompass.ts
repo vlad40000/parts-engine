@@ -34,9 +34,13 @@ const FALLBACK_ABV: Record<string, string[]> = { WHI: ["MAY"] };
 
 const strip = (s: string) => s.replace(/[^a-z0-9]/gi, "").toUpperCase();
 
-export function encompassModelUrls(brand: string, model: string): string[] {
+export function encompassManufacturerCodes(brand: string): string[] {
   const abv = BRAND_TO_ABV[brand.trim().toLowerCase()];
   if (!abv) return [];
+  return [...(abv === "LGE" ? ["ZEN"] : []), abv, ...(FALLBACK_ABV[abv] ?? [])];
+}
+
+export function encompassModelUrls(brand: string, model: string): string[] {
   const urls: string[] = [];
   const [base, suffix] = model.trim().split("/");
   const addUrls = (host: string, prefix: string) => {
@@ -51,8 +55,9 @@ export function encompassModelUrls(brand: string, model: string): string[] {
   // Encompass currently also files LG washer WM2688HWM under ZEN on its main host.
   // Prefer that confirmed identity, retaining the older PartStore LGE route as fallback.
   // Never accept a cross-model redirect, a page without identity, or an incomplete parts list.
-  if (abv === "LGE") addUrls("https://encompass.com", "ZEN");
-  for (const p of [abv, ...(FALLBACK_ABV[abv] ?? [])]) addUrls(ENCOMPASS_HOST, p);
+  for (const prefix of encompassManufacturerCodes(brand)) {
+    addUrls(prefix === "ZEN" ? "https://encompass.com" : ENCOMPASS_HOST, prefix);
+  }
   return [...new Set(urls)];
 }
 
