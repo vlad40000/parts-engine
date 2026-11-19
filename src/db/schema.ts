@@ -15,6 +15,7 @@ import {
   timestamp
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { ModelDiagrams } from "@/src/lib/model-diagrams";
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
@@ -272,6 +273,17 @@ export const modelBomCache = pgTable("model_bom_cache", {
 }, (t) => [
   primaryKey({ columns: [t.brandKey, t.modelKey] }),
   check("bom_status_check", sql`${t.status} in ('found','not_found','error')`)
+]);
+
+/** Reviewed catalog diagrams use the exact nameplate model and keep all callout rows. */
+export const modelDiagrams = pgTable("model_diagrams", {
+  brandKey: text("brand_key").notNull(),
+  exactModel: text("exact_model").notNull(),
+  sourceSha256: text("source_sha256").notNull(),
+  evidence: jsonb("evidence").$type<ModelDiagrams>().notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow()
+}, (t) => [
+  primaryKey({ columns: [t.brandKey, t.exactModel] })
 ]);
 
 /** BOM membership: this MPN is inside this model. Inverted, it is in-fleet fitment. */

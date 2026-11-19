@@ -14,6 +14,9 @@ import { VerifyReturn } from "@/src/components/verify-return";
 import { ButtonForm } from "@/src/components/forms";
 import { CONDITION_FOR_STATUS } from "@/src/lib/tech-notes/vocabulary";
 import { updateMachineStatusAction, verifyMachineReturnAction } from "../../actions";
+import { getModelDiagrams } from "@/src/db/model-diagrams";
+import { ModelDiagramPanel, PartDiagramReferences } from "@/src/components/model-diagram-panel";
+import { diagramReferencesByMpn } from "@/src/lib/model-diagrams";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +39,8 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   const [d, history, checks, pendingNotes, dispositionHistory] = await Promise.all([machineDetail(db, machineNo), machineHistory(db, machineNo), openLocationChecks(db, machineNo), pendingMachineNotes(db, machineNo), partDispositionHistory(db, machineNo)]);
   if (!d) notFound();
   const { machine: m, bom, parts } = d;
+  const diagrams = m.identityStatus === "ok" ? await getModelDiagrams(db, m) : undefined;
+  const diagramReferences = diagramReferencesByMpn(diagrams?.evidence.sections ?? []);
   const qualified = parts.filter((p) => p.qualification?.result === "QUALIFIED" && !p.state);
   const setRule = parts.some((p) => p.qualification?.result === "SET_RULE");
   const expectedCondition = CONDITION_FOR_STATUS[m.availability];
@@ -125,13 +130,14 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
         </details>
       ) : null}
       {m.identityStatus !== "ok" ? <div className="card mb-5 p-3 text-sm text-wait">Model is unreadable. Read the nameplate and update this machine on Intake before it can be matched.</div> : null}
+      {diagrams !== undefined && <ModelDiagramPanel machineNo={m.machineNo} entry={diagrams} />}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead><tr><th>Diagram</th><th>MPN</th><th>Description</th><th>Family</th><th className="num">Min</th><th className="num">New $</th><th className="num">Break-even</th><th>Qualification</th><th title="Sales events imported via the Roadrunner CSV on MPNs; not live eBay listing or sale status.">Roadrunner history</th><th>State</th></tr></thead>
           <tbody>
             {parts.map((p) => (
               <tr key={p.mpn_canonical} className={p.state ? "opacity-50" : ""}>
-                <td className="text-xs">{p.diagram_id}</td>
+                <td className="text-xs"><PartDiagramReferences references={diagramReferences.get(p.mpn_canonical)} fallback={p.diagram_id} /></td>
                 <td><Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(p.mpn_canonical)}`}>{p.mpn_display}</Link></td>
                 <td>{p.description}</td>
                 <td className="text-xs text-muted">{p.part_family}{p.suspect ? <span className="pill pill-wait ml-1">test first</span> : null}</td>
