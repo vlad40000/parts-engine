@@ -17,6 +17,7 @@ import { updateMachineStatusAction, verifyMachineReturnAction } from "../../acti
 import { getModelDiagrams } from "@/src/db/model-diagrams";
 import { ModelDiagramPanel, PartDiagramReferences } from "@/src/components/model-diagram-panel";
 import { diagramReferencesByMpn } from "@/src/lib/model-diagrams";
+import { canonicalizeMpn } from "@/src/lib/mpn";
 
 export const dynamic = "force-dynamic";
 
@@ -137,7 +138,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           <tbody>
             {parts.map((p) => (
               <tr key={p.mpn_canonical} className={p.state ? "opacity-50" : ""}>
-                <td className="text-xs"><PartDiagramReferences references={diagramReferences.get(p.mpn_canonical)} fallback={p.diagram_id} /></td>
+                <td className="text-xs"><PartDiagramReferences references={diagramReferences.get(canonicalizeMpn(p.bomMpnDisplay))} fallback={p.diagram_id} /></td>
                 <td><Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(p.mpn_canonical)}`}>{p.mpn_display}</Link></td>
                 <td>{p.description}</td>
                 <td className="text-xs text-muted">{p.part_family}{p.suspect ? <span className="pill pill-wait ml-1">test first</span> : null}</td>

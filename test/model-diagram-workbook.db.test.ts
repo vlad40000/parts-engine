@@ -12,6 +12,7 @@ import type { Db } from "@/src/db/types";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { readModelDiagramWorkbook } from "@/src/lib/model-diagram-workbook";
 import { diagramReferencesByMpn } from "@/src/lib/model-diagrams";
+import { canonicalizeMpn } from "@/src/lib/mpn";
 
 const holder = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock("@/src/db", () => ({ getDb: async () => holder.db }));
@@ -84,9 +85,10 @@ describe("model diagrams on fleet machines", () => {
     await upsertFleet(db, mapFleetRows(["MODEL.0", "MODEL.0", "MODEL0", "MODEL.1"].map((ModelNumber, i) => ({
       ID: i + 1, Brand: "Maytag", ModelNumber, Availability: "PARTS ONLY", ApplianceType: "Washer"
     }))).rows);
-    await db.insert(schema.mpnMaster).values({ mpnCanonical: "WP123456", mpnDisplay: "WP123456", description: "Clamp" });
-    await db.insert(schema.modelPartEdges).values({ brandKey: "MAYTAG", modelKey: "MODEL0", mpnCanonical: "WP123456", mpnDisplay: "WP123456", source: "test" });
-    await setPartState(db, "1", "WP123456", "pulled");
+    await db.insert(schema.mpnMaster).values({ mpnCanonical: "123456", mpnDisplay: "123456", description: "Clamp" });
+    await db.insert(schema.mpnAlias).values({ aliasCanonical: "WP123456", mpnCanonical: "123456", kind: "wp_prefix", source: "test" });
+    await db.insert(schema.modelPartEdges).values({ brandKey: "MAYTAG", modelKey: "MODEL0", mpnCanonical: "123456", mpnDisplay: "WP123456", source: "test" });
+    await setPartState(db, "1", "123456", "pulled");
   });
 
   afterAll(async () => {
@@ -132,7 +134,11 @@ describe("model diagrams on fleet machines", () => {
     expect(await upload(firstFile, "1", first!.sourceSha256)).toMatchObject({ ok: false });
     expect(await db.select().from(schema.modelDiagrams)).toHaveLength(1);
     expect(await db.select().from(schema.modelPartEdges)).toHaveLength(1);
-    expect((await machineDetail(db, "1"))?.parts[0]).toMatchObject({ mpn_canonical: "WP123456", state: "pulled" });
+    const part = (await machineDetail(db, "1"))!.parts[0];
+    expect(part).toMatchObject({ mpn_canonical: "123456", bomMpnDisplay: "WP123456", state: "pulled" });
+    const diagrams = diagramReferencesByMpn(first!.evidence.sections);
+    expect(diagrams.get(canonicalizeMpn(part.bomMpnDisplay))?.map(({ callout }) => callout)).toEqual(["5", "5A"]);
+    expect(diagrams.has(part.mpn_canonical)).toBe(false);
   });
 
   it("leaves the machine readable when the diagram migration has not run", async () => {

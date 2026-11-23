@@ -1301,16 +1301,17 @@ export async function machineDetail(db: Db, machineNo: string) {
     .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)));
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
-  const parts = await q<MpnRow & { diagram_id: string; edge_description: string; state: string | null;
+  const parts = await q<MpnRow & { diagram_id: string; bom_mpn_display: string; state: string | null;
     disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null; part_token: string | null }>(db, sql`
-    select x.*, e.diagram_id, e.description edge_description, ps.state,
+    select x.*, e.diagram_id, e.mpn_display bom_mpn_display, ps.state,
       ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed, ps.updated_at::text part_token
     from model_part_edges e
     join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
     left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical
     where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}`);
   const performance = await roadrunnerPerformance(db, parts.map((p) => p.mpn_canonical));
-  const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id, state: p.state,
+  const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id,
+    bomMpnDisplay: p.bom_mpn_display, state: p.state,
     disposition: isDisposition(p.disposition) ? p.disposition : null, soldPrice: p.sold_price, repairMachineNo: p.repair_machine_no,
     wasListed: Boolean(p.was_listed), partToken: p.part_token,
     suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
