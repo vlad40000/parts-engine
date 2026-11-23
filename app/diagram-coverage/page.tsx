@@ -19,15 +19,15 @@ export default async function DiagramCoveragePage({ searchParams }: { searchPara
       </label><button className="btn">Filter</button>
     </form>
     <section className="card mb-4 p-4 text-sm">
-      <p>{queue.totalMachines.toLocaleString()} machines · {queue.totalGroups.toLocaleString()} readable model groups · {queue.coveredGroups.toLocaleString()} groups with saved diagrams ({queue.coveredMachines.toLocaleString()} machines) · {queue.nameplates.length.toLocaleString()} need nameplate review</p>
-      <p className="mt-2 text-muted">Groups use the brand and full model exactly as recorded, ignoring case and surrounding spaces. A separate manufacturer variation is not recorded in the current schema; variation verification remains unresolved even when a diagram is saved. Check the nameplate and source before reuse.</p>
+      <p>{queue.totalMachines.toLocaleString()} machines · {queue.totalGroups.toLocaleString()} readable model groups · {queue.coverageAvailable ? <>{queue.coveredGroups?.toLocaleString()} groups with usable diagram and callout evidence ({queue.coveredMachines?.toLocaleString()} machines) · {queue.savedGroups?.toLocaleString()} groups with saved diagrams</> : "Diagram coverage unavailable"} · {queue.nameplates.length.toLocaleString()} need nameplate review</p>
+      <p className="mt-2 text-muted">Groups use the brand and full model exactly as recorded, ignoring case and surrounding spaces. One usable assembly does not establish completeness. A separate manufacturer variation is not recorded in the current schema; variation verification remains unresolved even when a diagram is saved. Check the nameplate and source before reuse.</p>
       <Pager total={queue.totalGroups} limit={DIAGRAM_COVERAGE_PAGE_SIZE} offset={queue.offset} href={(offset) => qs({ status }, { offset })} />
     </section>
     <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>Brand / full model</th><th>Machines by status</th><th>Diagram evidence</th><th>Supplier lead</th><th>Example machine</th></tr></thead>
       <tbody>{queue.rows.map((row) => <tr className="border-t border-line" key={JSON.stringify([row.brand, row.model])}>
         <td className="p-2">{row.brand} {row.model}</td><td className="p-2">{row.machines.length} · {Object.entries(row.statuses).map(([s, n]) => `${s}: ${n}`).join(", ")}</td>
-        <td className="p-2">{row.covered ? "Saved diagrams" : "Awaiting diagrams"}<br /><span className="text-muted">Variation unverified</span></td>
-        <td className="p-2">{row.lead ? <a className="underline" href={row.lead.url} rel="noreferrer">{row.lead.source || "Supplier"} lead</a> : "—"}</td>
+        <td className="p-2">{{ usable: "Usable diagram and callout evidence", diagram_only: "Saved diagram-only evidence", needs_review: "Saved record needs review", awaiting: "Awaiting diagrams", unavailable: "Diagram coverage unavailable" }[row.coverage]}<br /><span className="text-muted">Variation unverified</span></td>
+        <td className="p-2">{row.lead ? <><a className="underline" href={row.lead.url} rel="noreferrer">{row.lead.exactRequest ? "Supplier discovery lead" : "Possible supplier lead · exact model/revision unverified"}</a>{row.lead.source ? ` (${row.lead.source})` : ""}</> : "—"}</td>
         <td className="p-2"><Link className="underline" href={`/machines/${encodeURIComponent(row.machines[0])}`}>{row.machines[0]}</Link></td>
       </tr>)}</tbody></table></div>
     <section className="card mt-5 p-4 text-sm"><h2 className="font-semibold">Needs nameplate ({queue.nameplates.length})</h2>
