@@ -1,0 +1,95 @@
+{
+  "case": "ge-gss25wgtabb",
+  "capturedAt": "2026-11-23T16:51:06.084Z",
+  "method": "GET via src/sources/http createFetcher (1 in flight per host, 2 s between starts, 20 s timeout, no retries); pages minimized by test/diagram-sources-support.ts",
+  "fetches": [
+    {
+      "requested": "https://www.appliancepartspros.com/search.aspx?model=GSS25WGTABB",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/parts-for-ge-gss25wgtabb.html",
+      "fixture": "01-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 485982,
+      "rawSha256": "c78377df21eb1b8e041e873d5b99ec0e786de2afb6061ec00615b360e575f09f"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/freezer-door-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/freezer-door-parts-for-ge-gss25wgtabb.html",
+      "fixture": "02-freezer-door-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 479153,
+      "rawSha256": "2ea929f717109174bd97b3e3b2031910a08d1dbec16a7f080eecaa2122af1a94"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/fresh-food-door-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/fresh-food-door-parts-for-ge-gss25wgtabb.html",
+      "fixture": "03-fresh-food-door-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 300465,
+      "rawSha256": "5b517b4731c87ad4e9b17e75d22895954e688ab255392cc704eb562fce2183c2"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/freezer-section-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/freezer-section-parts-for-ge-gss25wgtabb.html",
+      "fixture": "04-freezer-section-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 686163,
+      "rawSha256": "70a1e30867f63bc7ef94fec1ca65c8a283f8df7d06c8f5172dd24fd5734ef48b"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/evaporator-instructions-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/evaporator-instructions-parts-for-ge-gss25wgtabb.html",
+      "fixture": "05-evaporator-instructions-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 146405,
+      "rawSha256": "4c35427c2e9e1f6b02f6b126220abdbfcc906882f7aaf31f7afec8b4c1d52d32"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/freezer-shelves-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/freezer-shelves-parts-for-ge-gss25wgtabb.html",
+      "fixture": "06-freezer-shelves-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 175253,
+      "rawSha256": "470d3761ecae7a6bb8b5752f53f34665d1c28ee12d85f39f3eda0295a764f8d9"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/ice-maker-dispenser-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/ice-maker-dispenser-parts-for-ge-gss25wgtabb.html",
+      "fixture": "07-ice-maker-dispenser-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 755182,
+      "rawSha256": "743380f19121551e71468a23f001f8134cda6943c2df65c40faea49d32724683"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/fresh-food-section-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/fresh-food-section-parts-for-ge-gss25wgtabb.html",
+      "fixture": "08-fresh-food-section-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 640222,
+      "rawSha256": "6bd43aab2d1172f736d2cfbdccf4933a899273691f7caa37ab643b4aa039fb00"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/fresh-food-shelves-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/fresh-food-shelves-parts-for-ge-gss25wgtabb.html",
+      "fixture": "09-fresh-food-shelves-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 372306,
+      "rawSha256": "18e2dc6bbb159a256b06697c49e4f6bbe4a959551cdb7e9796ecd37c80f85e00"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/sealed-system-mother-parts-for-ge-gss25wgtabb.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/sealed-system-mother-parts-for-ge-gss25wgtabb.html",
+      "fixture": "10-sealed-system-mother-parts-for-ge-gss25wgtabb-html.html",
+      "rawBytes": 586614,
+      "rawSha256": "8e08e51730cb96bdab938ec0ebab8120a5f396f49e497228e9b259ce9a542425"
+    },
+    {
+      "requested": "https://partstore.encompass.com/model/HOTGSS25WGTABB",
+      "status": 403,
+      "finalUrl": "https://partstore.encompass.com/model/HOTGSS25WGTABB",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}
