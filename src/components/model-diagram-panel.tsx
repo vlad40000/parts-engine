@@ -1,9 +1,13 @@
 import { importDiagramWorkbookAction } from "@/app/model-diagram-actions";
 import { UploadForm } from "@/src/components/forms";
 import { diagramImportEnabled } from "@/src/lib/model-diagram-access";
-import type { DiagramReference, ModelDiagrams } from "@/src/lib/model-diagrams";
+import { calloutRecordsFor, type CalloutRole, type DiagramReference, type ModelDiagrams } from "@/src/lib/model-diagrams";
 
 const diagramLink = "text-accent underline";
+
+const ROLE_LABEL: Record<CalloutRole, string> = {
+  catalog: "Catalog", supplier_listed: "Supplier listed", replacement: "Service replacement", observed: "Observed on this machine"
+};
 
 export function PartDiagramReferences({ references, fallback }: { references?: DiagramReference[]; fallback: string }) {
   if (!references?.length) return fallback;
@@ -20,13 +24,14 @@ export function ModelDiagramPanel({ machineNo, entry }: {
 }) {
   const allowImport = diagramImportEnabled();
   if (!entry && !allowImport) return null;
+  const records = entry ? calloutRecordsFor(entry.evidence, machineNo) : [];
   return (
     <section className="card mb-5 p-3 text-sm" aria-label="Assembly diagrams">
       {entry && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">Assembly diagrams</h2>
-            <a href={entry.evidence.sourceUrl} target="_blank" rel="noreferrer" className={diagramLink}>Encompass source</a>
+            <a href={entry.evidence.sourceUrl} target="_blank" rel="noreferrer" className={diagramLink}>{entry.evidence.sourceLabel ?? "Encompass source"}</a>
           </div>
           {entry.evidence.sourceNote && <p className="text-xs text-muted">{entry.evidence.sourceNote}</p>}
           <ul className="mt-2 divide-y divide-line">
@@ -37,6 +42,21 @@ export function ModelDiagramPanel({ machineNo, entry }: {
                   <a href={imageUrl} target="_blank" rel="noreferrer" className={diagramLink} aria-label={`Open diagram for ${assembly}`}>Open diagram</a>
                 </div>
                 {note && <p className="text-xs text-muted">{note}</p>}
+                {records.some((r) => r.assembly === assembly) && (
+                  <table className="mt-1 w-full text-xs" aria-label={`Callout evidence for ${assembly}`}>
+                    <thead><tr><th>Callout</th><th>Role</th><th>Part number</th><th>Evidence</th></tr></thead>
+                    <tbody>
+                      {records.filter((r) => r.assembly === assembly).map((r, index) => (
+                        <tr key={index}>
+                          <td className="mono">{r.callout}</td>
+                          <td>{ROLE_LABEL[r.role]}</td>
+                          <td className="mono">{r.partNumber}</td>
+                          <td>{r.sourceUrl ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" className={diagramLink}>{r.evidence}</a> : r.evidence}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
                 {parts.length > 0 && (
                   <details className="mt-1">
                     <summary className="cursor-pointer text-xs">{parts.length} callouts</summary>

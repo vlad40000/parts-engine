@@ -165,3 +165,53 @@ SHA-256). No further requests were made to work around the probe refusals.
   W11497934 Rev. B `complete` (5/5 sections, 91 rows), reconciled. Catalog and supplier numbers must stay separate.
 - **GE GSS25WGTABB** (machine 2121, SOLD; model found only on off-lot records): APP `complete` (9/9 sections,
   234 callout rows, 10 unread).
+
+## One-model import rehearsal: Maytag MVW6230HW1 (2026-11-23)
+
+Branch `spike/diagram-import-rehearsal`, stacked on this pilot. Everything ran against a disposable on-disk PGlite
+database and the real app; no production database was read or written.
+
+1. A new database had migrations applied by the real runner: `node scripts/migrate.mjs --plan` listed 0000…0009, and
+   `--expect` with those ten tag/SHA-256 pairs applied them. The runner then reported `0009_model_diagrams` as latest and nothing pending.
+2. Fleet rows hold identity only (brand, model, type, status): 6613 (PARTS ONLY) and 6601 (BEING REPAIRED), both
+   Maytag MVW6230HW1 per their public machine pages, plus synthetic neighbours REH-HW0 (MVW6230HW0), REH-HW2, REH-HC1
+   (the other finish in the same parts list) and REH-HW (truncated nameplate). No serials or customer data.
+3. The parts list came from the real supplier chain (`lookupModelBom`) replayed over the captured fixtures: Encompass
+   403, then AppliancePartsPros found, **114 rows**, the same count production shows for 6613 and 6601. REH-HW0 got a
+   one-row list sharing the callout-10 board W11543994.
+4. `saveDiagramBundle` saved the reviewed bundle: APP drawings and callouts, the OEM parts list named as supporting
+   evidence, and the four callout-10 records. One row per exact model (`MAYTAG`, `MVW6230HW1`), source SHA-256
+   `48b3d54e6b7a5d74846f83040288182277af552e7091e11efd35891cd005407d`.
+5. `next start` served the pages with that database:
+
+| Machine | Model | Diagram panel | Parts-table diagram links | Callout-10 records shown |
+|---|---|---|---|---|
+| 6613 | MVW6230HW1 | 6 assemblies, "AppliancePartsPros source" | 116 (W11543994 → 02 - Top And Cabinet · #10) | catalog W11479877 (PDF p.3 link), supplier listed W11543994 (APP link), observed on this machine W11538088, service replacement W11543994 |
+| 6601 | MVW6230HW1 | same 6 assemblies | 116 (same) | catalog, supplier listed, service replacement; **not** the 6613 observation |
+| REH-HW0 | MVW6230HW0 | none | none; its W11543994 row shows only its BOM section text | none |
+| REH-HW2, REH-HC1, REH-HW | adjacent / other finish / truncated | none | none | none |
+
+All four records are stored on the model row with their sources. The observed board is stored with `machineNo: "6613"`
+and shown only on 6613: it was read on that machine and is not evidence about 6601.
+
+### What the rehearsal path adds
+
+- `src/lib/model-diagrams.ts`: optional `sourceLabel` and `calloutRecords` (role, part number as printed, evidence,
+  source URL, and `machineNo` for one-machine records) in the existing jsonb evidence. No migration; workbook rows
+  are unchanged and still show "Encompass source".
+- `src/lib/model-diagram-bundle.ts`, `src/db/model-diagram-bundle.ts`: bundle → evidence, accepting only `complete`
+  attempts for exactly this brand, model and variation, records under a shown section, observations tied to a fleet
+  machine of this exact model. Saving uses the workbook import's exact key and stale-version check.
+- `src/components/model-diagram-panel.tsx`: source label from the evidence; a callout-evidence table per section.
+- Nothing calls the bundle path from an action, route or page. The operator upload stays the Encompass workbook;
+  a production bundle import (authorization, operator flow, release) is a separate reviewed change.
+
+### Reproduce
+
+```bash
+npx vitest run test/model-diagram-bundle.db.test.ts                       # in-memory, part of npm run verify
+DATABASE_URL=pglite:$DB node scripts/migrate.mjs --plan                   # $DB = a new empty directory
+DATABASE_URL=pglite:$DB node scripts/migrate.mjs --expect "<tag>=<sha256>,…"
+DIAGRAM_REHEARSAL_DB=$DB npx vitest run test/diagram-import-rehearsal.local.test.ts
+npm run build && DATABASE_URL=pglite:$DB npx next start -p 3101           # open /machines/6613, /machines/6601, /machines/REH-HW0
+```
