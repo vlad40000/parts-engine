@@ -12,6 +12,7 @@ const NAV = [
   { href: "/intake", label: "Intake" },
   { href: "/notes", label: "Tech notes" },
   { href: "/bom", label: "Parts lists" },
+  { href: "/diagram-coverage", label: "Diagram coverage" },
   { href: "/mpns", label: "MPNs" },
   { href: "/teardown", label: "Teardown queue" },
   { href: "/settings", label: "Settings" }
