@@ -1,5 +1,6 @@
 import { importDiagramWorkbookAction } from "@/app/model-diagram-actions";
 import { UploadForm } from "@/src/components/forms";
+import { diagramImportEnabled } from "@/src/lib/model-diagram-access";
 import type { DiagramReference, ModelDiagrams } from "@/src/lib/model-diagrams";
 
 const diagramLink = "text-accent underline";
@@ -17,6 +18,8 @@ export function ModelDiagramPanel({ machineNo, entry }: {
   machineNo: string;
   entry: { sourceSha256: string; evidence: ModelDiagrams } | null;
 }) {
+  const allowImport = diagramImportEnabled();
+  if (!entry && !allowImport) return null;
   return (
     <section className="card mb-5 p-3 text-sm" aria-label="Assembly diagrams">
       {entry && (
@@ -54,16 +57,22 @@ export function ModelDiagramPanel({ machineNo, entry }: {
           </ul>
         </>
       )}
-      <details className={entry ? "mt-2" : ""}>
-        <summary className="cursor-pointer font-medium">{entry ? "Replace diagram workbook" : "Add assembly diagrams"}</summary>
-        <div className="mt-2">
-          <p className="mb-2 text-xs text-muted">Choose the Encompass XLSX with Parts and Diagrams sheets. Machines with this same full model share the diagrams.</p>
-          <UploadForm action={importDiagramWorkbookAction} label={entry ? "Replace workbook" : "Import diagram workbook"} accept=".xlsx">
-            <input type="hidden" name="machineNo" value={machineNo} />
-            <input type="hidden" name="expectedSha256" value={entry?.sourceSha256 ?? ""} />
-          </UploadForm>
-        </div>
-      </details>
+      {allowImport && (
+        <details className={entry ? "mt-2" : ""}>
+          <summary className="cursor-pointer font-medium">{entry ? "Replace diagram workbook" : "Add assembly diagrams"}</summary>
+          <div className="mt-2">
+            <p className="mb-2 text-xs text-muted">Choose the Encompass XLSX with Parts and Diagrams sheets. Machines with this same full model share the diagrams.</p>
+            <UploadForm action={importDiagramWorkbookAction} label={entry ? "Replace workbook" : "Import diagram workbook"} accept=".xlsx">
+              <input type="hidden" name="machineNo" value={machineNo} />
+              <input type="hidden" name="expectedSha256" value={entry?.sourceSha256 ?? ""} />
+              <label className="mb-2 flex w-fit flex-col gap-1 text-xs">
+                Diagram import key
+                <input type="password" name="importKey" className="input" autoComplete="off" maxLength={256} required />
+              </label>
+            </UploadForm>
+          </div>
+        </details>
+      )}
     </section>
   );
 }

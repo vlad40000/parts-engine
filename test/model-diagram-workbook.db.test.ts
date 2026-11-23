@@ -18,6 +18,7 @@ vi.mock("@/src/db", () => ({ getDb: async () => holder.db }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const model = { brand: "Maytag", modelRaw: "MODEL.0" };
+const importKey = "test-only-review-key-8f870420725aaf";
 const pumpUrl = "https://cdn.datamanager.arinet.com/image/WHI/test-pump/Max?ariz=5";
 const optionalUrl = "https://cdn.datamanager.arinet.com/image/WHI/test-optional/Max?ariz=5";
 const sourceUrl = "https://encompass.com/Exploded-View-Assembly/WHI/500/MODEL.0";
@@ -37,11 +38,12 @@ async function workbookFile({ source = sourceUrl, count = 2, secondLink = pumpUr
   return new File([new Uint8Array(bytes)], "diagram-book.xlsx");
 }
 
-async function upload(file: File, machineNo: string, expectedSha256 = "") {
+async function upload(file: File, machineNo: string, expectedSha256 = "", suppliedKey = importKey) {
   const form = new FormData();
   form.set("file", file);
   form.set("machineNo", machineNo);
   form.set("expectedSha256", expectedSha256);
+  form.set("importKey", suppliedKey);
   return importDiagramWorkbookAction(null, form);
 }
 
@@ -74,6 +76,7 @@ describe("model diagrams on fleet machines", () => {
   let db: Db;
 
   beforeAll(async () => {
+    vi.stubEnv("DIAGRAM_IMPORT_KEY", importKey);
     client = new PGlite();
     db = drizzle(client, { schema }) as unknown as Db;
     holder.db = db;
@@ -86,7 +89,27 @@ describe("model diagrams on fleet machines", () => {
     await setPartState(db, "1", "WP123456", "pulled");
   });
 
-  afterAll(() => client.close());
+  afterAll(async () => {
+    vi.unstubAllEnvs();
+    await client.close();
+  });
+
+  it("checks authorization before processing an import", async () => {
+    const file = await workbookFile();
+    try {
+      expect(await upload(file, "1", "", "")).toMatchObject({ ok: false, message: expect.stringMatching(/authorized import key/) });
+      expect(await upload(file, "1", "", "wrong-key")).toMatchObject({ ok: false });
+      vi.stubEnv("VERCEL_ENV", "preview");
+      expect(await upload(file, "1")).toMatchObject({ ok: false });
+      vi.stubEnv("VERCEL_ENV", undefined);
+      vi.stubEnv("DIAGRAM_IMPORT_KEY", undefined);
+      expect(await upload(file, "1")).toMatchObject({ ok: false });
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubEnv("DIAGRAM_IMPORT_KEY", importKey);
+    }
+    expect(await getModelDiagrams(db, model)).toBeNull();
+  });
 
   it("saves once per exact model, refuses stale replacements, and preserves the BOM and pulled state", async () => {
     const firstFile = await workbookFile();

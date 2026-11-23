@@ -5,11 +5,12 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/src/db";
 import { isDiagramTableMissing, saveModelDiagrams } from "@/src/db/model-diagrams";
 import { fleetMachines } from "@/src/db/schema";
+import { canImportDiagrams } from "@/src/lib/model-diagram-access";
 import { DiagramWorkbookError, readModelDiagramWorkbook } from "@/src/lib/model-diagram-workbook";
 import type { ActionResult } from "./actions";
 
 export async function importDiagramWorkbookAction(_previous: ActionResult | null, form: FormData): Promise<ActionResult> {
-  if (process.env.VERCEL_ENV === "preview") return { ok: false, message: "Diagram imports are disabled in deployment previews." };
+  if (!canImportDiagrams(form.get("importKey"))) return { ok: false, message: "Diagram import requires an authorized import key." };
   const file = form.get("file");
   if (!(file instanceof File)) return { ok: false, message: "Choose the XLSX diagram workbook." };
   const machineNo = String(form.get("machineNo") ?? "").trim();
