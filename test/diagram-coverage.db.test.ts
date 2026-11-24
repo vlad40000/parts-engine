@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import path from "node:path";
 import { readFileSync } from "node:fs";
-import { diagramCoverage } from "@/src/db/diagram-coverage";
+import { diagramCoverage, DIAGRAM_COVERAGE_PAGE_SIZE } from "@/src/db/diagram-coverage";
 import { getModelDiagrams, saveModelDiagrams } from "@/src/db/model-diagrams";
 import { getSettings, modelsNeedingBom, upsertFleet } from "@/src/db/queries";
 import * as schema from "@/src/db/schema";
@@ -31,7 +31,7 @@ describe("all-fleet diagram coverage", () => {
       { ID: 2, Brand: "Maytag", ModelNumber: "MODEL.0", Availability: "UNCHECKED" },
       { ID: 3, Brand: "Maytag", ModelNumber: "MODEL.1", Availability: "SOLD" },
       { ID: 4, Brand: "Maytag", ModelNumber: "MODEL0", Availability: "SCRAPPED" },
-      { ID: 5, Brand: "GE", ModelNumber: "NO NAMEPLATE", Availability: "SCRAPED" },
+      { ID: "5-1", Brand: "GE", ModelNumber: "NO NAMEPLATE", Availability: "SCRAPED" },
       { ID: 6, Brand: "LG", ModelNumber: "ABC", Availability: "SOLD" },
       { ID: 7, Brand: "GE", ModelNumber: "EMPTY", Availability: "SOLD" },
       { ID: 8, Brand: "GE", ModelNumber: "IMAGE", Availability: "SCRAPPED" },
@@ -62,7 +62,7 @@ describe("all-fleet diagram coverage", () => {
   it("counts every status, keeps exact revisions distinct, and reports nameplates", async () => {
     const q = await diagramCoverage(db);
     expect(q).toMatchObject({ totalMachines: 10, totalGroups: 8, coveredGroups: 1, coveredMachines: 2, savedGroups: 5 });
-    expect(q.nameplates.map((m) => m.machineNo)).toEqual(["5"]);
+    expect(q.nameplates.map((m) => m.machineNo)).toEqual(["5-1"]);
     expect(q.rows.find((r) => r.model === "MODEL.0")).toMatchObject({ coverage: "usable", statuses: { "PARTS ONLY": 1, UNCHECKED: 1 }, lead: { source: "appliancepartspros", exactRequest: true } });
     expect(q.rows.find((r) => r.model === "MODEL.1")).toMatchObject({ coverage: "awaiting", statuses: { SOLD: 1 } });
     expect(q.rows.find((r) => r.model === "MODEL0")).toMatchObject({ coverage: "awaiting", statuses: { SCRAPPED: 1 }, lead: { exactRequest: false } });
@@ -76,9 +76,9 @@ describe("all-fleet diagram coverage", () => {
   });
 
   it("filters machine counts by status without changing donor eligibility", async () => {
-    const sold = await diagramCoverage(db, "SOLD");
+    const sold = await diagramCoverage(db, { status: "SOLD" });
     expect(sold).toMatchObject({ totalMachines: 3, totalGroups: 3, coveredGroups: 0 });
-    expect((await diagramCoverage(db, "UNCHECKED")).rows[0]).toMatchObject({ coverage: "usable", statuses: { UNCHECKED: 1 } });
+    expect((await diagramCoverage(db, { status: "UNCHECKED" })).rows[0]).toMatchObject({ coverage: "usable", statuses: { UNCHECKED: 1 } });
     const donors = (await getSettings(db)).donorAvailabilities;
     const queue = await modelsNeedingBom(db, { availability: "include_unchecked" }, donors, 100);
     expect(queue.some((row) => row.model_key === "MODEL1" || row.model_key === "ABC")).toBe(false);
@@ -106,6 +106,49 @@ describe("all-fleet diagram coverage", () => {
     expect(html).toContain("Needs nameplate (1)");
     expect(html).toContain("SCRAPPED: 1");
   });
+
+  it("combines model, machine ID, and status in both the counts and rows", async () => {
+    const byModel = await diagramCoverage(db, { model: " model. " });
+    expect(byModel).toMatchObject({ totalMachines: 3, totalGroups: 2, coveredGroups: 1, coveredMachines: 2 });
+    expect(byModel.rows.map((row) => row.model)).toEqual(["MODEL.1", "MODEL.0"]);
+
+    const params = { model: "model.0", machineNo: "2", status: "UNCHECKED", offset: "100" };
+    const byMachine = await diagramCoverage(db, { ...params, offset: Number(params.offset) });
+    expect(byMachine).toMatchObject({
+      totalMachines: 1, totalGroups: 1, coveredMachines: 1, offset: 0,
+      rows: [{ machines: ["2"], model: "MODEL.0", coverage: "usable", statuses: { UNCHECKED: 1 } }]
+    });
+    expect(await diagramCoverage(db, { ...params, status: "SOLD", offset: 0 })).toMatchObject({ totalMachines: 0, rows: [] });
+
+    const html = renderToStaticMarkup(await DiagramCoveragePage({ searchParams: Promise.resolve(params) }));
+    expect(html).toContain('name="model"');
+    expect(html).toContain('name="machineNo"');
+    expect(html).toContain('href="/machines/2"');
+    expect(html).not.toContain('href="/machines/1"');
+    expect(html).toContain("Clear filters");
+  });
+
+  it("finds exact hyphenated machine IDs in nameplate review", async () => {
+    const result = await diagramCoverage(db, { machineNo: " 5-1 " });
+    expect(result).toMatchObject({ totalMachines: 1, totalGroups: 0, nameplates: [{ machineNo: "5-1" }] });
+    expect(await diagramCoverage(db, { machineNo: "5" })).toMatchObject({ totalMachines: 0, nameplates: [] });
+  });
+
+  it("keeps the selected model and status on pagination links", async () => {
+    const records = Array.from({ length: DIAGRAM_COVERAGE_PAGE_SIZE + 1 }, (_, i) => ({
+      ID: `PAGE-${i}`, Brand: "GE", ModelNumber: `PAGING-${String(i).padStart(3, "0")}`, Availability: "SOLD"
+    }));
+    await upsertFleet(db, mapFleetRows(records).rows);
+    try {
+      const search = { model: "paging-", status: "SOLD" };
+      const firstPage = renderToStaticMarkup(await DiagramCoveragePage({ searchParams: Promise.resolve(search) }));
+      expect(firstPage).toContain(`?status=SOLD&amp;model=paging-&amp;offset=${DIAGRAM_COVERAGE_PAGE_SIZE}`);
+      const lastPage = await diagramCoverage(db, { ...search, offset: DIAGRAM_COVERAGE_PAGE_SIZE });
+      expect(lastPage).toMatchObject({ totalGroups: DIAGRAM_COVERAGE_PAGE_SIZE + 1, rows: [{ machines: ["PAGE-100"] }] });
+    } finally {
+      await db.delete(schema.fleetMachines).where(inArray(schema.fleetMachines.machineNo, records.map((record) => record.ID)));
+    }
+  });
 });
 
 describe("coverage migration compatibility", () => {
@@ -123,7 +166,7 @@ describe("coverage migration compatibility", () => {
         { ID: 22, Brand: "GE", ModelNumber: "OTHER", Availability: "UNCHECKED" }
       ]).rows);
       await db.insert(schema.modelBomCache).values({ brandKey: "MAYTAG", modelKey: "MODEL0", brandDisplay: "Maytag", modelDisplay: "MODEL.0", status: "found", source: "test", sourceUrl: "https://example.com" });
-      expect(await diagramCoverage(db, "SOLD")).toMatchObject({ totalMachines: 2, coverageAvailable: false, coveredGroups: null, coveredMachines: null, savedGroups: null });
+      expect(await diagramCoverage(db, { status: "SOLD" })).toMatchObject({ totalMachines: 2, coverageAvailable: false, coveredGroups: null, coveredMachines: null, savedGroups: null });
       const allHtml = renderToStaticMarkup(await DiagramCoveragePage({ searchParams: Promise.resolve({}) }));
       expect(allHtml).toContain("OTHER");
       expect(allHtml).toContain("Diagram coverage unavailable");
