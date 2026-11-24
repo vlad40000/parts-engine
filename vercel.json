@@ -1,0 +1,7 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "feat/pe-orig-01": false
+    }
+  }
+}
