@@ -9,6 +9,13 @@ export const DIAGRAM_COVERAGE_PAGE_SIZE = 100;
 
 type Coverage = "usable" | "diagram_only" | "needs_review" | "awaiting" | "unavailable";
 
+type DiagramCoverageFilters = {
+  status?: string;
+  model?: string;
+  machineNo?: string;
+  offset?: number;
+};
+
 function httpUrl(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try {
@@ -40,8 +47,8 @@ function classifyEvidence(evidence: unknown): Coverage {
   return imageOnly && !incomplete ? "diagram_only" : "needs_review";
 }
 
-/** Read the entire fleet independently of the donor eligibility rules. */
-export async function diagramCoverage(db: Db, status?: string, offset = 0) {
+/** Group matching fleet records independently of the donor eligibility rules. */
+export async function diagramCoverage(db: Db, { status, model, machineNo, offset = 0 }: DiagramCoverageFilters = {}) {
   const [machines, diagrams, leads] = await Promise.all([
     db.select({ machineNo: fleetMachines.machineNo, brand: fleetMachines.brand, model: fleetMachines.modelRaw,
       status: fleetMachines.availability, identity: fleetMachines.identityStatus }).from(fleetMachines),
@@ -53,12 +60,15 @@ export async function diagramCoverage(db: Db, status?: string, offset = 0) {
   const saved = new Map(diagrams?.map((d) => [JSON.stringify([d.brand, d.model]), classifyEvidence(d.evidence)]) ?? []);
   const leadMap = new Map(leads.map((lead) => [JSON.stringify([lead.brand, lead.model]), lead]));
   const statuses = [...new Set(machines.map((m) => m.status))].sort();
+  const modelSearch = exactDiagramModel(model ?? "");
+  const machineId = machineNo?.trim();
   const groups = new Map<string, { brand: string; model: string; coverage: Coverage; machines: string[];
     statuses: Record<string, number>; lead: { source: string | null; url: string; exactRequest: boolean } | null }>();
   const nameplates: typeof machines = [];
   for (const m of machines) {
-    if (status && m.status !== status) continue;
+    if ((status && m.status !== status) || (machineId && m.machineNo !== machineId)) continue;
     const brand = brandKey(m.brand), model = exactDiagramModel(m.model);
+    if (modelSearch && !model.includes(modelSearch)) continue;
     if (m.identity !== "ok" || !brand || isUnreadableModel(m.brand) || isUnreadableModel(model)) {
       nameplates.push(m);
       continue;
@@ -76,7 +86,9 @@ export async function diagramCoverage(db: Db, status?: string, offset = 0) {
     group.statuses[m.status] = (group.statuses[m.status] ?? 0) + 1;
   }
   const all = [...groups.values()].sort((a, b) => Number(a.coverage === "usable") - Number(b.coverage === "usable") || b.machines.length - a.machines.length || a.brand.localeCompare(b.brand) || a.model.localeCompare(b.model));
-  const safeOffset = Math.max(0, Number.isFinite(offset) ? Math.floor(offset / DIAGRAM_COVERAGE_PAGE_SIZE) * DIAGRAM_COVERAGE_PAGE_SIZE : 0);
+  const page = Number.isFinite(offset) ? Math.floor(offset / DIAGRAM_COVERAGE_PAGE_SIZE) : 0;
+  const lastPage = Math.floor(Math.max(0, all.length - 1) / DIAGRAM_COVERAGE_PAGE_SIZE);
+  const safeOffset = Math.max(0, Math.min(page, lastPage)) * DIAGRAM_COVERAGE_PAGE_SIZE;
   return { statuses, totalMachines: all.reduce((n, g) => n + g.machines.length, 0) + nameplates.length,
     totalGroups: all.length, coverageAvailable: diagrams !== null,
     coveredGroups: diagrams === null ? null : all.filter((g) => g.coverage === "usable").length,
