@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify": "npm run typecheck && npm run test && npm run build",
+    "audit:fleet": "tsx scripts/fleet-audit/run.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs",
     "capture": "node scripts/capture-fixture.mjs"
@@ -35,6 +36,7 @@
     "@types/react-dom": "^19.3.0",
     "drizzle-kit": "^0.31.11",
     "tailwindcss": "^4.3.3",
+    "tsx": "4.23.15",
     "typescript": "5.8",
     "vitest": "^3.2.7"
   }
