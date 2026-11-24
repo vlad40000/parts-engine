@@ -59,6 +59,14 @@ describe("read-only all-status applicability audit", () => {
     const placeholders = audit({ ...snapshot, fleet: snapshot.fleet.map(r => ({ ...r, serial: "No Nameplate" })) });
     expect(placeholders.machines[0]).toMatchObject({ serial_present: true, serial_evidence: "placeholder" });
     expect(placeholders.summary).toMatchObject({ blank_serial: 0, nonblank_serial_placeholders: 6, repeated_groups_with_recorded_serial: 0 });
+    // Free-text notes in the serial field are not serials, even when they are not on a fixed list.
+    for (const note of ["WORE OFF", "Door Locked", "NEW", "NO INFORMATION"]) {
+      const noted = audit({ ...snapshot, fleet: snapshot.fleet.map(r => ({ ...r, serial: note })) });
+      expect(noted.machines[0].serial_evidence).toBe("placeholder");
+    }
+    const partial = audit({ ...snapshot, fleet: snapshot.fleet.map(r => ({ ...r, serial: "UNREADABLE 12" })) });
+    expect(partial.machines[0].serial_evidence).toBe("recorded");
+    expect(audit(snapshot).summary.by_cache_status).toEqual({ found: 3, "no cache row": 3 });
   });
 
   it("retains the four callout roles only for the matching primary unit", () => {
@@ -67,6 +75,14 @@ describe("read-only all-status applicability audit", () => {
       ["6613", "catalog", "W11479877"], ["6613", "supplier_listed", "W11543994"],
       ["6613", "observed", "W11538088"], ["6613", "replacement", "W11543994"]
     ]);
+    // Only the physical observation is about 6613. Unverified notes keep a null source rather than a borrowed link.
+    expect(result.maytag.map(r => [r.role, r.scope, r.source === null])).toEqual([
+      ["catalog", "model MVW6230HW1", false], ["supplier_listed", "model MVW6230HW1", false],
+      ["observed", "machine 6613", true], ["replacement", "model MVW6230HW1", true]
+    ]);
+    expect(result.maytag.every(r => r.factory_identity === "unresolved")).toBe(true);
+    expect(result.machines.find(r => r.machine_no === "6601")).toMatchObject({ confirmed_physical_unit: "6613",
+      reasons: expect.arrayContaining(["confirmed duplicate of 6613"]) });
     const changedIdentity = audit({ ...snapshot, fleet: snapshot.fleet.map(r =>
       r.machine_no === "6613" ? { ...r, serial: "DIFFERENT" } : r) });
     expect(changedIdentity.maytag).toEqual([]);
@@ -86,6 +102,29 @@ describe("read-only all-status applicability audit", () => {
     expect(summary.ge_comparison).toEqual({ catalog: 1, "service replacement": 1, "absent from reviewed GE sections": 1 });
     const adjacent = audit({ ...snapshot, ge: snapshot.ge.map(r => ({ ...r, model_display: "GTD42EASJ1WW" })) });
     expect(adjacent.comparison.every(r => r.outcome === "cache identity unresolved" && !r.oem_matches.length)).toBe(true);
+  });
+
+  it("keeps a supplier's different number at a drawn position as a competing claim, not a supersession", () => {
+    const { positions, comparison, summary } = audit(snapshot);
+    const at = (assembly: string, callout: string) => positions.find(p => p.assembly === assembly && p.callout === callout)!;
+    expect(at("BACKSPLASH, BLOWER & MOTOR ASSEMBLY", "213")).toMatchObject({ supplier_listed: ["WE03X29897"], supplier_agreement: "replacement" });
+    for (const assembly of ["BACKSPLASH, BLOWER & MOTOR ASSEMBLY", "CABINET & TOP PANEL"]) {
+      expect(at(assembly, "461")).toMatchObject({ catalog_mpn: "WZ05X0158", replacement_mpn: "WZ5X158D",
+        supplier_listed: ["WZ4X230D"], supplier_agreement: "competing number" });
+    }
+    expect(at("BACKSPLASH, BLOWER & MOTOR ASSEMBLY", "217")).toMatchObject({ supplier_listed: [], supplier_agreement: "not listed by supplier" });
+    expect(summary.ge_position_supplier_agreement).toEqual({ catalog: 70, replacement: 20, "competing number": 2, "not listed by supplier": 2 });
+    expect(summary.ge_supplier_callouts_outside_oem).toEqual([
+      "BACKSPLASH, BLOWER & MOTOR ASSEMBLY #N/I WD21X10261", "CABINET & TOP PANEL #254 WE2X21976",
+      "CABINET & TOP PANEL #417 WE1X21955", "CABINET & TOP PANEL #418 WE1X21975"
+    ]);
+    expect(comparison.find(r => r.printed_d1 === "WE01X25535")?.live_supplier_positions).toEqual([
+      "BACKSPLASH, BLOWER & MOTOR ASSEMBLY #75", "CABINET & TOP PANEL #75", "DRUM #75"
+    ]);
+    // The supplier no longer prints Drum 515's catalog number WE1M1015; it now lists the replacement WE13X29439.
+    expect(summary.ge_live_supplier_keys_not_in_cache).toContain("WE13X29439");
+    expect(summary.ge_live_supplier_keys_not_in_cache).not.toContain("WE1M1015");
+    expect(summary.ge_cache_keys_not_on_live_supplier).toEqual(["WPTEST"]);
   });
 
   it("exports every fleet ID once and finds sold and event-only MPNs outside the current BOM", async () => {

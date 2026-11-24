@@ -59,9 +59,10 @@ export async function writeReports(snapshot: Snapshot, parent: string) {
     "fleet-exceptions.csv": csv(report.machines, fields),
     "ge-machines.csv": csv(report.geMachines, fields),
     "ge-cache-comparison.csv": csv(report.comparison, ["mpn_display", "printed_d1", "mpn_canonical", "diagram_id",
-      "source", "source_url", "outcome", "oem_matches", "serial_applicability", "harvested_identity"]),
+      "source", "source_url", "outcome", "oem_matches", "live_supplier_positions", "serial_applicability", "harvested_identity"]),
     "ge-catalog-positions.csv": csv(report.positions, ["assembly", "callout", "catalog_mpn", "catalog_d1",
-      "replacement_mpn", "replacement_d1", "source", "reviewed_on", "catalog_in_cache", "replacement_in_cache"]),
+      "replacement_mpn", "replacement_d1", "source", "reviewed_on", "catalog_in_cache", "replacement_in_cache",
+      "supplier_listed", "supplier_agreement"]),
     "maytag-6613.json": JSON.stringify(report.maytag, null, 2) + "\n",
     "part-history.csv": csv(report.history, ["machine_no", "mpn_canonical", "origin", "event_id", "action", "disposition",
       "previous_disposition", "sold_price", "previous_sold_price", "repair_machine_no", "recorded_at", "applied", "edge_match"])

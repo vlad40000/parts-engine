@@ -1,6 +1,9 @@
 import { canonicalizeMpn } from "../../src/lib/mpn";
 import { exactDiagramModel } from "../../src/lib/model-diagrams";
 import ge from "./ge-catalog.json";
+import supplier from "./ge-supplier.json";
+// Reviewed callout-10 evidence for 6613, produced by the committed Maytag acquisition fixtures (docs/DIAGRAM_SOURCES.md).
+import diagramEvidence from "../../test/fixtures/diagrams/results.json";
 
 export interface FleetRecord {
   machine_no: string; availability: string; brand: string; model_raw: string; serial: string;
@@ -29,10 +32,17 @@ const exact = (value: string | null) => exactDiagramModel(value ?? "");
 const isGe = (r: FleetRecord) => exact(r.brand) === ge.brand && exact(r.model_raw) === ge.model;
 const isMaytag = (r: FleetRecord) => exact(r.brand) === "MAYTAG" && exact(r.model_raw) === "MVW6230HW1";
 const pilotIdentity = (r: FleetRecord) => isMaytag(r) && r.serial === "CA1304279";
-const serialPlaceholders = new Set(["NO NAMEPLATE", "NO SERIAL", "NO SERIAL ON TAG", "UNREADABLE",
-  "UNKNOWN", "MISSING", "N/A", "NONE", "NO TAG"]);
-const maytagSource = "https://github.com/vlad40000/parts-engine/blob/40715c5b6a4a02d5b6db3acdb72efa956a3c63e6/docs/DIAGRAM_SOURCES.md";
+// A serial field without a single digit is a note about the marking ("NO NAMEPLATE", "UNREADABLE", "WORE OFF",
+// "DOOR LOCKED", "NEW"), not a serial. The literal value stays on the report.
+const isSerialNote = (serial: string) => !/[0-9]/.test(serial);
 const maytagOem = "https://assets.ajmadison.com/ajmadison/itemdocs/repair-parts-list-w11497934-revb.pdf#page=3";
+const callout10 = diagramEvidence.machine6613;
+
+type SupplierRow = { assembly: string; callout: string; mpn: string; d1: string; ap: string | null; description: string; source: string };
+const supplierRows: SupplierRow[] = supplier.sections.flatMap(section => section.rows.map(([callout, mpn, ap, description]) => ({
+  assembly: section.assembly, callout: String(callout), mpn: String(mpn), d1: canonicalizeMpn(mpn), ap: ap ?? null,
+  description: String(description ?? ""), source: section.url
+})));
 
 function tally(values: string[]) {
   const counts = new Map<string, number>();
@@ -55,11 +65,23 @@ function geComparison(edges: CacheEdge[]) {
     const outcome = roles.join(" + ") || (eligible(edge) ? "absent from reviewed GE sections" : "cache identity unresolved");
     return { ...edge, printed_d1: key, outcome,
       oem_matches: matches.map(p => ({ ...p, same_section: exact(edge.diagram_id) === p.assembly })),
+      live_supplier_positions: supplierRows.filter(r => r.d1 === key).map(r => `${r.assembly} #${r.callout}`),
       serial_applicability: "unresolved", harvested_identity: "unverified" };
   });
-  return { comparison, positions: positions.map(p => ({ ...p,
-    catalog_in_cache: candidateKeys.has(p.catalog_d1), replacement_in_cache: !!p.replacement_d1 && candidateKeys.has(p.replacement_d1)
-  })) };
+  // The supplier's number at the same drawn position is separate evidence. Agreement corroborates the OEM
+  // transcription; a different number is a competing claim that stays visible, never a supersession.
+  const supplierAt = (p: { assembly: string; callout: string }) =>
+    supplierRows.filter(r => r.assembly === p.assembly && r.callout === p.callout);
+  const supplierKeys = new Set(supplierRows.map(r => r.d1));
+  return { comparison, supplierKeys, candidateKeys,
+    supplierOnly: supplierRows.filter(r => !positions.some(p => p.assembly === r.assembly && p.callout === r.callout)),
+    positions: positions.map(p => {
+      const at = supplierAt(p);
+      const agreement = [...new Set(at.map(r => r.d1 === p.catalog_d1 ? "catalog" : r.d1 === p.replacement_d1 ? "replacement" : "competing number"))];
+      return { ...p,
+        catalog_in_cache: candidateKeys.has(p.catalog_d1), replacement_in_cache: !!p.replacement_d1 && candidateKeys.has(p.replacement_d1),
+        supplier_listed: at.map(r => r.mpn), supplier_agreement: agreement.join(" + ") || "not listed by supplier" };
+    }) };
 }
 
 export function audit(snapshot: Snapshot) {
@@ -84,7 +106,7 @@ export function audit(snapshot: Snapshot) {
     const ids = groups.get(groupKey(r)) ?? [];
     const reasons = ["no reviewed machine-wide serial or common-production rule"];
     if (r.identity_status !== "ok") reasons.push("nameplate review");
-    const serialEvidence = !r.serial.trim() ? "blank" : serialPlaceholders.has(exact(r.serial)) ? "placeholder" : "recorded";
+    const serialEvidence = !r.serial.trim() ? "blank" : isSerialNote(r.serial) ? "placeholder" : "recorded";
     if (serialEvidence === "blank") reasons.push("missing serial");
     if (serialEvidence === "placeholder") reasons.push("serial field describes missing or unreadable marking");
     if (r.age_confidence === "ambiguous") reasons.push("ambiguous build date");
@@ -101,26 +123,31 @@ export function audit(snapshot: Snapshot) {
     const oemSource = isGe(r) ? ge.source : isMaytag(r) ? maytagOem : null;
     const soldGeCatalog = exact(r.brand) === "GE" && exact(r.model_raw) === "GSS25WGTABB";
     const supplierSource = isMaytag(r) ? "https://www.appliancepartspros.com/parts-for-whirlpool-mvw6230hw1.html"
-      : soldGeCatalog ? "https://www.appliancepartspros.com/parts-for-ge-gss25wgtabb.html" : null;
+      : soldGeCatalog ? "https://www.appliancepartspros.com/parts-for-ge-gss25wgtabb.html" : isGe(r) ? supplier.source : null;
     if (!oemSource && !supplierSource) reasons.push("exact parts-list source scope unreviewed");
     if (exact(r.brand) === "LG" && exact(r.model_raw) === "WT7200CW") reasons.push("manufacturer variation required by reviewed source");
     return { ...r, model_bom_found: modelBom, cache_label_match: cacheLabel,
-      reviewed_exact_model_source: oemSource, reviewed_oem_retrieval: oemSource ? "complete for cited source" : "unknown",
+      reviewed_exact_model_source: oemSource,
+      // GE blocks scripted retrieval; its five sections were transcribed by hand with no raw page preserved.
+      reviewed_oem_retrieval: isGe(r) ? "5 sections transcribed 2026-11-24; raw capture not preserved"
+        : isMaytag(r) ? "5/5 sections in committed OEM fixture" : "unknown",
       reviewed_supplier_source: supplierSource, cache_retrieval_completeness: "unknown",
       reviewed_supplier_retrieval: isMaytag(r) ? "6/6 sections in APP snapshot; 2 unread callouts"
-        : soldGeCatalog ? "9/9 sections in APP snapshot; 10 unread rows" : "unknown",
+        : soldGeCatalog ? "9/9 sections in APP snapshot; 10 unread rows"
+        : isGe(r) ? "5/5 sections re-read 2026-11-24 (ge-supplier.json)" : "unknown",
       variation: "unverified", serial_present: !!r.serial.trim(), serial_evidence: serialEvidence,
       repeated_identity_ids: ids.length > 1 ? ids : [],
       confirmed_physical_unit: ownerUnit, unmatched_history_rows: unmatched[r.machine_no] ?? 0,
       machine_applicability: "unresolved", verification: "documented exception", reasons };
   });
-  const { comparison, positions } = geComparison(snapshot.ge);
+  const { comparison, positions, supplierOnly, supplierKeys, candidateKeys } = geComparison(snapshot.ge);
   const geMachines = machines.filter(isGe);
   const repeated = [...groups.values()].filter(ids => ids.length > 1);
   const summary = {
     snapshot_at: snapshot.audited_at, fleet_records: machines.length, by_status: tally(machines.map(r => r.availability)),
     found_nonempty_model_bom: machines.filter(r => r.model_bom_found).length,
     missing_model_bom: machines.filter(r => !r.model_bom_found).length,
+    by_cache_status: tally(machines.map(r => r.cache_status ?? "no cache row")),
     fully_verified_with_reviewed_evidence: 0, documented_exceptions: machines.length,
     owner_confirmed_physical_units: primary ? 1 : 0, exhaustive_physical_unit_count: null,
     records_after_confirmed_duplicates: machines.length - Number(confirmedPair),
@@ -137,15 +164,18 @@ export function audit(snapshot: Snapshot) {
     ge_records: geMachines.length, ge_nonblank_serials: geMachines.filter(r => r.serial_present).length,
     ge_distinct_literal_nonblank_serials: new Set(geMachines.filter(r => r.serial_present).map(r => r.serial)).size,
     ge_comparison: tally(comparison.map(c => c.outcome)), ge_positions: positions.length,
-    ge_positions_without_cache_counterpart: positions.filter(p => !p.catalog_in_cache && !p.replacement_in_cache).length
+    ge_positions_without_cache_counterpart: positions.filter(p => !p.catalog_in_cache && !p.replacement_in_cache).length,
+    ge_supplier_rows: supplierRows.length,
+    ge_position_supplier_agreement: tally(positions.map(p => p.supplier_agreement)),
+    ge_supplier_callouts_outside_oem: supplierOnly.map(r => `${r.assembly} #${r.callout} ${r.mpn}`),
+    ge_cache_keys_not_on_live_supplier: [...candidateKeys].filter(k => !supplierKeys.has(k)).sort(),
+    ge_live_supplier_keys_not_in_cache: [...supplierKeys].filter(k => !candidateKeys.has(k)).sort()
   };
-  const maytag = primary ? [
-    ["catalog", "W11479877", maytagOem, "Maytag repair parts list W11497934 Rev B, page 3"],
-    ["supplier_listed", "W11543994", "https://www.appliancepartspros.com/02-top-and-cabinet-parts-parts-for-whirlpool-mvw6230hw1.html", "APP catalog AP7019156"],
-    ["observed", "W11538088", maytagSource, "Physical marking reported on 6613 in evidence notes; photo not reviewed"],
-    ["replacement", "W11543994", maytagSource, "Service replacement cited in evidence notes; independent OEM direction unverified"]
-  ].map(([role, mpn, source, evidence]) => ({ machine_no: primary.machine_no, model: primary.model_raw,
-    serial: primary.serial, assembly: "Top and Cabinet", callout: "10", role, mpn, d1: canonicalizeMpn(mpn),
-    source, evidence, factory_identity: "unresolved" })) : [];
+  // Each role is its own record with its own source; null stays null. Only the observation is about one machine.
+  const maytag = primary ? callout10.numbers.map(n => ({ machine_no: primary.machine_no, model: primary.model_raw,
+    serial: primary.serial, assembly: callout10.section, callout: callout10.callout, role: n.role, mpn: n.mpn,
+    d1: canonicalizeMpn(n.mpn), source: n.source, evidence: n.evidence,
+    scope: n.role === "observed" ? `machine ${primary.machine_no}` : `model ${primary.model_raw}`,
+    factory_identity: "unresolved" })) : [];
   return { summary, machines, geMachines, comparison, positions, maytag, history };
 }
