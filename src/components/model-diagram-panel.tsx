@@ -1,5 +1,6 @@
-import { importDiagramWorkbookAction } from "@/app/model-diagram-actions";
-import { UploadForm } from "@/src/components/forms";
+import { importDiagramWorkbookAction, importMaytag6613DiagramAction } from "@/app/model-diagram-actions";
+import { ButtonForm, UploadForm } from "@/src/components/forms";
+import { MAYTAG_DIAGRAM_PILOT } from "@/src/lib/maytag-6613-diagram";
 import { diagramImportEnabled } from "@/src/lib/model-diagram-access";
 import { calloutRecordsFor, type CalloutRole, type DiagramReference, type ModelDiagrams } from "@/src/lib/model-diagrams";
 
@@ -90,6 +91,20 @@ export function ModelDiagramPanel({ machineNo, entry }: {
                 <input type="password" name="importKey" className="input" autoComplete="off" maxLength={256} required />
               </label>
             </UploadForm>
+          </div>
+        </details>
+      )}
+      {allowImport && !entry && machineNo === MAYTAG_DIAGRAM_PILOT.machineNo && (
+        <details className="mt-2">
+          <summary className="cursor-pointer font-medium">Import reviewed Maytag diagrams</summary>
+          <div className="mt-2">
+            <ButtonForm action={importMaytag6613DiagramAction} label="Import reviewed bundle">
+              <input type="hidden" name="machineNo" value={machineNo} />
+              <label className="mb-2 flex w-fit flex-col gap-1 text-xs">
+                Diagram import key
+                <input type="password" name="importKey" className="input" autoComplete="off" maxLength={256} required />
+              </label>
+            </ButtonForm>
           </div>
         </details>
       )}
