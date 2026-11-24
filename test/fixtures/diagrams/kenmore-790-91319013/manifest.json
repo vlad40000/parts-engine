@@ -1,0 +1,31 @@
+{
+  "case": "kenmore-790-91319013",
+  "capturedAt": "2026-11-23T16:51:25.760Z",
+  "method": "GET via src/sources/http createFetcher (1 in flight per host, 2 s between starts, 20 s timeout, no retries); pages minimized by test/diagram-sources-support.ts",
+  "fetches": [
+    {
+      "requested": "https://www.appliancepartspros.com/search.aspx?model=790.91319013",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/parts-for-kenmore-79091319013.html",
+      "fixture": "01-parts-for-kenmore-79091319013-html.html",
+      "rawBytes": 462321,
+      "rawSha256": "d4f7b22d8c9c5bde3b5a53a4595431ec6a3ac19d3b94988f73f9958f21064135"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/backguard-parts-for-kenmore-79091319013.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/backguard-parts-for-kenmore-79091319013.html",
+      "fixture": "02-backguard-parts-for-kenmore-79091319013-html.html",
+      "rawBytes": 476478,
+      "rawSha256": "169f7d3b6a347a494a99908d40c6cd73bddddc5cf0531472af5214a55ebf0895"
+    },
+    {
+      "requested": "https://partstore.encompass.com/model/KMR79091319013",
+      "status": 403,
+      "finalUrl": "https://partstore.encompass.com/model/KMR79091319013",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

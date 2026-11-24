@@ -1,0 +1,67 @@
+[
+  {
+    "fixture": "hd-wt7200cw-abwevus-overview.html",
+    "brand": "LG",
+    "model": "WT7200CW",
+    "variation": "ABWEVUS",
+    "requested": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWEVUS/",
+    "finalUrl": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWEVUS/",
+    "status": 200,
+    "capturedAt": "2026-11-23T16:38:22Z",
+    "method": "manual curl GET (second request; the first, at 16:34Z, got HTTP 403 with a bot-check page)",
+    "rawBytes": 96746,
+    "rawSha256": "e8881706d194617bb0c8c45d818a06a28f59f64c6a551fae5332e9f6ca0636dc"
+  },
+  {
+    "fixture": "hd-wt7200cw-abwevus-outer-case-assembly.html",
+    "brand": "LG",
+    "model": "WT7200CW",
+    "variation": "ABWEVUS",
+    "requested": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWEVUS/Sections/Outer-Case-Assembly/?ModelID=8944070&ModelNum=WT7200CW&mfgModelNum=ABWEVUS&ManufactureID=73&Selected=EA0269AF068E0B4DBFF49B04AA7B74F8FF73E086&Position=1&mfg=LG&Type=Washer&Mark=1",
+    "finalUrl": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWEVUS/Sections/Outer-Case-Assembly/?ModelID=8944070&ModelNum=WT7200CW&mfgModelNum=ABWEVUS&ManufactureID=73&Selected=EA0269AF068E0B4DBFF49B04AA7B74F8FF73E086&Position=1&mfg=LG&Type=Washer&Mark=1",
+    "status": 200,
+    "capturedAt": "2026-11-23T16:38:42Z",
+    "method": "manual curl GET",
+    "rawBytes": 112810,
+    "rawSha256": "106a12995525fb67e1f041e9eaebfe8bbc47192e627ffd47e1e20bfa62788da1"
+  },
+  {
+    "fixture": "hd-wt7200cw-abwetus-overview.html",
+    "brand": "LG",
+    "model": "WT7200CW",
+    "variation": "ABWETUS",
+    "requested": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWETUS/",
+    "finalUrl": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWETUS/",
+    "status": 200,
+    "capturedAt": "2026-11-23T16:34:36Z",
+    "method": "manual curl GET",
+    "rawBytes": 97296,
+    "rawSha256": "c8171acd6c1a60a91a2cfd3a8289c75d7d1c0db71de533aa82bce9e2e826a0bd"
+  },
+  {
+    "fixture": "encompass-partstore-whimvw6230hw1.html",
+    "brand": "Maytag",
+    "model": "MVW6230HW1",
+    "variation": null,
+    "requested": "https://partstore.encompass.com/model/WHIMVW6230HW1",
+    "finalUrl": "https://partstore.encompass.com/model/WHIMVW6230HW1",
+    "status": 200,
+    "capturedAt": "2026-11-23T16:33:05Z",
+    "method": "manual curl GET",
+    "rawBytes": 190989,
+    "rawSha256": "f74bc481d148479c405625eab055683c332d0adc7dfa1f98bc7f4471944eaaaf"
+  },
+  {
+    "fixture": "encompass-exploded-view-mvw6230hw1.html",
+    "brand": "Maytag",
+    "model": "MVW6230HW1",
+    "variation": null,
+    "requested": "https://partstore.encompass.com/Exploded-View-Assembly/WHI/2619720/MVW6230HW1",
+    "finalUrl": "https://partstore.encompass.com/Exploded-View-Assembly/WHI/2619720/MVW6230HW1",
+    "status": 200,
+    "capturedAt": "2026-11-23T16:45:45Z",
+    "method": "manual curl GET",
+    "rawBytes": 39907,
+    "rawSha256": "5d30f22574608b31e3b79d57bfd5a751f337bfa6c080a3405374f9ff328dcac1"
+  }
+]

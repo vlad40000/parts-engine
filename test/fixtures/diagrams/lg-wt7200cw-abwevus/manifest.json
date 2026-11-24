@@ -1,0 +1,47 @@
+{
+  "case": "lg-wt7200cw-abwevus",
+  "capturedAt": "2026-11-23T16:51:28.832Z",
+  "method": "GET via src/sources/http createFetcher (1 in flight per host, 2 s between starts, 20 s timeout, no retries); pages minimized by test/diagram-sources-support.ts",
+  "fetches": [
+    {
+      "requested": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWEVUS/",
+      "status": 403,
+      "finalUrl": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWEVUS/",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/search.aspx?model=WT7200CW",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/parts-for-lg-wt7200cw.html",
+      "fixture": "02-parts-for-lg-wt7200cw-html.html",
+      "rawBytes": 439748,
+      "rawSha256": "8fff42a30793675042a2eb291dc5384107f1bb52a2d943a61648b4b962ab0c18"
+    },
+    {
+      "requested": "https://encompass.com/model/ZENWT7200CW",
+      "status": 403,
+      "finalUrl": "https://encompass.com/model/ZENWT7200CW",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "requested": "https://partstore.encompass.com/model/LGEWT7200CW",
+      "status": 403,
+      "finalUrl": "https://partstore.encompass.com/model/LGEWT7200CW",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "requested": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWETUS/",
+      "status": 403,
+      "finalUrl": "https://www.appliancerepair.homedepot.com/Models/WT7200CW/MFGModelNumber/ABWETUS/",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

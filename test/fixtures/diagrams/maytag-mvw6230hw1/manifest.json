@@ -1,0 +1,88 @@
+{
+  "case": "maytag-mvw6230hw1",
+  "capturedAt": "2026-11-23T16:50:49.641Z",
+  "method": "GET via src/sources/http createFetcher (1 in flight per host, 2 s between starts, 20 s timeout, no retries); pages minimized by test/diagram-sources-support.ts",
+  "fetches": [
+    {
+      "requested": "https://www.appliancepartspros.com/search.aspx?model=MVW6230HW1",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "01-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 457010,
+      "rawSha256": "004a0ef7b1501aa391799a81016f084acf4567d47542e492007c250b72906851"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/01-cover-sheet-parts-for-whirlpool-mvw6230hw1.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/01-cover-sheet-parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "02-01-cover-sheet-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 118362,
+      "rawSha256": "a9abb36a2b0fce8059f4c4510d0042b0bd7142280518fdbc8565556c69894e47"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/02-top-and-cabinet-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/02-top-and-cabinet-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "03-02-top-and-cabinet-parts-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 723625,
+      "rawSha256": "94a6d04278baf1c1c70591c896d80876fbb6c82bf23a7d0eaa15225845635577"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/03-console-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/03-console-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "04-03-console-parts-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 256869,
+      "rawSha256": "e69434d6de5b0b099ac017c9e5130482a44eb999ae73d37782ff0cd30009d71f"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/04-basket-and-tub-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/04-basket-and-tub-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "05-04-basket-and-tub-parts-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 318819,
+      "rawSha256": "615d8f32669737d284b8eac78197ec1129a7d8249648889695b7cab73d0f61c3"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/05-gearcase-motor-and-pump-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/05-gearcase-motor-and-pump-parts-parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "06-05-gearcase-motor-and-pump-parts-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 382336,
+      "rawSha256": "dadc3ef58e59b05caef32af7ec6e8dc8a5a5e77a6ee70d6953d5a9b49ba4d26c"
+    },
+    {
+      "requested": "https://www.appliancepartspros.com/06-optional-parts-not-included-parts-for-whirlpool-mvw6230hw1.html",
+      "status": 200,
+      "finalUrl": "https://www.appliancepartspros.com/06-optional-parts-not-included-parts-for-whirlpool-mvw6230hw1.html",
+      "fixture": "07-06-optional-parts-not-included-parts-for-whirlpool-mvw6230hw1-html.html",
+      "rawBytes": 482785,
+      "rawSha256": "fa155541d1fcea21941963bbd759fd9e810e109b9b553eea18bf9fd52d9f8f80"
+    },
+    {
+      "requested": "https://partstore.encompass.com/model/WHIMVW6230HW1",
+      "status": 403,
+      "finalUrl": "https://partstore.encompass.com/model/WHIMVW6230HW1",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "requested": "https://partstore.encompass.com/model/MAYMVW6230HW1",
+      "status": 403,
+      "finalUrl": "https://partstore.encompass.com/model/MAYMVW6230HW1",
+      "fixture": null,
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "oemPartsList": {
+    "url": "https://assets.ajmadison.com/ajmadison/itemdocs/repair-parts-list-w11497934-revb.pdf",
+    "status": 200,
+    "finalUrl": "https://assets.ajmadison.com/ajmadison/itemdocs/repair-parts-list-w11497934-revb.pdf",
+    "sha256": "ecb57af00ad5c0c9192d890def94fcf8cfa99f7edbd80e66caf952c8a86b9b81",
+    "bytes": 3440738,
+    "extractor": "pdftotext -raw -enc UTF-8 (pdftotext version 4.00)",
+    "fixture": "oem-parts-list.txt"
+  }
+}
