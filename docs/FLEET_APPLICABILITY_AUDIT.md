@@ -1,10 +1,23 @@
 # Fleet applicability audit · November 24, 2026
 
-At 11:31 a.m. Eastern, the Parts Engine production snapshot contained **6,960 records across 11 statuses**. A shared model BOM was available on 4,038 records (58.0%). The reviewed evidence established a complete machine-specific list on **0 records**. The exception report contains one row for each of the 6,960 IDs. A documented exception still requires resolution.
+Read-only audit of whether each Fleet record has an evidence-backed parts list for its exact manufacturer, model,
+serial, revision and variation. Baseline: `main` at `72c8aa7`. Production snapshot: `2026-11-24 16:31:25 UTC`
+(one repeatable-read, read-only SELECT through the connected Neon project). Nothing was written to production.
 
-**Physical units.** The owner-confirmed count in the adjudicated evidence is **1**. Records 6601 and 6613 identify the same Maytag unit, represented by 6613. Applying that decision leaves 6,959 records to account for. The total number of distinct physical machines remains unknown. Across the fleet, 51 candidate groups cover 227 records sharing a nonblank serial within a recorded brand and full model. Grouping trims and folds case for discovery and keeps original values in the report. A repeated identifier, especially on a record needing nameplate review, requires independent reconciliation.
+**Bottom line.** A model-level BOM joins to 4,038 of 6,960 Fleet records (58.0%). **Zero records have a verified
+machine-level list.** Every record carries a documented exception explaining which evidence is missing. Model-level
+coverage is not serial-verified accuracy.
 
-## Coverage by fleet status
+Design and implementation recommendations live in [SERIAL_AWARE_APPLICABILITY.md](SERIAL_AWARE_APPLICABILITY.md).
+
+## How the figures were verified
+
+The audit tool (`scripts/fleet-audit/`) was written by Codex. Each headline figure below was recomputed by a separate
+script that does not import `report.ts`. All figures matched, with one correction: serial placeholders (197 → 204,
+see below). The tool was then replayed on the same snapshot. Its output differs from Codex's original reports only in
+that correction and the new supplier-comparison fields.
+
+## Fleet coverage
 
 | Recorded status | Records | Found, nonempty model cache | Without that cache |
 | --- | ---: | ---: | ---: |
@@ -21,70 +34,172 @@ At 11:31 a.m. Eastern, the Parts Engine production snapshot contained **6,960 re
 | ON HOLD | 1 | 1 | 0 |
 | **Total** | **6,960** | **4,038** | **2,922** |
 
-The count follows the handoff definition of a found cache entry with a positive source row count. Eight records with a found cache have a different number of stored MPN edges than reported cache rows. On 861 records the found cache reports dropped supplier rows. These counts describe the cached evidence. The audit carries the retrieval timestamp, source link, stored edge count and dropped-row count beside each applicable record.
+**Why 2,922 records lack a model list.** This tells you what to act on:
 
-There are 408 nameplate-review flags, 287 blank serials and 4,278 ambiguous manufacture dates. A further **197 nonblank serial fields** contain an explicit placeholder such as “NO NAMEPLATE” or “UNREADABLE”. Of the 51 repeated groups above, 16 groups covering 157 rows share placeholders. The remaining 35 groups cover 70 records with recorded serials. These categories overlap. The report keeps the full year-candidate array. One saved diagram workbook matches two records. The saved Maytag MVWB755DW0 workbook has 106 assembly/callout positions and 94 distinct printed D1 keys.
+| Cache state | Records | Next action |
+| --- | ---: | --- |
+| No cache row (never looked up) | 1,703 | Batch acquisition |
+| `error` (supplier failure) | 1,138 | Retry or alternate supplier; keep failures as evidence gaps |
+| `not_found` | 81 | Nameplate check, then alternate source |
 
-## GE GTD42EASJ2WW
+**Identity exceptions.** These overlap with each other and with the table above.
 
-**24 records, 24 nonblank serials, 23 distinct literal serials.** Machines 2415 and 6363 share a serial and remain separate fleet records pending identity review. Twelve GE records are SOLD, seven UNCHECKED, three PARTS ONLY, one NEEDS PARTS and one READY TO SALE. All 24 qualify for this audit.
+| Exception | Records |
+| --- | ---: |
+| Flagged for nameplate review | 408 |
+| Blank serial | 287 |
+| Serial field holds a note, not a serial (no digit: "NO NAMEPLATE" 183, "UNREADABLE" 10, "NO SERIAL" 3, "NEW" 3, "WORE OFF" 2, and others) | 204 |
+| Ambiguous manufacture date (several plausible decoded years) | 4,278 |
+| No date candidate | 1,400 |
+| One lookup key covering several full spellings within a brand | 24 |
+| Found cache whose display label differs from the Fleet spelling | 9 |
+| Found cache whose stored edge count differs from its row count | 8 |
+| Found cache reporting dropped supplier rows | 861 |
 
-The production AppliancePartsPros cache was retrieved on October 14. It reports 90 rows, zero dropped rows and five visited assembly pages. Encompass returned HTTP 403 on the preceding attempt. GE publishes five assembly sections for this exact model. The pilot captured all 94 numbered entries shown on those pages. These source counts use different units. [Supplier model page](https://www.appliancepartspros.com/parts-for-general-electric-gtd42easj2ww.html) · [GE model index](https://www.geapplianceparts.com/store/parts/assembly/GTD42EASJ2WW)
+All nine label mismatches are separator-only (`GSS25WGTA BB` vs `GSS25WGTABB`, `WMH78019HZ-0` vs `WMH78019HZ0`, Samsung
+`WF42H5000AW/A2-11` vs `/A211`). The lookup key treats them as equal. Publication must not.
 
-| Comparison of the 90 cached MPNs with GE's five sections | Cached MPNs |
+All eight edge-count mismatches are Kenmore lists with exactly one more cache row than stored edge. This is consistent
+with `saveModelBom` keeping one edge per canonical MPN.
+
+**Physical units.** 51 groups share a nonblank serial within a brand and full model (227 records). Of these, 16 groups
+(157 records) share a placeholder note. The other 35 groups (70 records) are pairs with a real serial. Some pairs
+combine a SOLD record with an active one; that is a re-intake candidate, not proof of a duplicate. The owner has
+confirmed one pair, 6601 = 6613. So the known count is **6,959 records after confirmed duplicates**. The number of
+distinct physical machines remains unknown, and no record was merged or deleted.
+
+**Part history.** There are 140 machine-scoped rows: 135 current states (125 failed, 9 pulled, 1 pulled-and-sold),
+3 disposition events and 2 fleet-part events, across 66 machines. All 140 currently match a visible edge. That is
+luck, not a guarantee; see "Historical parts visibility" below.
+
+## GE GTD42EASJ2WW pilot
+
+**Fleet scope.** There are 24 records (SOLD 12, UNCHECKED 7, PARTS ONLY 3, NEEDS PARTS 1, READY TO SALE 1). All 24
+have nonblank serials, and there are 23 distinct literal serials. Machines 2415 and 6363 are both SOLD, both have
+identity status `ok`, and both record serial `LG720202C`. They stay separate records pending identity review. All 24
+share one AppliancePartsPros cache, retrieved 2026-10-14, with 90 rows, 90 edges and 0 dropped.
+
+**Sources and their limits.**
+
+- **GE OEM** (`ge-catalog.json`). Five sections (Backsplash/Blower/Motor 36, Front Panel & Door 23, Water System 4,
+  Cabinet & Top Panel 13, Drum 18) give 94 positions and 87 distinct catalog MPNs. Codex transcribed them by hand on
+  2026-11-24. **No raw page was preserved.** On re-check, every geapplianceparts.com URL returned HTTP 403 to scripted
+  requests. The `publishedRows` field was recorded with the same transcription, so it is not an independent check.
+- **Supplier** (`ge-supplier.json`). All five AppliancePartsPros sections were re-read on 2026-11-24 and parsed with
+  main's own `parseAppDiagramSection`. Each page's SHA-256 is recorded. This gives 96 callout rows and 90 distinct MPNs.
+
+**Cached MPNs vs the GE transcription:**
+
+| Outcome | Cached MPNs |
 | --- | ---: |
 | Printed GE catalog number | 66 |
-| Explicitly named GE service replacement only | 19 |
-| Absent from those sections | 5 |
+| GE-named service replacement only | 19 |
+| Absent from the five transcribed sections | 5 |
 
-The five unmatched candidates are WD21X10261, WE1X21955, WE1X21975, WE2X21976 and WZ4X230D. They remain available for review. In the opposite direction, three GE positions lack either a catalog or replacement MPN in the cache. These are blower plate 217 (WE13X29444) and ground screw 461 (WZ05X0158, service replacement WZ5X158D) in each of two assemblies. [GE backsplash, blower and motor](https://www.geapplianceparts.com/store/parts/ModelSectionParts/GTD42EASJ2WW/1/0/0/0/BACKSPLASH%2C_BLOWER_%26_MOTOR_ASSEMBLY) · [GE cabinet and top](https://www.geapplianceparts.com/store/parts/ModelSectionParts/GTD42EASJ2WW/4/0/0/0/CABINET_%26_TOP_PANEL)
+**Supplier rows at the same drawn position.** This corroborates the transcription independently. Of the 94 GE
+positions:
 
-| Sample machine | Recorded serial | Status | Plausible decoded years | Serial applicability |
+| Supplier's number at that callout | Positions |
+| --- | ---: |
+| Same as GE's catalog number | 70 |
+| Same as GE's named replacement | 20 |
+| A different number (competing claim) | 2 |
+| Supplier prints nothing there | 2 |
+
+**The five unmatched MPNs, identified:**
+
+| MPN | Supplier section, callout | Supplier description | Reading |
+| --- | --- | --- | --- |
+| WD21X10261 | Backsplash, "N/I" (not illustrated) | Interlock Switch (AP3994765) | Supplier-only. Not on GE's drawing. |
+| WE1X21955 | Cabinet & Top Panel, 417 | Dryer Fuse Holder (AP5982568) | On the supplier's drawing; absent from the GE transcription |
+| WE1X21975 | Cabinet & Top Panel, 418 | Dryer Thermal Fuse (AP5957584) | Same as above |
+| WE2X21976 | Cabinet & Top Panel, 254 | 6-20 Screw (AP6032721) | Same as above |
+| WZ4X230D | Backsplash 461 and Cabinet 461 | Mounting Screw 12-Pack (AP2614385) | **Competing claim.** GE prints WZ05X0158 → replacement WZ5X158D at 461 |
+
+Callouts 254, 417 and 418 are drawn by the supplier, but Codex's GE capture does not list them. It cannot be
+determined from here whether GE dropped them or the transcription missed them, because GE returns HTTP 403. Re-check
+them with a browser capture before treating the thermal fuse and fuse holder as non-applicable.
+
+**Other positions.**
+
+- Backsplash 217 (blower plate WE13X29444) has no supplier row and no cache counterpart.
+- WE01X25535 (panel screw) is drawn at callout 75 in three assemblies by both GE and the supplier, but it is stored as
+  **one** edge. `model_part_edges` is keyed by model and MPN, so it cannot hold the other two positions.
+
+**Supplier drift since the cache.** The cache holds WE1M1015, GE's catalog number at Drum 515. The live supplier page
+now prints the GE-named replacement WE13X29439 there instead. This is the case the review warns about: a refresh would
+silently swap the catalog MPN for the replacement.
+
+**Serial applicability.**
+
+| Sample | Serial | Status | Plausible years | Outcome |
 | --- | --- | --- | --- | --- |
 | 6616 | HR839502C | SOLD | 1984, 1996, 2008, 2020 | Unresolved for all 90 candidates |
 | 6664 | LM762200C | READY TO SALE | 1983, 1995, 2007, 2019 | Unresolved for all 90 candidates |
+| 2415 / 6363 | LG720202C (shared) | SOLD / SOLD | 1980, 1992, 2004, 2016 | Unresolved; identity review first |
 
-The model and engineering suffix on both records match GE's published heading. For example, GE directs belt WE12M29 at callout 213 to WE03X29897, which is the number in the supplier cache. None of the five reviewed sections supplies a serial break, build-date boundary, manufacturer-variation rule or explicit common-production rule establishing the installed belt on either unit. The same conclusion applies to all 24 records in the GE machine report. Each machine references the same reviewed catalog. A later service bulletin or unit inspection could change a position's conclusion. [GE belt entry, callout 213](https://www.geapplianceparts.com/store/parts/ModelSectionParts/GTD42EASJ2WW/1/0/0/0/BACKSPLASH%2C_BLOWER_%26_MOTOR_ASSEMBLY)
+The transcribed sections carry no serial break, build-date boundary, variation rule or explicit common-production
+statement. For example, GE directs belt WE12M29 at 213 to WE03X29897, and both the cache and the supplier list
+WE03X29897. But nothing establishes which belt was installed on either unit. Every GE record is unresolved.
 
-## Maytag 6613
+## Maytag MVW6230HW1 · machine 6613
 
-The pilot preserves four evidence records at Top and Cabinet callout 10 on MVW6230HW1, serial CA1304279. The original factory identity remains unresolved. The observation stays on 6613 alone.
+6613 (PARTS ONLY, serial CA1304279) is the pilot unit. 6601 (BEING REPAIRED, same serial) is the owner-confirmed
+duplicate and is excluded from the physical count. Both share a 114-row found cache. Neither has a saved diagram in
+production; that import is PR #52.
 
-| Role | Printed MPN | Evidence |
-| --- | --- | --- |
-| Catalog | W11479877 | Maytag repair parts list W11497934 Rev B, page 3 |
-| Supplier listed | W11543994 | AppliancePartsPros section 02, callout 10, AP7019156 |
-| Observed on 6613 | W11538088 | Board marking reported in the unit evidence notes |
-| Cited service replacement | W11543994 | Unit evidence notes identify the service number |
+Top and Cabinet callout 10. The four records are read from the committed `machine6613` evidence in
+`test/fixtures/diagrams/results.json`, not restated:
 
-The prior acquisition preserved the first two source documents. The last two entries cite the prior evidence notes. This audit did not independently inspect a board photograph or an OEM substitution bulletin for them. The older acquisition also captured 6/6 Maytag supplier sections with two unread callouts and 5/5 OEM sections. On the separate sold GE GSS25WGTABB pilot it captured 9/9 supplier sections with ten unread rows. On LG WT7200CW, supplier captures distinguish ABWEVUS and ABWETUS drawings, while the fleet schema has no verified variation field. No LG unit received a variation by inference. [Maytag OEM document](https://assets.ajmadison.com/ajmadison/itemdocs/repair-parts-list-w11497934-revb.pdf#page=3) · [Source reconciliation and capture provenance](https://github.com/vlad40000/parts-engine/blob/40715c5b6a4a02d5b6db3acdb72efa956a3c63e6/docs/DIAGRAM_SOURCES.md)
+| Role | MPN | Scope | Source | Verified here |
+| --- | --- | --- | --- | --- |
+| catalog | W11479877 | model | Maytag repair parts list W11497934 Rev B, p.3 | Yes: committed OEM fixture line `10 W11479877 Control Unit Assembly` |
+| supplier_listed | W11543994 | model | AppliancePartsPros 02 Top and Cabinet #10, AP7019156 | Yes: committed APP fixture row links `…w11543994-ap7019156.html` |
+| observed | W11538088 | **machine 6613 only** | none (handoff evidence notes) | No: no photo or note in the repository |
+| replacement | W11543994 | model | none (handoff evidence notes) | No: no OEM substitution document in the repository |
 
-## Schema impact and publication criteria
+Factory-installed identity is unresolved. Nothing links W11479877 → W11538088 → W11543994 as a supersession chain.
 
-| Audit finding | Requirement for a later publication rehearsal |
+## Historical parts visibility (confirmed gap)
+
+`test/historical-part-visibility.db.test.ts` reproduces the gap through the real write path. It saves a list, marks one
+part pulled → eBay → sold at 19.00 and another failed, then saves a found refresh that omits both MPNs. The result:
+
+- Both `machine_part_state` rows survive unchanged.
+- `machineDetail()` and the per-machine CSV no longer show either part, because both start from `model_part_edges`,
+  and `saveModelBom` deletes and rewrites every edge on a found refresh.
+- The page's disposition-history panel still shows the eBay and sold events. The failed part has no event, so **nothing
+  on the page shows it**. 134 of the 135 production states are of that kind (no disposition events).
+- The audit's history query finds all four rows as `unmatched historical MPN`.
+
+The test pins current behavior. The fix must flip its "hidden" assertions and keep its storage assertions.
+
+## Reproducing
+
+```sh
+npm ci
+DATABASE_URL=<parts engine db> npm run audit:fleet         # read-only, repeatable-read; or pglite:<dir>
+npm run audit:fleet -- --snapshot <audit-input.json>        # replay a saved {audited_at, fleet, history, ge}
+```
+
+Output goes to a new directory under ignored `exports/`. `summary.json` is written last.
+
+| File | Contents |
 | --- | --- |
-| GE's 94 positions contain 87 distinct catalog MPNs. The same screw WE01X25535 appears at callout 75 in three assemblies. Today's model edge has one diagram field and one row per normalized model and MPN. | Add a stable component-position identity for manufacturer, exact model, reviewed variation, assembly, callout and sub-position. Store source-versioned candidate MPNs and quantities separately. Leave an unstated quantity unknown. Keep printed MPN, its D1 key and the directed replacement relation. Preserve existing MPN and machine-state keys. |
-| Across 24 records, one normalized lookup key identifies multiple full spellings within a brand. Nine records with a usable cache disagree with its brand/model display label. For example, the cache label GSS25WGTA BB joins to GE GSS25WGTABB. Cache display fields are populated from the lookup request. | Verify the source document's manufacturer and literal full designation, meaningful punctuation, revision and variation before publishing to a machine. Preserve the document identity and original nameplate text. Keep candidates with unresolved collisions reviewable. |
-| A complete GE catalog retrieval still leaves every pilot serial unresolved. The Maytag callout has competing evidence roles. | Track source retrieval, evaluation of required positions for a machine, and verification of those positions independently. Store document revision/date, literal rule, series and inclusive/exclusive bounds, alternatives, evidence role, reviewer and decision reason. Preserve all date candidates. Publish conflict exceptions and retain the last verified version when a refresh is partial, mismatched or stale. |
-| All 135 current part-state rows, three disposition events and two numbered fleet-part events matched current edges. The machine page starts at model edges and joins the MPN master. The CSV reads the same result. An absent edge would hide a stored state from the parts list. | Read historical records independently by Machine ID and MPN. Keep unmatched rows discoverable with their sale price, listing events and repair assignment. Rehearse removal of a sold MPN and an event-only repair MPN. Keep them outside recoverable donor stock. |
-| Nineteen cached GE MPNs are replacement-only matches. The Maytag observed number differs from the supplier number. Existing disposition records describe where a part went. | Gate certification of the harvested MPN for eBay on a reviewed marking, identity document or equivalent unit-specific evidence. Preserve the photo reference when available, reviewer and source. Keep predicted MPNs and documented service replacements as candidates. Rehearse a conflicting pair, including WH22X32357 and WH22X38441C, without reassigning the historical item. |
+| fleet-exceptions.csv | One row per Machine ID: status, literal identity, cache evidence, date candidates, duplicate candidates, reasons |
+| summary.json | Record, physical-unit, cache-state and verification denominators; GE source comparisons |
+| ge-machines.csv | The 24 GE records and their outcomes |
+| ge-cache-comparison.csv | Each cached GE MPN: OEM positions matched, live supplier positions, outcome |
+| ge-catalog-positions.csv | Each of the 94 GE positions: catalog, replacement, cache presence, supplier number and agreement |
+| maytag-6613.json | The four callout-10 records with scope and source |
+| part-history.csv | Every state and event row, with whether its MPN is still on the machine's current list |
 
-The per-machine shop-floor CSV currently has nine columns. Retain its Machine ID scope and column exclusions in regression coverage. Rehearse a separate explicitly labeled provenance export or obtain an owner decision about extending that contract. Test page/export agreement for positions and historical records. A later versioned publication should stage additions, removals and substitutions, reject stale versions and make identical retries idempotent. The production diagram migration already occupies 0009. These are follow-on design criteria. This audit executed SELECTs and wrote local reports.
+What was exercised:
 
-## Reproducing and reading the reports
+- Snapshot replay (production snapshot).
+- The `pglite:` path, on a disposable database migrated through `0009`. Its typo guard refuses a nonexistent directory.
+- The audit and visibility tests.
 
-With dependencies installed and `DATABASE_URL` set to Parts Engine, run `npm run audit:fleet`. The command reads the existing schema in a read-only, repeatable-read transaction. An existing local PGlite database is also supported. To replay a snapshot containing the three allow-listed query results (`fleet`, `history`, `ge`) and `audited_at`, use `npm run audit:fleet -- --snapshot <path>`. The November 24 snapshot was read through the connected Neon project in one SELECT covering all three result sets.
+The `neon` path was not exercised in this pass. The snapshot itself was taken through the connected Neon project.
 
-The command prints a new directory under ignored `exports/`. The summary is written after the other files finish.
-
-| File | Use |
-| --- | --- |
-| fleet-exceptions.csv | One row per Machine ID, including status, literal identity, cache and source evidence, date candidates, duplicate candidates and unresolved reasons |
-| summary.json | Record, known physical-unit and verification denominators |
-| ge-machines.csv | All exact GE records, their serials and individual applicability outcomes |
-| ge-cache-comparison.csv | Every stored GE edge, printed and stored keys, all matching OEM positions, roles and source links |
-| ge-catalog-positions.csv | All five sections, including repeated callouts, explicit replacement direction and positions missing from the cache |
-| maytag-6613.json | Four separately attributed callout records for the identity-checked pilot unit |
-| part-history.csv | Machine-scoped states and numbered events, including records whose current edge or master is missing |
-
-This workspace predates the deployed diagram-acquisition files and has no Git metadata. The pilot used the connected repository's acquisition notes and the live database. The reusable audit runs against the supplied checkout and requires tables through migration 0009.
+Production-derived inputs and reports stay out of Git (`/local/`, `/exports/` are ignored).
