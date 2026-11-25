@@ -15,7 +15,7 @@ membership and researched fitment, completeness values that are not interchangea
 | Evidence role | One `mpn_display` per edge | GE 461 has catalog WZ05X0158, replacement WZ5X158D and supplier-listed WZ4X230D. Maytag callout 10 has four roles. |
 | Evidence version | `saveModelBom` deletes and rewrites every edge on a found refresh | The supplier's drift WE1M1015 → WE13X29439 would replace the catalog MPN silently. Nothing keeps the prior version. |
 | Applicability | Implicit: every edge applies to every machine with the key | No serial, build-date or revision rule; no per-machine outcome. |
-| History | Machine page and CSV start from current edges | A sold or failed part disappears when a refresh drops its MPN (pinned by `historical-part-visibility.db.test.ts`). |
+| History | Machine page and CSV started from current edges | A sold or failed part disappeared when a refresh dropped its MPN. **Fixed:** stored part states not on the current list are now shown as historical (`historical-part-visibility.db.test.ts`). |
 
 ## Proposed model (additive; next free migration is `0010`)
 
@@ -83,7 +83,13 @@ The machine page and the per-machine CSV call one reader. That reader returns:
 
 Those rows are labeled "historical · not on current list" and keep their sale price, listing dates and repair
 destination. They are not counted as recoverable donor stock. The CSV keeps its nine columns and Machine-ID scope
-unless the owner approves an extension. A provenance export would be a separate file.
+unless the owner approves an extension; a historical row's Description starts with
+`[HISTORICAL - not on current parts list]`. A provenance export would be a separate file.
+
+**Implemented (no migration) for current part state.** `machineDetail()` unions this machine's `machine_part_state`
+rows whose MPN is not on the current edges. Disposition events were already shown by Machine ID in the page's
+disposition-history panel. `fleet_part_events` are not used as a source of historical parts: a `cleared` event or an
+Unlisted step deletes the state row, and reading events would bring that part back.
 
 ## Resale identity gate
 
@@ -118,8 +124,8 @@ across. Reassigning an existing listed or sold item's MPN is never automatic.
 
 ## Prioritized plan
 
-1. **History visibility (no migration).** Add the historical union to `machineDetail()` and the export. Flip the
-   characterization test. This is the smallest slice and stops silent loss of operational history before any refresh.
+1. **History visibility (no migration). Done.** Added the historical union to `machineDetail()` and the export, and
+   flipped the characterization test. This is the smallest slice and stops silent loss of operational history before any refresh.
 2. **Evidence gaps for the pilots.** Make a browser capture of GE's five sections, re-checking callouts 254, 417, 418
    and 461, and commit it as a fixture with a hash. Commit the 6613 board photo or note reference for W11538088 and the
    OEM document for the W11543994 replacement, if one exists.

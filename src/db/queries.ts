@@ -1294,6 +1294,21 @@ export async function teardownQueue(db: Db, limit = 100): Promise<TeardownResult
 // ---------------------------------------------------------------------------
 // Machine detail + part state
 // ---------------------------------------------------------------------------
+/**
+ * A recorded part state whose MPN has no mpn_master record: the recorded MPN key and nothing else. No description,
+ * price, removal, market or supply is invented; it is not on any model list, so it counts no models or donors.
+ * part_family is "other", the classifier's value for an empty description; the page shows it as unknown.
+ */
+function unrecordedMpnRow(mpnCanonical: string): MpnRow {
+  return {
+    mpn_canonical: mpnCanonical, mpn_display: mpnCanonical, description: "", part_family: "other", new_price_min: null,
+    removal_min: null, removal_source: null, force_research: false, packaging_cost: null, strategic_exception_approved: false,
+    models: 0, donors: 0, appliance_mode: null,
+    sold_90: null, avg_price: null, avg_ship: null, sell_through_pct: null, sell_through_source: null, active_qty: null,
+    free_shipping: null, ship_cost: null, qty_on_hand: null, researched_at: null, market_source: null
+  };
+}
+
 export async function machineDetail(db: Db, machineNo: string) {
   const [machine] = await db.select().from(t.fleetMachines).where(eq(t.fleetMachines.machineNo, machineNo));
   if (!machine) return null;
@@ -1301,26 +1316,48 @@ export async function machineDetail(db: Db, machineNo: string) {
     .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)));
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
-  const parts = await q<MpnRow & { diagram_id: string; bom_mpn_display: string; state: string | null;
+  // Current model edges, plus every part state stored for this machine whose MPN a later parts-list refresh
+  // dropped. Those historical rows keep their pulled/sold/listed/repair/failed state visible. They come only
+  // from machine_part_state, so a cleared or Unlisted part (row deleted) never comes back, and they add no
+  // model edge, so supply/donor counts are unchanged. A historical state whose MPN has no mpn_master record is
+  // kept too (part_mpn, mpn_record = false): it shows the recorded MPN and state with no catalogue metadata.
+  const rows = await q<MpnRow & { part_mpn: string; mpn_record: boolean; diagram_id: string; bom_mpn_display: string | null;
+    historical: boolean; state: string | null;
     disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null; part_token: string | null }>(db, sql`
-    select x.*, e.diagram_id, e.mpn_display bom_mpn_display, ps.state,
+    with listed as (
+      select e.mpn_canonical, e.diagram_id, e.mpn_display, false historical
+      from model_part_edges e
+      where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}
+      union all
+      select h.mpn_canonical, '', null, true
+      from machine_part_state h
+      where h.machine_no = ${machineNo} and not exists (
+        select 1 from model_part_edges e
+        where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey} and e.mpn_canonical = h.mpn_canonical)
+    )
+    select x.*, e.mpn_canonical part_mpn, x.mpn_canonical is not null mpn_record, e.diagram_id,
+      coalesce(e.mpn_display, x.mpn_display) bom_mpn_display, e.historical, ps.state,
       ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed, ps.updated_at::text part_token
-    from model_part_edges e
-    join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
+    from listed e
+    left join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
     left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical
-    where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}`);
+    where x.mpn_canonical is not null or e.historical`);
+  const parts = rows.map((p) => p.mpn_record ? p : { ...p, ...unrecordedMpnRow(p.part_mpn), bom_mpn_display: p.part_mpn });
   const performance = await roadrunnerPerformance(db, parts.map((p) => p.mpn_canonical));
   const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id,
-    bomMpnDisplay: p.bom_mpn_display, state: p.state,
+    bomMpnDisplay: p.bom_mpn_display ?? p.mpn_display, historical: Boolean(p.historical), mpnRecord: Boolean(p.mpn_record), state: p.state,
     disposition: isDisposition(p.disposition) ? p.disposition : null, soldPrice: p.sold_price, repairMachineNo: p.repair_machine_no,
     wasListed: Boolean(p.was_listed), partToken: p.part_token,
-    suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
+    // Without an MPN record the family is unknown, so it never marks the part test first.
+    suspect: Boolean(p.mpn_record) && machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
   evaluated.sort((a, b) => {
     const order = (r: typeof a) => {
       const res = r.qualification?.result;
       return res === "QUALIFIED" ? 0 : res === "NEEDS_DATA" ? 1 : res === "SET_RULE" ? 2 : r.market === "missing" && !r.prefilter ? 3 : 4;
     };
-    return order(a) - order(b) || valueOf(b) - valueOf(a) || a.diagram_id.localeCompare(b.diagram_id);
+    // Historical parts (no longer on the model's list) sort after every current part.
+    return Number(a.historical) - Number(b.historical) || order(a) - order(b) || valueOf(b) - valueOf(a)
+      || a.diagram_id.localeCompare(b.diagram_id);
   });
   return { machine, bom, parts: evaluated, settings: s };
 }

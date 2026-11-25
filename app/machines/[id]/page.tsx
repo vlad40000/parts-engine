@@ -18,6 +18,7 @@ import { getModelDiagrams } from "@/src/db/model-diagrams";
 import { ModelDiagramPanel, PartDiagramReferences } from "@/src/components/model-diagram-panel";
 import { diagramReferencesByMpn } from "@/src/lib/model-diagrams";
 import { canonicalizeMpn } from "@/src/lib/mpn";
+import { machinePartsExportable } from "@/src/lib/machine-parts-export";
 
 export const dynamic = "force-dynamic";
 
@@ -99,12 +100,12 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           <div className="mt-2 text-xs text-muted">Parts in these families are marked test first</div><div>{m.suspectFamilies.join(", ") || "none"}</div></div>
         <div className="card p-3"><div className="text-xs text-muted">Parts list</div>
           <BomStatus bom={bom} identityOk={m.identityStatus === "ok"} />
-          {bom?.status === "found" && parts.length > 0 ? (
+          {machinePartsExportable(d) ? (
             <>
               <a className="btn mt-2 inline-block text-xs" href={`/api/export/machine-parts/${encodeURIComponent(m.machineNo)}`}>
                 Download all {parts.length} parts (CSV)
               </a>
-              <p className="mt-1 text-xs text-muted">Includes unresearched, skipped, unqualified and previously removed parts. Model fitment is not confirmed physical stock.</p>
+              <p className="mt-1 text-xs text-muted">Includes unresearched, skipped, unqualified and previously removed parts, and recorded parts no longer on the current list. Model fitment is not confirmed physical stock.</p>
             </>
           ) : null}
           <div className="mt-2 text-xs text-muted">Qualified parts still inside</div>
@@ -138,10 +139,14 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
           <tbody>
             {parts.map((p) => (
               <tr key={p.mpn_canonical} className={p.state ? "opacity-50" : ""}>
-                <td className="text-xs"><PartDiagramReferences references={diagramReferences.get(canonicalizeMpn(p.bomMpnDisplay))} fallback={p.diagram_id} /></td>
-                <td><Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(p.mpn_canonical)}`}>{p.mpn_display}</Link></td>
-                <td>{p.description}</td>
-                <td className="text-xs text-muted">{p.part_family}{p.suspect ? <span className="pill pill-wait ml-1">test first</span> : null}</td>
+                <td className="text-xs">{p.historical
+                  ? <span className="pill pill-mute" title="This part's state was recorded on this machine, but the model's current parts list no longer includes its MPN. Kept for history; not counted as donor stock.">historical · not on current list</span>
+                  : <PartDiagramReferences references={diagramReferences.get(canonicalizeMpn(p.bomMpnDisplay))} fallback={p.diagram_id} />}</td>
+                <td>{p.mpnRecord
+                  ? <Link className="mono text-accent hover:underline" href={`/mpns/${encodeURIComponent(p.mpn_canonical)}`}>{p.mpn_display}</Link>
+                  : <span className="mono" title="Recorded on this machine, but Parts Engine has no MPN record for it.">{p.mpn_display}</span>}</td>
+                <td>{p.mpnRecord ? p.description : <span className="text-xs text-muted">no MPN record</span>}</td>
+                <td className="text-xs text-muted">{p.mpnRecord ? p.part_family : "—"}{p.suspect ? <span className="pill pill-wait ml-1">test first</span> : null}</td>
                 <td className="num">{p.removal.minutes ?? ""}</td>
                 <td className="num">{p.new_price_min ? Number(p.new_price_min).toFixed(2) : ""}</td>
                 <td className="num">{p.qualification?.economics ? usd(p.qualification.economics.breakEven) : ""}</td>
