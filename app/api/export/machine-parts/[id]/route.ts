@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb, hasDatabase } from "@/src/db";
 import { machineDetail } from "@/src/db/queries";
-import { machinePartsCsv } from "@/src/lib/machine-parts-export";
+import { machinePartsCsv, machinePartsExportable } from "@/src/lib/machine-parts-export";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +22,10 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   const detail = await machineDetail(await getDb(), machineNo);
   if (!detail) return NextResponse.json({ error: "Machine not found." }, { status: 404 });
-  if (detail.bom?.status !== "found" || !detail.parts.length) {
+  // A found parts list, or recorded part states kept as historical when no found list covers them.
+  if (!machinePartsExportable(detail)) {
     return NextResponse.json({
-      error: "No saved parts list is available for this machine. Retrieve its model's parts list first."
+      error: "No saved parts list or recorded parts are available for this machine. Retrieve its model's parts list first."
     }, { status: 409 });
   }
 

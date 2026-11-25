@@ -164,9 +164,12 @@ Factory-installed identity is unresolved. Nothing links W11479877 → W11538088 
 
 **Fixed after this audit.** `machineDetail()` now also returns every `machine_part_state` row for the Machine ID whose
 MPN is not on the current list, labeled "historical · not on current list" on the machine page and listed in the
-per-machine CSV with its nine columns unchanged. They add no model edge, so donor and harvest counts are unchanged. A
-cleared or Unlisted part has no state row and does not come back. `test/historical-part-visibility.db.test.ts` is now
-the regression test. The audit finding as recorded:
+per-machine CSV with its nine columns unchanged and its Description prefixed `[HISTORICAL - not on current parts list]`
+(the stored description is not changed). The CSV also downloads when the model has no found parts list but the machine
+has recorded part states. A state whose MPN has no `mpn_master` record keeps its recorded MPN and state with no
+description, family or price. They add no model edge, so donor and harvest counts are unchanged. A cleared or Unlisted
+part has no state row and does not come back. `test/historical-part-visibility.db.test.ts` and
+`test/historical-part-export.db.test.ts` are now the regression tests. The audit finding as recorded:
 
 The characterization test reproduced the gap through the real write path. It saves a list, marks one
 part pulled → eBay → sold at 19.00 and another failed, then saves a found refresh that omits both MPNs. The result:

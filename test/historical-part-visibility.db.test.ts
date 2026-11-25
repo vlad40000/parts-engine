@@ -10,6 +10,7 @@ import {
 } from "@/src/db/queries";
 import { mapFleetRows } from "@/src/lib/fleet-import";
 import { parseCsvRows } from "@/src/lib/csv";
+import { HISTORICAL_DESCRIPTION_MARKER } from "@/src/lib/machine-parts-export";
 import type { ChainResult } from "@/src/sources/chain";
 import type { SupplierRow } from "@/src/sources/types";
 import { GET } from "@/app/api/export/machine-parts/[id]/route";
@@ -131,7 +132,7 @@ describe("historical part state after a parts-list refresh", () => {
     expect(detail.parts.slice(firstHistorical).every((p) => p.historical)).toBe(true);
   });
 
-  it("keeps the simplified CSV format and lists historical parts in it", async () => {
+  it("keeps the simplified CSV format and lists historical parts in it, marked historical", async () => {
     const { header, rows, mpns } = await exportCsv("21");
     expect(header).toEqual([
       "Machine ID", "Brand", "Model", "Serial", "Physical Location",
@@ -141,7 +142,14 @@ describe("historical part state after a parts-list refresh", () => {
     expect([...mpns].sort()).toEqual([KEPT, ADDED, SOLD, LISTED, REPAIR, PULLED, FAILED].sort());
     const sold = rows.find((r) => r[header.indexOf("MPN")] === SOLD)!;
     expect(sold[header.indexOf("Machine ID")]).toBe("21");
-    expect(sold[header.indexOf("Description")]).toBe(`Fixture part ${SOLD}`);
+    // Historical rows are marked in Description; current rows and the stored description are unchanged.
+    const description = (mpn: string) => rows.find((r) => r[header.indexOf("MPN")] === mpn)![header.indexOf("Description")];
+    for (const mpn of [SOLD, LISTED, REPAIR, PULLED, FAILED]) {
+      expect(description(mpn)).toBe(`${HISTORICAL_DESCRIPTION_MARKER} Fixture part ${mpn}`);
+    }
+    for (const mpn of [KEPT, ADDED]) expect(description(mpn)).toBe(`Fixture part ${mpn}`);
+    expect((await mpnDetail(db, SOLD))!.mpn.description).toBe(`Fixture part ${SOLD}`);
+    expect((await parts()).get(SOLD)!.description).toBe(`Fixture part ${SOLD}`);
   });
 
   it("never counts historical-only parts as donor stock", async () => {

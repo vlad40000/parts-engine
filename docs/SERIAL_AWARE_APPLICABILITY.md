@@ -83,7 +83,8 @@ The machine page and the per-machine CSV call one reader. That reader returns:
 
 Those rows are labeled "historical · not on current list" and keep their sale price, listing dates and repair
 destination. They are not counted as recoverable donor stock. The CSV keeps its nine columns and Machine-ID scope
-unless the owner approves an extension. A provenance export would be a separate file.
+unless the owner approves an extension; a historical row's Description starts with
+`[HISTORICAL - not on current parts list]`. A provenance export would be a separate file.
 
 **Implemented (no migration) for current part state.** `machineDetail()` unions this machine's `machine_part_state`
 rows whose MPN is not on the current edges. Disposition events were already shown by Machine ID in the page's
