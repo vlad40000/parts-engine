@@ -160,9 +160,15 @@ Top and Cabinet callout 10. The four records are read from the committed `machin
 
 Factory-installed identity is unresolved. Nothing links W11479877 → W11538088 → W11543994 as a supersession chain.
 
-## Historical parts visibility (confirmed gap)
+## Historical parts visibility (confirmed gap, since fixed)
 
-`test/historical-part-visibility.db.test.ts` reproduces the gap through the real write path. It saves a list, marks one
+**Fixed after this audit.** `machineDetail()` now also returns every `machine_part_state` row for the Machine ID whose
+MPN is not on the current list, labeled "historical · not on current list" on the machine page and listed in the
+per-machine CSV with its nine columns unchanged. They add no model edge, so donor and harvest counts are unchanged. A
+cleared or Unlisted part has no state row and does not come back. `test/historical-part-visibility.db.test.ts` is now
+the regression test. The audit finding as recorded:
+
+The characterization test reproduced the gap through the real write path. It saves a list, marks one
 part pulled → eBay → sold at 19.00 and another failed, then saves a found refresh that omits both MPNs. The result:
 
 - Both `machine_part_state` rows survive unchanged.
@@ -172,7 +178,7 @@ part pulled → eBay → sold at 19.00 and another failed, then saves a found re
   on the page shows it**. 134 of the 135 production states are of that kind (no disposition events).
 - The audit's history query finds all four rows as `unmatched historical MPN`.
 
-The test pins current behavior. The fix must flip its "hidden" assertions and keep its storage assertions.
+The fix flipped the test's "hidden" assertions and kept its storage assertions.
 
 ## Reproducing
 

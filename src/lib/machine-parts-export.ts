@@ -5,7 +5,8 @@ type MachineDetail = NonNullable<Awaited<ReturnType<typeof machineDetail>>>;
 
 /**
  * Minimal shop-floor CSV: all saved model parts, including unresearched, skipped,
- * unqualified and pulled/missing parts. Omitting columns never removes their
+ * unqualified and pulled/missing parts, plus parts with a recorded state whose MPN a later
+ * parts-list refresh dropped (same columns). Omitting columns never removes their
  * underlying machine, part, qualification, state or sales records from Parts Engine.
  */
 export function machinePartsCsv(detail: MachineDetail): string {

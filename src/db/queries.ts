@@ -1301,17 +1301,31 @@ export async function machineDetail(db: Db, machineNo: string) {
     .where(and(eq(t.modelBomCache.brandKey, machine.brandKey), eq(t.modelBomCache.modelKey, machine.modelKey)));
   const s = await getSettings(db);
   const baselines = await getBaselines(db);
-  const parts = await q<MpnRow & { diagram_id: string; bom_mpn_display: string; state: string | null;
+  // Current model edges, plus every part state stored for this machine whose MPN a later parts-list refresh
+  // dropped. Those historical rows keep their pulled/sold/listed/repair/failed state visible. They come only
+  // from machine_part_state, so a cleared or Unlisted part (row deleted) never comes back, and they add no
+  // model edge, so supply/donor counts are unchanged.
+  const parts = await q<MpnRow & { diagram_id: string; bom_mpn_display: string; historical: boolean; state: string | null;
     disposition: string | null; sold_price: string | null; repair_machine_no: string | null; was_listed: boolean | null; part_token: string | null }>(db, sql`
-    select x.*, e.diagram_id, e.mpn_display bom_mpn_display, ps.state,
+    with listed as (
+      select e.mpn_canonical, e.diagram_id, e.mpn_display, false historical
+      from model_part_edges e
+      where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}
+      union all
+      select h.mpn_canonical, '', null, true
+      from machine_part_state h
+      where h.machine_no = ${machineNo} and not exists (
+        select 1 from model_part_edges e
+        where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey} and e.mpn_canonical = h.mpn_canonical)
+    )
+    select x.*, e.diagram_id, coalesce(e.mpn_display, x.mpn_display) bom_mpn_display, e.historical, ps.state,
       ps.disposition, ps.sold_price::text sold_price, ps.repair_machine_no, ps.listed_at is not null was_listed, ps.updated_at::text part_token
-    from model_part_edges e
+    from listed e
     join (${MPN_SELECT(s.donorAvailabilities)}) x on x.mpn_canonical = e.mpn_canonical
-    left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical
-    where e.brand_key = ${machine.brandKey} and e.model_key = ${machine.modelKey}`);
+    left join machine_part_state ps on ps.machine_no = ${machineNo} and ps.mpn_canonical = e.mpn_canonical`);
   const performance = await roadrunnerPerformance(db, parts.map((p) => p.mpn_canonical));
   const evaluated = parts.map((p) => ({ ...evaluateMpn(p, s, baselines), diagram_id: p.diagram_id,
-    bomMpnDisplay: p.bom_mpn_display, state: p.state,
+    bomMpnDisplay: p.bom_mpn_display, historical: Boolean(p.historical), state: p.state,
     disposition: isDisposition(p.disposition) ? p.disposition : null, soldPrice: p.sold_price, repairMachineNo: p.repair_machine_no,
     wasListed: Boolean(p.was_listed), partToken: p.part_token,
     suspect: machine.suspectFamilies.includes(p.part_family), roadrunner: performance.get(p.mpn_canonical) ?? null }));
@@ -1320,7 +1334,9 @@ export async function machineDetail(db: Db, machineNo: string) {
       const res = r.qualification?.result;
       return res === "QUALIFIED" ? 0 : res === "NEEDS_DATA" ? 1 : res === "SET_RULE" ? 2 : r.market === "missing" && !r.prefilter ? 3 : 4;
     };
-    return order(a) - order(b) || valueOf(b) - valueOf(a) || a.diagram_id.localeCompare(b.diagram_id);
+    // Historical parts (no longer on the model's list) sort after every current part.
+    return Number(a.historical) - Number(b.historical) || order(a) - order(b) || valueOf(b) - valueOf(a)
+      || a.diagram_id.localeCompare(b.diagram_id);
   });
   return { machine, bom, parts: evaluated, settings: s };
 }
